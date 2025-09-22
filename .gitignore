@@ -1,0 +1,46 @@
+# Unreal project essentials
+*.sln
+.vs/
+.vscode/
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Script/  # if present
+.cache/
+
+# Platform-specific intermediates (optional redundancy)
+**/Binaries/
+**/Intermediate/
+**/Saved/
+**/DerivedDataCache/
+
+# Visual Studio noise
+*.VC.db
+*.VC.VC.opendb
+*.ipch
+*.obj
+*.pch
+*.pdb
+*.tlog
+*.log
+*.user
+*.userprefs
+*.opensdf
+*.sdf
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# Packaged builds (if you stage to Build/… uncomment)
+#Build/Windows*/
+#Build/Linux*/
+#Build/Mac*/
+
+# Crash dumps and misc
+*.dmp
+*.mdmp
+
+# Don’t ever commit the Engine
+Engine/

@@ -1,0 +1,21 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Amulets And Armor Port",
+	"Description": "Port of the DOS/Windows project with an Unreal adapter.",
+	"Category": "Integration",
+	"EnabledByDefault": true,
+	"Modules": [
+		{
+			"Name": "AAOriginal",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "AAOriginalTests",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

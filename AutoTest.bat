@@ -1,0 +1,1 @@
+"M:\Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "F:\lshields\UnrealAA\UnrealAA\UnrealAA.uproject" -unattended -nop4 -nullrhi -nosplash -log -ExecCmds="Automation RunTests AAOriginal.Smoke.ModuleLoads; Quit
