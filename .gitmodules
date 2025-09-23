@@ -1,5 +1,5 @@
 [submodule "Plugins/AmuletsAndArmorPort/Source/AAOriginal/External/AmuletsAndArmor"]
-	path = Plugins/AmuletsAndArmorPort/Source/AAOriginal/External/AmuletsAndArmor
+	path = Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor
 	url = https://github.com/ExiguusEntertainment/AmuletsArmor.git
 	branch = UnrealAA
 [submodule ".\\Plugins\\AmuletsAndArmorPort\\Source\\AAOriginal\\External\\AmuletsAndArmor"]
