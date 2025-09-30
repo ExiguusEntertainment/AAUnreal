@@ -1,0 +1,10 @@
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\bin\Release\net8.0\ExternalSources.deps.json
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\bin\Release\net8.0\ExternalSources.dll
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\bin\Release\net8.0\ExternalSources.pdb
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\obj\Release\net8.0\ExternalSources.GeneratedMSBuildEditorConfig.editorconfig
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\obj\Release\net8.0\ExternalSources.csproj.CoreCompileInputs.cache
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\obj\Release\net8.0\ExternalSources.sourcelink.json
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\obj\Release\net8.0\ExternalSources.dll
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\obj\Release\net8.0\refint\ExternalSources.dll
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\obj\Release\net8.0\ExternalSources.pdb
+F:\lshields\UnrealAA\UnrealAA\ExternalSources\obj\Release\net8.0\ref\ExternalSources.dll
