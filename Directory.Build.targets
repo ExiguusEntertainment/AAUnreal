@@ -1,0 +1,26 @@
+<Project>
+  <PropertyGroup>
+    <AAExternalRoot>$(MSBuildThisFileDirectory)Plugins\AmuletsAndArmorPort\External\AmuletsAndArmor\Source\</AAExternalRoot>
+    <AAHostProjectName>UnrealAA</AAHostProjectName>
+  </PropertyGroup>
+
+  <!-- Force-suppress NU1701 after each project has evaluated its own properties (Directory.Build.targets loads late). -->
+  <PropertyGroup>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1701</WarningsNotAsErrors>
+    <NoWarn>$(NoWarn);NU1701</NoWarn>
+    <!-- As an extra safeguard, if individual csproj set TreatWarningsAsErrors=true we still exclude NU1701 above.
+         Optionally disable global treat-warnings-as-errors for restore (NuGet honors this) -->
+    <TreatWarningsAsErrors Condition=" '$(TreatWarningsAsErrors)' == 'true' ">false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- Add items late in evaluation in case projects override item definitions. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)'=='$(AAHostProjectName)'">
+    <!-- Fallback None items so files show up even if VS ignores ClCompile in Makefile projects -->
+    <None Include="$(AAExternalRoot)**\*.c" />
+    <None Include="$(AAExternalRoot)**\*.cpp" />
+    <None Include="$(AAExternalRoot)**\*.h" />
+    <None Include="$(AAExternalRoot)**\*.hpp" />
+    <None Include="$(AAExternalRoot)**\*.inc" />
+    <None Include="$(AAExternalRoot)**\*.txt" />
+  </ItemGroup>
+</Project>
