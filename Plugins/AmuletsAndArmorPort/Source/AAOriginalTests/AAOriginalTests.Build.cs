@@ -8,10 +8,19 @@ public class AAOriginalTests : ModuleRules
 
         PublicDependencyModuleNames.AddRange(new[]
         {
-            "Core", "CoreUObject", "Engine", "AAOriginal", "AutomationController"
+            "Core",
+            "CoreUObject",
+            "Engine",
+            "AAOriginal",
+            "AutomationController"
         });
 
-        // Editor-only module
+        // Needed for IPluginManager (Interfaces/IPluginManager.h) implementation
+        PrivateDependencyModuleNames.AddRange(new[]
+        {
+            "Projects"
+        });
+
         if (Target.Type != TargetType.Editor)
         {
             bPrecompile = false;

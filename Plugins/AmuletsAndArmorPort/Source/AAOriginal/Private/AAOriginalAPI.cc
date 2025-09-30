@@ -1,5 +1,8 @@
-#include "CoreMinimal.h"
 #include "AAOriginalAPI.h"
+#include "Misc/Crc.h"
+
+// Forward declaration of exposed loader
+bool AA_LoadDoomMap(const FString& WadPath, const FString& MapName);
 
 uint32 AA_ComputeCRC32(const uint8* Data, int32 Length)
 {
