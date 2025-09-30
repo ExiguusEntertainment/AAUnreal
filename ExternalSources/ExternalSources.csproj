@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <NoBuild>false</NoBuild>
+    <AssemblyName>ExternalSources</AssemblyName>
+    <EnableDependencyDownload>false</EnableDependencyDownload>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Entire external tree as passive content -->
+    <None Include="..\Plugins\AmuletsAndArmorPort\External\AmuletsAndArmor\Source\**\*.*"
+          Link="External\AmuletsAndArmor\%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="..\Plugins\AmuletsAndArmorPort\External\AmuletsAndArmor\Include\**\*.*"
+          Link="External\AmuletsAndArmor\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
