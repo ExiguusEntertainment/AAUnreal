@@ -4,19 +4,42 @@
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
 #include "Logging/LogMacros.h"
+#include "LegacyAAMapParser.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogLegacyMap, Log, All);
 
 namespace Legacy
 {
     static FLegacyMapLoadStats G_LastStats;
+    static FAA_MapData G_LastMap;
 
     static void SetFail()
     {
         G_LastStats = FLegacyMapLoadStats{}; // resets to zeros
+        G_LastMap = FAA_MapData{};
     }
 
-    static bool ParseBuffer(const TArray<uint8>& Data)
+    static bool ParseBufferModern(const TArray<uint8>& Data)
+    {
+        // Backward-compat path: attempt our modern parser first
+        FAA_MapData Parsed;
+        FString Why;
+        if (AA::FLegacyAAMapParser::Parse(Data, Parsed, Why))
+        {
+            FLegacyMapLoadStats Stats;
+            Stats.NumVertices = Parsed.Vertices.Num();
+            Stats.NumLines = Parsed.Lines.Num();
+            Stats.NumSides = 0; // not parsed yet
+            Stats.NumSectors = 0; // not parsed yet
+            Stats.bValid = Stats.NumLines > 0 && Stats.NumVertices > 0;
+            G_LastStats = Stats;
+            G_LastMap = MoveTemp(Parsed);
+            return true;
+        }
+        return false;
+    }
+
+    static bool ParseBufferAAM1(const TArray<uint8>& Data)
     {
         if (Data.Num() < 4 + 4 * 4) return false;
         if (FMemory::Memcmp(Data.GetData(), "AAM1", 4) != 0) return false;
@@ -29,6 +52,7 @@ namespace Legacy
         Stats.NumSectors  = (int32)ReadU32();
         Stats.bValid = Stats.NumLines > 0 && Stats.NumSectors > 0;
         G_LastStats = Stats;
+        G_LastMap = FAA_MapData{}; // no geometry emitted from AAM1 placeholder
         return Stats.bValid;
     }
 
@@ -41,14 +65,24 @@ namespace Legacy
             SetFail();
             return false;
         }
-        if (!ParseBuffer(Bytes))
+
+        if (ParseBufferModern(Bytes))
         {
-            UE_LOG(LogLegacyMap, Warning, TEXT("Unrecognized legacy map format: %s"), *Path);
-            SetFail();
-            return false;
+            UE_LOG(LogLegacyMap, Display, TEXT("Loaded A&A legacy map (modern parser): %s V=%d L=%d"), *Path, G_LastStats.NumVertices, G_LastStats.NumLines);
+            return true;
         }
-        UE_LOG(LogLegacyMap, Display, TEXT("Loaded legacy map %s V=%d L=%d Sides=%d Sec=%d"), *Path, G_LastStats.NumVertices, G_LastStats.NumLines, G_LastStats.NumSides, G_LastStats.NumSectors);
-        return true;
+
+        if (ParseBufferAAM1(Bytes))
+        {
+            UE_LOG(LogLegacyMap, Display, TEXT("Loaded legacy map (AAM1 placeholder): %s V=%d L=%d Sides=%d Sec=%d"), *Path, G_LastStats.NumVertices, G_LastStats.NumLines, G_LastStats.NumSides, G_LastStats.NumSectors);
+            return true;
+        }
+
+        // If unknown, dump header and warn
+        UE_LOG(LogLegacyMap, Warning, TEXT("Unrecognized legacy map format: %s"), *Path);
+        AA::FLegacyAAMapParser::HexDumpFirstBytes(Bytes, 256);
+        SetFail();
+        return false;
     }
 }
 
@@ -91,6 +125,25 @@ bool ULegacyMapLoader::LoadLegacyMapFromPath(const FString& AbsoluteOrRelativePa
 FLegacyMapLoadStats ULegacyMapLoader::GetLastLegacyStats()
 {
     return Legacy::G_LastStats;
+}
+
+bool ULegacyMapLoader::GetLastLegacy2DGeometry(TArray<FVector2D>& OutVertices, TArray<FIntPoint>& OutLines)
+{
+    if (!Legacy::G_LastStats.bValid || Legacy::G_LastMap.Vertices.Num() == 0 || Legacy::G_LastMap.Lines.Num() == 0)
+    {
+        return false;
+    }
+    OutVertices.Reset(Legacy::G_LastMap.Vertices.Num());
+    for (const FAA_MapVertex& V : Legacy::G_LastMap.Vertices)
+    {
+        OutVertices.Add(FVector2D((float)V.X, (float)V.Y));
+    }
+    OutLines.Reset(Legacy::G_LastMap.Lines.Num());
+    for (const FAA_MapLine& L : Legacy::G_LastMap.Lines)
+    {
+        OutLines.Add(FIntPoint((int32)L.From, (int32)L.To));
+    }
+    return true;
 }
 
 extern "C" AAORIGINAL_API void AA_GetLegacyMapStats(int32& OutLines, int32& OutSides, int32& OutSectors, int32& OutVertices, bool& bValid)

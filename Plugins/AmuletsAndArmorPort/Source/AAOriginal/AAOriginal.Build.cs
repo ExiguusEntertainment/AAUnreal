@@ -11,8 +11,14 @@ public class AAOriginal : ModuleRules
         bEnableExceptions = false;
         bUseRTTI = false;
 
-        PublicDependencyModuleNames.AddRange(new[] { "Core", "CoreUObject", "Engine" });
+        PublicDependencyModuleNames.AddRange(new[] { "Core", "CoreUObject", "Engine", "ProceduralMeshComponent" });
         PrivateDependencyModuleNames.AddRange(new[] { "Projects" });
+
+        // Editor-only helpers for map building UI/actions
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.AddRange(new[] { "UnrealEd" });
+        }
 
         PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
 

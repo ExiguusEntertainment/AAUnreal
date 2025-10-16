@@ -50,6 +50,30 @@ struct FWadSector
     uint16 Type;            // special type
     uint16 Trigger;         // tag / trigger
 };
+
+// BSP-related lumps
+struct FWadSeg
+{
+    int16 From;     // start vertex index
+    int16 To;       // end vertex index
+    int16 Angle;    // angle
+    int16 Linedef;  // linedef index
+    int16 Side;     // 0 = front, 1 = back
+    int16 Offset;   // offset along linedef
+};
+
+struct FWadSubSector
+{
+    int16 NumSegs;   // number of segs
+    int16 FirstSeg;  // first seg index
+};
+
+struct FWadNode
+{
+    int16 X; int16 Y; int16 DX; int16 DY;   // partition line
+    int16 BBox[2][4];                       // 2 child bounding boxes (top,bottom,left,right)
+    uint16 Children[2];                     // child indices; high bit (0x8000) set = subsector
+};
 #pragma pack(pop)
 
 // Legacy compatible aliases so existing parsing code remains unchanged if it used old names.
@@ -59,6 +83,9 @@ using T_3dVertex       = FWadVertex;
 using T_3dLine         = FWadLineDef;
 using T_3dSide         = FWadSideDef;
 using T_3dSector       = FWadSector;
+using T_3dSeg          = FWadSeg;
+using T_3dSubSector    = FWadSubSector;
+using T_3dNode         = FWadNode;
 
 // Compile-time size checks (will fail build if mismatched unexpectedly)
 static_assert(sizeof(FWadHeader) == 12, "FWadHeader size mismatch");
@@ -67,3 +94,6 @@ static_assert(sizeof(FWadVertex) == 4, "FWadVertex size mismatch");
 static_assert(sizeof(FWadLineDef) == 14, "FWadLineDef size mismatch");
 static_assert(sizeof(FWadSideDef) == 30, "FWadSideDef size mismatch");
 static_assert(sizeof(FWadSector) == 26, "FWadSector size mismatch");
+static_assert(sizeof(FWadSeg) == 12, "FWadSeg size mismatch");
+static_assert(sizeof(FWadSubSector) == 4, "FWadSubSector size mismatch");
+static_assert(sizeof(FWadNode) == 28, "FWadNode size mismatch");

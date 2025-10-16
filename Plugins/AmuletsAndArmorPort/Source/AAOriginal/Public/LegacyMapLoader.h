@@ -1,15 +1,11 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
+#include "LegacyAAMapParser.h"
 #include "LegacyMapLoader.generated.h"
 
 // Modern reimplementation placeholder for legacy .map loading.
-// NOTE: Does not depend on original external legacy headers; only parses
-// a simplified custom binary/text structure we define for UE integration.
-// Expected minimal format (subject to evolution):
-//   Header: 4 bytes magic "AAM1"
-//   uint32 NumVertices, NumLines, NumSides, NumSectors
-//   Followed optionally by opaque payload we ignore for now.
+// NOTE: Does not depend on original external legacy headers; we parse real A&A .MAP progressively.
 
 USTRUCT(BlueprintType)
 struct FLegacyMapLoadStats
@@ -35,6 +31,10 @@ public:
 
     UFUNCTION(BlueprintCallable, Category="LegacyMap")
     static FLegacyMapLoadStats GetLastLegacyStats();
+
+    // Editor/debug helper: return last parsed 2D geometry (from real A&A .MAP)
+    UFUNCTION(BlueprintCallable, Category="LegacyMap|Debug")
+    static bool GetLastLegacy2DGeometry(TArray<FVector2D>& OutVertices, TArray<FIntPoint>& OutLines);
 };
 
 extern "C" AAORIGINAL_API void AA_GetLegacyMapStats(int32& OutLines, int32& OutSides, int32& OutSectors, int32& OutVertices, bool& bValid);

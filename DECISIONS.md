@@ -85,6 +85,7 @@ Unreal Engine 5.6 project (UnrealAA). C++14, .NET 8 toolchain present but .NET A
 - Introduced and then refactored `LegacyMapLoader` to standalone parser.  
 - Scoped MSBuild warning suppressions to avoid engine pollution.  
 - Adopted rule excluding external legacy sources from compilation.  
+- 2025-10-04: Added editor wall builder utility actor (AMapWallBuilderActor) with CallInEditor button to spawn wall meshes from last loaded WAD geometry. Exposed UDoomWadLoader::GetLastWad2DGeometry for editor tooling. Added UnrealEd as editor-only dependency in AAOriginal.Build.cs.  
 
 ---
 ## Usage in Future Prompts
