@@ -7,6 +7,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
+#include "Kismet/GameplayStatics.h"
+#include "Misc/PackageName.h"
 #include "NativeWadLevel.h"
 
 ANativeWadPlayer::ANativeWadPlayer()
@@ -20,6 +22,15 @@ ANativeWadPlayer::ANativeWadPlayer()
     ViewCamera->SetupAttachment(GetCapsuleComponent());
     ViewCamera->SetRelativeLocation(FVector(0, 0, BaseEyeHeight));
     ViewCamera->bUsePawnControlRotation = true;
+}
+
+void ANativeWadPlayer::BeginPlay()
+{
+    Super::BeginPlay();
+    if (TActorIterator<ANativeWadLevel> Level(GetWorld()); Level)
+    {
+        NativeLevel = *Level;
+    }
 }
 
 void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
@@ -40,7 +51,37 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         const float Forward = float(Player->IsInputKeyDown(EKeys::W)) - float(Player->IsInputKeyDown(EKeys::S));
         const float Right = float(Player->IsInputKeyDown(EKeys::D)) - float(Player->IsInputKeyDown(EKeys::A));
         MoveInViewDirection(Forward, Right);
+        CheckLevelLink();
     }
+}
+
+void ANativeWadPlayer::CheckLevelLink()
+{
+    const ANativeWadLevel* Level = NativeLevel.Get();
+    if (!Level || Level->GetLevelLinks().IsEmpty())
+    {
+        return;
+    }
+    const int32 LinkIndex = Level->FindLevelLinkAt(FVector2D(GetActorLocation()));
+    const bool bEntered = bCheckedLevelLink && LinkIndex != INDEX_NONE && LinkIndex != LastLevelLink;
+    LastLevelLink = LinkIndex;
+    bCheckedLevelLink = true;
+    if (!bEntered)
+    {
+        return;
+    }
+    const FAAWadNativeLevelLink& Link = Level->GetLevelLinks()[LinkIndex];
+    const FString Package = Link.Destination.ToSoftObjectPath().GetLongPackageName();
+    if (!FPackageName::DoesPackageExist(Package))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("WAD level link in sector %d needs the native destination %s."), Link.Sector, *Package);
+        return;
+    }
+    UE_LOG(LogTemp, Display, TEXT("Entered WAD level link sector %d (thing %d), loading %s."),
+        Link.Sector, Link.SourceThing, *Package);
+    const FString Options = Level->HasDaySky()
+        ? FString::Printf(TEXT("WadHour=%.9f"), Level->GetTimeOfDayHours()) : FString();
+    UGameplayStatics::OpenLevelBySoftObjectPtr(this, Link.Destination, true, Options);
 }
 
 void ANativeWadPlayer::MoveInViewDirection(float Forward, float Right)

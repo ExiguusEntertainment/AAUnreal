@@ -5,6 +5,7 @@
 #include "NativeWadPlayer.generated.h"
 
 class UCameraComponent;
+class ANativeWadLevel;
 
 UCLASS()
 class AAORIGINAL_API ANativeWadPlayer : public ACharacter
@@ -13,6 +14,7 @@ class AAORIGINAL_API ANativeWadPlayer : public ACharacter
 
 public:
     ANativeWadPlayer();
+    virtual void BeginPlay() override;
     virtual void SetupPlayerInputComponent(UInputComponent* Input) override;
     virtual void Tick(float DeltaSeconds) override;
     virtual FVector GetPawnViewLocation() const override;
@@ -26,6 +28,11 @@ public:
 private:
     void MoveInViewDirection(float Forward, float Right);
     void UsePressed();
+    void CheckLevelLink();
+
+    TWeakObjectPtr<ANativeWadLevel> NativeLevel;
+    int32 LastLevelLink = INDEX_NONE;
+    bool bCheckedLevelLink = false;
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UCameraComponent> ViewCamera;

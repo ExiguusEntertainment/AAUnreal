@@ -253,6 +253,30 @@ UTexture2D* LoadWadSurfaceTexture(const FString& TextureName)
     return LoadSurfaceTexture(TextureName);
 }
 
+bool LoadWadBackdrop(const FString& PictureName, FIntPoint& Size, TArray<FColor>& Pixels)
+{
+    TArray<FColor> Palette;
+    TArray<uint8> Picture;
+    if (FPaths::GetCleanFilename(PictureName) != PictureName || !PictureName.EndsWith(TEXT(".PIC"))
+        || !LoadGamePalette(Palette) || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(TEXT("BACKDROP") / PictureName))
+        || Picture.Num() < 4)
+    {
+        return false;
+    }
+    Size = FIntPoint(Picture[0] | (Picture[1] << 8), Picture[2] | (Picture[3] << 8));
+    const int64 Count = int64(Size.X) * Size.Y;
+    if (Count == 0 || Count != Picture.Num() - 4)
+    {
+        return false;
+    }
+    Pixels.SetNumUninitialized(int32(Count));
+    for (int32 Index = 0; Index < Pixels.Num(); ++Index)
+    {
+        Pixels[Index] = Palette[Picture[Index + 4]];
+    }
+    return true;
+}
+
 void ASectorMeshBuilderActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);

@@ -34,8 +34,15 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "EngineUtils.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/WorldSettings.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionCameraVectorWS.h"
+#include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialExpressionMultiply.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MeshDescription.h"
+#include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
@@ -53,6 +60,7 @@ namespace
     constexpr float WallMeshSize = 128.0f;
     constexpr uint16 DoorMarker = 1500;
     constexpr uint16 DoorLockMarker = 1501;
+    constexpr uint16 LevelLinkMarker = 1518;
     constexpr uint16 DoorRequiredItemMarker = 1527;
     constexpr uint16 TwoSidedLine = 0x0004;
     constexpr float TicksPerSecond = 70.0f;
@@ -351,14 +359,54 @@ struct FAAWadNativeImport
         return true;
     }
 
-    static bool InstallGameplay(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    static bool BuildLevelLinks(const FDoomWadMapData& Map, TArray<FAAWadNativeLevelLink>& Links, FOutputDevice& Output)
     {
-        if (!AddPlayerStart(World, Map, Output))
+        for (int32 Index = 0; Index < Map.Things.Num(); ++Index)
+        {
+            const FWadThing& Thing = Map.Things[Index];
+            if (Thing.Type != LevelLinkMarker || Thing.Flags == 0)
+            {
+                continue;
+            }
+            int32 Sector = INDEX_NONE;
+            for (int32 Candidate = 0; Candidate < Map.Sectors.Num(); ++Candidate)
+            {
+                FDoomWadSectorFootprint Footprint;
+                if (UDoomWadLoader::GetLastWadSectorFootprint(Candidate, Footprint)
+                    && ContainsPoint(Footprint, FVector2D(Thing.X, Thing.Y)))
+                {
+                    Sector = Candidate;
+                    break;
+                }
+            }
+            if (Sector == INDEX_NONE)
+            {
+                Output.Logf(TEXT("WAD level link marker %d falls outside the sector footprints."), Index);
+                return false;
+            }
+            // The original client sends the map number on sector entry and arrives at start zero.
+            const FString Destination = FString::Printf(TEXT("/Game/Maps/L%d.L%d"), Thing.Flags, Thing.Flags);
+            Links.RemoveAll([Sector](const FAAWadNativeLevelLink& Link) { return Link.Sector == Sector; });
+            Links.Add({Sector, Index, TSoftObjectPtr<UWorld>(FSoftObjectPath(Destination))});
+            Output.Logf(TEXT("Imported WAD level link thing %d in sector %d to %s."), Index, Sector, *Destination);
+        }
+        return true;
+    }
+
+    bool InstallGameplay(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
+    {
+        TArray<FAAWadNativeLevelLink> Links;
+        if (!BuildLevelLinks(Map, Links, Output) || !AddPlayerStart(World, Map, Output))
         {
             return false;
         }
         Actor.Modify();
         SetOutdoorSectors(Actor, Map);
+        if (!InstallDaySky(Actor, WadPath, Output))
+        {
+            return false;
+        }
+        Actor.LevelLinks = MoveTemp(Links);
         AWorldSettings* Settings = World.GetWorldSettings();
         Settings->Modify();
         Settings->DefaultGameMode = ANativeWadGameMode::StaticClass();
@@ -421,6 +469,101 @@ struct FAAWadNativeImport
     {
         Asset.MarkPackageDirty();
         AssetsToSave.AddUnique(&Asset);
+    }
+
+    bool InstallDaySky(ANativeWadLevel& Actor, const FString& WadPath, FOutputDevice& Output)
+    {
+        if (!Actor.Sectors.ContainsByPredicate([](const FAAWadNativeSector& Sector) { return Sector.bOutside; }))
+        {
+            return true;
+        }
+        FString Info;
+        TArray<FString> Tokens;
+        if (!FFileHelper::LoadFileToString(Info, *FPaths::ChangeExtension(WadPath, TEXT("I"))))
+        {
+            return true;
+        }
+        Info.ParseIntoArrayWS(Tokens);
+        if (Tokens.Num() < 2)
+        {
+            return true;
+        }
+        const FString& PictureName = Tokens[1];
+        FIntPoint Size;
+        TArray<FColor> Pixels;
+        if (!LoadWadBackdrop(PictureName, Size, Pixels))
+        {
+            Output.Logf(TEXT("Unable to decode authored WAD backdrop %s."), *PictureName);
+            return false;
+        }
+        const FString Name = FPaths::GetBaseFilename(PictureName).ToUpper();
+        UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+        UTexture2D* Picture = FindOrCreateAsset<UTexture2D>(TEXT("Sky"), TEXT("T_") + Name);
+        UMaterial* Material = FindOrCreateAsset<UMaterial>(TEXT("Sky"), TEXT("M_") + Name);
+        if (!Sphere || !Picture || !Material)
+        {
+            return false;
+        }
+        Picture->Source.Init(Size.X, Size.Y, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
+        Picture->CompressionSettings = TC_EditorIcon;
+        Picture->MipGenSettings = TMGS_NoMipmaps;
+        Picture->AddressX = TA_Clamp;
+        Picture->AddressY = TA_Clamp;
+        Picture->NeverStream = true;
+        Picture->SRGB = true;
+        Picture->PostEditChange();
+        QueueSave(*Picture);
+
+        Material->SetShadingModel(MSM_Unlit);
+        Material->TwoSided = true;
+        Material->bIsSky = true;
+        auto& Expressions = Material->GetExpressionCollection();
+        Expressions.Empty();
+        auto* Direction = NewObject<UMaterialExpressionCameraVectorWS>(Material);
+        auto* UV = NewObject<UMaterialExpressionCustom>(Material);
+        UV->Description = TEXT("WAD sky backdrop projection");
+        UV->OutputType = CMOT_Float2;
+        UV->Inputs.SetNum(1);
+        UV->Inputs[0].InputName = TEXT("ViewToCamera");
+        UV->Inputs[0].Input.Connect(0, Direction);
+        // MapSetBackdrop mirrors the picture horizontally and repeats the pair twice per turn.
+        UV->Code = TEXT("float3 View = -normalize(ViewToCamera);\n"
+            "float Turns = atan2(View.y, View.x) / 6.28318530718;\n"
+            "float U = 1.0 - abs(frac(-2.0 * Turns) * 2.0 - 1.0);\n"
+            "float V = saturate(0.6 - asin(clamp(View.z, -1.0, 1.0)) / 1.57079632679);\n"
+            "return float2(U, V);");
+        auto* Sample = NewObject<UMaterialExpressionTextureSample>(Material);
+        Sample->Texture = Picture;
+        Sample->Coordinates.Connect(0, UV);
+        auto* Brightness = NewObject<UMaterialExpressionScalarParameter>(Material);
+        Brightness->ParameterName = TEXT("SkyBrightness");
+        Brightness->DefaultValue = 1.0f;
+        auto* Emissive = NewObject<UMaterialExpressionMultiply>(Material);
+        Emissive->A.Connect(0, Sample);
+        Emissive->B.Connect(0, Brightness);
+        Expressions.AddExpression(Direction);
+        Expressions.AddExpression(UV);
+        Expressions.AddExpression(Sample);
+        Expressions.AddExpression(Brightness);
+        Expressions.AddExpression(Emissive);
+        Material->GetEditorOnlyData()->EmissiveColor.Connect(0, Emissive);
+        Material->PostEditChange();
+        QueueSave(*Material);
+
+        if (!Actor.DaySky)
+        {
+            Actor.DaySky = AddMesh(Actor, Sphere, TEXT("AuthoredBackdrop"), false, false, Material);
+            Actor.DaySky->SetRelativeScale3D(FVector(1600.0));
+            Actor.DaySky->SetCastShadow(false);
+            Actor.DaySky->SetVisibleInRayTracing(false);
+            Actor.DaySky->RegisterComponent();
+        }
+        else
+        {
+            Actor.DaySky->SetMaterial(0, Material);
+        }
+        Output.Logf(TEXT("Imported WAD backdrop %s (%d x %d)."), *PictureName, Size.X, Size.Y);
+        return true;
     }
 
     UTexture2D* Texture(const FString& Name)
@@ -757,7 +900,7 @@ bool SaveNativeWadDoors(UWorld* World, FOutputDevice& Output)
     return FAAWadNativeImport::UpdateSavedDoors(*World, *Map, Output);
 }
 
-bool SaveNativeWadGameplay(UWorld* World, FOutputDevice& Output)
+bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice& Output)
 {
     const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
     if (!World || World->WorldType != EWorldType::Editor || !Map || !World->GetOutermost()->GetName().StartsWith(TEXT("/Game/")))
@@ -765,8 +908,21 @@ bool SaveNativeWadGameplay(UWorld* World, FOutputDevice& Output)
         return false;
     }
     ANativeWadLevel* Actor = FAAWadNativeImport::FindMatchingLevel(*World, *Map);
-    if (!Actor || !FAAWadNativeImport::InstallGameplay(*World, *Actor, *Map, Output)
-        || !SaveAsset(*World, *FPackageName::GetMapPackageExtension()))
+    FAAWadNativeImport Import;
+    Import.AssetRoot = World->GetOutermost()->GetName() + TEXT("_Assets");
+    if (!Actor || !Import.InstallGameplay(*World, *Actor, *Map, WadPath, Output))
+    {
+        return false;
+    }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    {
+        if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension()))
+        {
+            return false;
+        }
+    }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension()))
     {
         return false;
     }
@@ -774,7 +930,7 @@ bool SaveNativeWadGameplay(UWorld* World, FOutputDevice& Output)
     return true;
 }
 
-bool SaveNativeWadLevel(const FString& MapPackage, FOutputDevice& Output)
+bool SaveNativeWadLevel(const FString& MapPackage, const FString& WadPath, FOutputDevice& Output)
 {
     const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
     if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
@@ -800,7 +956,7 @@ bool SaveNativeWadLevel(const FString& MapPackage, FOutputDevice& Output)
     World->SetFlags(RF_Public | RF_Standalone);
     ANativeWadLevel* Actor = World->SpawnActor<ANativeWadLevel>();
     Actor->SetActorLabel(TEXT("Amulets & Armor Level"));
-    bool bSaved = Import.Populate(*Actor, *Map, Output) && Import.InstallGameplay(*World, *Actor, *Map, Output);
+    bool bSaved = Import.Populate(*Actor, *Map, Output) && Import.InstallGameplay(*World, *Actor, *Map, WadPath, Output);
     if (bSaved)
     {
         APostProcessVolume* Volume = World->SpawnActor<APostProcessVolume>();

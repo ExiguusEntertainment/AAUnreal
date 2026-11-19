@@ -1,5 +1,18 @@
 # Project Plan
 
+## Full Port Roadmap
+
+The goal is a playable Unreal port of Amulets & Armor from a new game through the original campaign, with working progression, saves, and level transitions.
+
+| Milestone | Completion check | Status |
+| --- | --- | --- |
+| 1. Native level foundation | Import original geometry, materials, collision, moving sectors, and lighting into saved Unreal levels. | Proven on L30 and L151 at GitHub checkpoint `727f482`. |
+| 2. One complete gameplay slice | Play a continuous route from an original spawn through an authored interaction, an encounter, a pickup, and a level transition. | In progress. The L30 spawn-to-door route and L301 arrival are verified. The scripted gate, encounter, and pickup are still needed for the continuous run. |
+| 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Planned |
+| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | Planned |
+| 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | Planned. Sector lighting already runs in the native levels. |
+| 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | Planned |
+
 ## Native Unreal Level Import
 
 Use L30 as the first end-to-end import. Verify the geometry and sector movement before tuning materials and Lumen in a saved Unreal level.
@@ -15,6 +28,10 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 9. **Restore door-driven lighting.** Evaluate sector connections, door openness, and outside light using the original lighting rules. Verify the closed, halfway, open, and reclosed states.
 10. **Verify from the player's viewpoint.** Import the original player start, add first-person movement and a use interaction, and test crossing and blocking the door in Play mode.
 11. **Verify a second map.** Import L151 and exercise its outdoor lighting in a fresh game session.
+12. **Verify a fresh checkout.** Skipped at the user's direction. Continue from the current checkout.
+13. **Walk L30 from the original spawn to an authored door.** Verify one continuous play session with player movement, collision, and live lighting.
+14. **Finish the outdoor lighting pass.** Give L151 a visible sky and connect outside light to the original day/night behavior. Compare the same view at two times of day.
+15. **Port another authored interaction.** Verify a source-authored interaction from player input through its effect in the native map.
 
 **First checkpoint:** Break down steps 1 and 2. Produce floor and ceiling meshes for sector 163 with all three cutouts intact, plus valid footprints for sectors that start closed.
 
@@ -75,6 +92,19 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - Native maps use a map-local first-person mode. L30 uses the source player-one start at `(1608, 432)`. Use WASD to move, the mouse to look, and E while facing a door. The Unreal walk-through verifies the imported spawn before positioning the player at the doorway for a repeatable crossing using W and E. The player blocks the closing door, crosses once it reverses, and the closed light level returns.
 - `/Game/Maps/L151` verifies that the same rules apply to a second map. Its outdoor sector 52 follows the outside light from 255 to 90 while the sealed cave remains dark. The native import saved 55 sectors and 271 lines. All seven L30 import regression tests passed after importing both maps.
 - The image gallery is `Saved/Wad-LiveLighting-Review.html`. Run `AA.ExportNativeWadLightingReview <OutputPng> [ImageSize]` from a running L30 or L151. Run `AA.ExportNativeL30PlayerReview <OutputPng> [ImageSize]` from a fresh L30 game to repeat the walk-through.
+
+### Steps 13–15 continuous route, outdoor clock, and map exit
+
+- Step 13 walks from L30's spawn at `(1608, 432)` to the west side of door 147, verifies the closed door blocks the player, presses E, and crosses to the east side. Sector 14 returns to light 84 after reaching 160 with the door open.
+- Step 14 reads the backdrop named in the source map's `.I` file. L151 uses `2BACK02.PIC` and the game palette. The clock runs at the original 70 Hz rate of 524,288 ticks per day. Sector 52 receives light 255 at noon and 35 at midnight. The sealed cave stays at 0. `SetTimeOfDayHours` sets and runs the clock, and `SetOutsideLightLevel` overrides it until the clock is set again.
+- Step 15 imports type 1518 as a level link on the sector containing its marker. L30's thing 394 links sector 157 to native L301. Walking into that sector triggers travel and spawns the player at L301's source start `(3440, 2944)`. The day clock carries across the transition. The exit test starts beyond the closed scripted gate in sector 129.
+- The gallery is `Saved/Wad-Port-Steps13-15-Review.html`. In a fresh standalone game, run `AA.ExportNativeWadPortReview Route <OutputPng> [ImageSize]` or `AA.ExportNativeWadPortReview Link <OutputPng> [ImageSize]` on L30. Run `AA.ExportNativeWadPortReview Sky <OutputPng> [ImageSize]` on L151.
+
+### Remaining work for the first gameplay slice
+
+16. **Restore the route to L30's exit.** Trace the source trigger and movement for sector 129's gate. Verify the player can reach the L301 link from spawn using the authored interactions.
+17. **Add one authored encounter and pickup.** Use the source's creature and item placements. Verify that the player can survive the encounter, collect the item, and carry it into L301.
+18. **Verify the complete gameplay slice.** Play from L30's original spawn through the door, encounter, pickup, gate, and L301 transition in one session.
 
 ### Asset follow-ups
 

@@ -157,6 +157,12 @@ bool ANativeWadLevel::UseDoorFromView(const FVector& Position, const FVector& Di
 void ANativeWadLevel::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    if (bRunDayClock)
+    {
+        // The source phase wraps after 524,288 simulation ticks at 70 Hz.
+        TimeOfDayHours = FMath::Fmod(TimeOfDayHours + DeltaSeconds * (24.0 * 70.0 / 524288.0), 24.0);
+        UpdateDaySky();
+    }
     for (auto It = ActiveDoors.CreateIterator(); It; ++It)
     {
         if (UpdateDoor(Doors[It.Key()], It.Value(), DeltaSeconds))
@@ -164,10 +170,43 @@ void ANativeWadLevel::Tick(float DeltaSeconds)
             It.RemoveCurrent();
         }
     }
-    if (ActiveDoors.IsEmpty())
+    if (ActiveDoors.IsEmpty() && !bRunDayClock)
     {
         SetActorTickEnabled(false);
     }
+}
+
+int32 ANativeWadLevel::FindLevelLinkAt(const FVector2D& Position) const
+{
+    for (int32 Index = 0; Index < LevelLinks.Num(); ++Index)
+    {
+        const int32 Sector = LevelLinks[Index].Sector;
+        if (!LinesBySector.IsValidIndex(Sector))
+        {
+            continue;
+        }
+        bool bInside = false;
+        for (const int32 LineIndex : LinesBySector[Sector])
+        {
+            const FWadLineDef& Line = WallTopology.Lines[LineIndex];
+            if (WallTopology.GetSectorForSide(Line.Side[0]) == WallTopology.GetSectorForSide(Line.Side[1]))
+            {
+                continue;
+            }
+            const FIntPoint A = Vertices[Line.From];
+            const FIntPoint B = Vertices[Line.To];
+            if ((A.Y > Position.Y) != (B.Y > Position.Y)
+                && Position.X < A.X + (Position.Y - A.Y) * (B.X - A.X) / (B.Y - A.Y))
+            {
+                bInside = !bInside;
+            }
+        }
+        if (bInside)
+        {
+            return Index;
+        }
+    }
+    return INDEX_NONE;
 }
 
 bool ANativeWadLevel::IsDoorObstructed(int32 Sector, double FromZ, double ToZ) const

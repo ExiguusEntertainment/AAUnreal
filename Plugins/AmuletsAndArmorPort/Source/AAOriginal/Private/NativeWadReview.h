@@ -9,5 +9,6 @@ bool SaveWadReviewFrame(const USceneCaptureComponent2D& Capture, const FString& 
 
 bool StartNativeL30Review(UWorld* World, const FString& OutputPath, int32 ImageSize);
 bool StartNativeL30DoorReview(UWorld* World, const FString& OutputPath, int32 ImageSize);
-bool StartNativeWadLightingReview(UWorld* World, const FString& OutputPath, int32 ImageSize);
+bool StartNativeWadLightingReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bDayClock = false);
 bool StartNativeL30PlayerReview(UWorld* World, const FString& OutputPath, int32 ImageSize);
+bool StartNativeL30WalkReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bLevelLink);

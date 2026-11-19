@@ -6,7 +6,9 @@
 #include "NativeWadLevel.generated.h"
 
 class UBoxComponent;
+class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
+class UWorld;
 
 USTRUCT()
 struct FAAWadNativeSector
@@ -89,6 +91,21 @@ struct FAAWadNativeDoor
     bool bRequiresUnlock = false;
 };
 
+USTRUCT()
+struct FAAWadNativeLevelLink
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, Category="WAD")
+    int32 Sector = INDEX_NONE;
+
+    UPROPERTY(VisibleAnywhere, Category="WAD")
+    int32 SourceThing = INDEX_NONE;
+
+    UPROPERTY(VisibleAnywhere, Category="WAD")
+    TSoftObjectPtr<UWorld> Destination;
+};
+
 // Owns the saved Lumen geometry and the small amount of topology needed to move it.
 UCLASS(Blueprintable)
 class AAORIGINAL_API ANativeWadLevel : public AActor
@@ -115,6 +132,11 @@ public:
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
     void SetOutsideLightLevel(int32 Light);
 
+    UFUNCTION(BlueprintCallable, Category="WAD|Lighting")
+    void SetTimeOfDayHours(double Hours);
+
+    bool HasDaySky() const { return DaySky != nullptr; }
+    double GetTimeOfDayHours() const { return TimeOfDayHours; }
     UFUNCTION(BlueprintPure, Category="WAD|Runtime")
     int32 GetSectorLightLevel(int32 Sector) const;
 
@@ -135,6 +157,8 @@ public:
     bool GetSectorSurfaceHeights(int32 Sector, FVector2D& Heights) const;
     const TArray<FAAWadNativeSector>& GetSectors() const { return Sectors; }
     const TArray<FAAWadNativeDoor>& GetDoors() const { return Doors; }
+    const TArray<FAAWadNativeLevelLink>& GetLevelLinks() const { return LevelLinks; }
+    int32 FindLevelLinkAt(const FVector2D& Position) const;
     bool GetWallLine(int32 Line, FWadWallLine& Wall);
     int32 GetLineCount() const { return Lines.Num(); }
 
@@ -147,6 +171,7 @@ private:
     void ApplyLight(UStaticMeshComponent& Mesh, int32 Light, bool bPersist) const;
     void ApplySectorLight(int32 Sector, int32 Light);
     void RefreshSectorLights();
+    void UpdateDaySky();
 
     enum class EDoorPhase : uint8 { Opening, Holding, Closing };
 
@@ -162,6 +187,20 @@ private:
 
     UPROPERTY(VisibleAnywhere, Category="WAD")
     TArray<FAAWadNativeDoor> Doors;
+
+    UPROPERTY(VisibleAnywhere, Category="WAD")
+    TArray<FAAWadNativeLevelLink> LevelLinks;
+
+    UPROPERTY(VisibleAnywhere, Category="WAD|Lighting")
+    TObjectPtr<UStaticMeshComponent> DaySky;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> DaySkyMaterial;
+
+    UPROPERTY(EditAnywhere, Category="WAD|Lighting", meta=(ClampMin="0.0", ClampMax="24.0"))
+    double TimeOfDayHours = 12.0;
+
+    bool bRunDayClock = false;
 
     UPROPERTY(VisibleAnywhere, Category="WAD|Lighting")
     bool bUseSectorLightingRules = false;

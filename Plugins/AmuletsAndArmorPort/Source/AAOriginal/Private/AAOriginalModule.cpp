@@ -935,7 +935,7 @@ public:
                 Ar.Log(TEXT("Usage: AA.ImportNativeWad <WadPath> <MapName> </Game/MapPackage>"));
                 return true;
             }
-            if (!UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !SaveNativeWadLevel(Package, Ar))
+            if (!UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !SaveNativeWadLevel(Package, WadPath, Ar))
             {
                 UE_LOG(LogTemp, Error, TEXT("AA.ImportNativeWad failed for %s."), *Package);
             }
@@ -959,7 +959,7 @@ public:
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
             const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
             if (WadPath.IsEmpty() || MapName.IsEmpty() || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName)
-                || !SaveNativeWadGameplay(InWorld, Ar))
+                || !SaveNativeWadGameplay(InWorld, WadPath, Ar))
             {
                 UE_LOG(LogTemp, Error, TEXT("AA.ImportWadGameplay failed. Usage: AA.ImportWadGameplay <WadPath> <MapName>"));
             }
@@ -1022,6 +1022,24 @@ public:
             {
                 UE_LOG(LogTemp, Error, TEXT("The native review could not start on the opened game level."));
                 UE_LOG(LogTemp, Display, TEXT("%s"), bLighting ? TEXT("Native WAD lighting review finished") : TEXT("Native L30 player review finished"));
+            }
+            return true;
+        }
+        else if (FParse::Command(&Cmd, TEXT("AA.EXPORTNATIVEWADPORTREVIEW")))
+        {
+            const FString Review = FParse::Token(Cmd, false).ToLower();
+            const FString File = FParse::Token(Cmd, false);
+            const FString Size = FParse::Token(Cmd, false);
+            const FString Output = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), File);
+            const int32 ImageSize = Size.IsEmpty() ? 720 : FCString::Atoi(*Size);
+            const bool bStarted = !File.IsEmpty() && (Review == TEXT("sky")
+                ? StartNativeWadLightingReview(InWorld, Output, ImageSize, true)
+                : (Review == TEXT("route") || Review == TEXT("link"))
+                    && StartNativeL30WalkReview(InWorld, Output, ImageSize, Review == TEXT("link")));
+            if (!bStarted)
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link> <OutputPng> [ImageSize] requires the corresponding native game level."));
+                UE_LOG(LogTemp, Display, TEXT("Native WAD port review finished"));
             }
             return true;
         }

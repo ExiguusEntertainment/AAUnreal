@@ -1,9 +1,19 @@
 #include "NativeWadLevel.h"
 
+#include "Components/StaticMeshComponent.h"
+#include "Engine/World.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
 namespace
 {
     constexpr int32 FullWeight = 256;
     constexpr int32 LightingPasses = 2;
+
+    float BackdropEmissive(int32 Light)
+    {
+        // The legacy byte also drives the sky, with a darker response in linear HDR.
+        return FMath::Square(Light / 255.0f);
+    }
 
     template <typename TRead>
     int32 WeightedNeighborLight(const TArray<int32>& Neighbors, TRead Read, int32 Excluded = INDEX_NONE)
@@ -27,6 +37,17 @@ namespace
 void ANativeWadLevel::BeginPlay()
 {
     Super::BeginPlay();
+    if (DaySky)
+    {
+        DaySkyMaterial = DaySky->CreateDynamicMaterialInstance(0);
+        double ArrivalHour = TimeOfDayHours;
+        const TCHAR* TravelHour = GetWorld()->URL.GetOption(TEXT("WadHour="), nullptr);
+        if (TravelHour && !LexTryParseString(ArrivalHour, TravelHour))
+        {
+            ArrivalHour = TimeOfDayHours;
+        }
+        SetTimeOfDayHours(ArrivalHour);
+    }
     RefreshSectorLights();
 }
 
@@ -41,8 +62,42 @@ int32 ANativeWadLevel::GetSectorLightLevel(int32 Sector) const
 
 void ANativeWadLevel::SetOutsideLightLevel(int32 Light)
 {
+    bRunDayClock = false;
     OutsideLight = FMath::Clamp(Light, 0, 255);
+    if (DaySkyMaterial)
+    {
+        DaySkyMaterial->SetScalarParameterValue(TEXT("SkyBrightness"), BackdropEmissive(OutsideLight));
+    }
     RefreshSectorLights();
+}
+
+void ANativeWadLevel::SetTimeOfDayHours(double Hours)
+{
+    if (!DaySky || !FMath::IsFinite(Hours))
+    {
+        return;
+    }
+    TimeOfDayHours = FMath::Fmod(FMath::Fmod(Hours, 24.0) + 24.0, 24.0);
+    bRunDayClock = true;
+    UpdateDaySky();
+    SetActorTickEnabled(true);
+}
+
+void ANativeWadLevel::UpdateDaySky()
+{
+    // MAP.C quantizes the day to a 16-bit angle before applying the sine.
+    const int32 Angle = FMath::FloorToInt((TimeOfDayHours - 6.0) * (65536.0 / 24.0)) & 0xffff;
+    const int32 Sine = FMath::RoundToInt(FMath::Sin(Angle * (2.0 * UE_DOUBLE_PI / 65536.0)) * 65536.0);
+    const int32 Light = 140 + FMath::Clamp((180 * Sine) >> 16, -105, 115);
+    if (Light != OutsideLight)
+    {
+        OutsideLight = Light;
+        RefreshSectorLights();
+    }
+    if (DaySkyMaterial)
+    {
+        DaySkyMaterial->SetScalarParameterValue(TEXT("SkyBrightness"), BackdropEmissive(Light));
+    }
 }
 
 void ANativeWadLevel::ClearSectorLightOverride(int32 Sector)
