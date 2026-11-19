@@ -1,0 +1,827 @@
+#include "NativeWadImport.h"
+
+#include "Engine/Scene.h"
+
+void ConfigureWadLumen(FPostProcessSettings& Settings)
+{
+    Settings.bOverride_DynamicGlobalIlluminationMethod = true;
+    Settings.DynamicGlobalIlluminationMethod = EDynamicGlobalIlluminationMethod::Lumen;
+    Settings.bOverride_ReflectionMethod = true;
+    Settings.ReflectionMethod = EReflectionMethod::Lumen;
+    Settings.bOverride_LumenSceneDetail = true;
+    Settings.LumenSceneDetail = 3.0f;
+    Settings.bOverride_LumenSceneLightingUpdateSpeed = true;
+    Settings.LumenSceneLightingUpdateSpeed = 4.0f;
+    Settings.bOverride_LumenFinalGatherLightingUpdateSpeed = true;
+    Settings.LumenFinalGatherLightingUpdateSpeed = 4.0f;
+    Settings.bOverride_AutoExposureMinBrightness = true;
+    Settings.bOverride_AutoExposureMaxBrightness = true;
+    Settings.AutoExposureMinBrightness = -2.0f;
+    Settings.AutoExposureMaxBrightness = -2.0f;
+}
+
+#if WITH_EDITOR
+
+#include "AssetCompilingManager.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "DoomWadLoader.h"
+#include "Engine/PostProcessVolume.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "GameFramework/PlayerStart.h"
+#include "GameFramework/WorldSettings.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "MeshDescription.h"
+#include "Misc/PackageName.h"
+#include "NativeWadLevel.h"
+#include "NativeWadPlayer.h"
+#include "PhysicsEngine/BodySetup.h"
+#include "PhysicsEngine/ConvexElem.h"
+#include "StaticMeshAttributes.h"
+#include "TextureResource.h"
+#include "UObject/SavePackage.h"
+#include "WadSurfaceTextures.h"
+
+namespace
+{
+    constexpr EObjectFlags AssetFlags = RF_Public | RF_Standalone | RF_Transactional;
+    constexpr float SlabThickness = 10.0f;
+    constexpr float WallMeshSize = 128.0f;
+    constexpr uint16 DoorMarker = 1500;
+    constexpr uint16 DoorLockMarker = 1501;
+    constexpr uint16 DoorRequiredItemMarker = 1527;
+    constexpr uint16 TwoSidedLine = 0x0004;
+    constexpr float TicksPerSecond = 70.0f;
+    const FName SurfaceSlot(TEXT("Surface"));
+
+    struct FWadMeshDescription
+    {
+        FMeshDescription Description;
+        FStaticMeshAttributes Attributes{Description};
+        FPolygonGroupID Group;
+
+        FWadMeshDescription()
+        {
+            Attributes.Register();
+            Attributes.GetVertexInstanceUVs().SetNumChannels(1);
+            Group = Description.CreatePolygonGroup();
+            Attributes.GetPolygonGroupMaterialSlotNames()[Group] = SurfaceSlot;
+        }
+
+        FVertexID AddVertex(const FVector3f& Position)
+        {
+            const FVertexID Vertex = Description.CreateVertex();
+            Attributes.GetVertexPositions()[Vertex] = Position;
+            return Vertex;
+        }
+
+        void AddTriangle(const TStaticArray<FVertexID, 3>& Vertices, const TStaticArray<FVector2f, 3>& UVs)
+        {
+            const auto Positions = Attributes.GetVertexPositions();
+            const FVector3f Edge = Positions[Vertices[1]] - Positions[Vertices[0]];
+            const FVector3f Other = Positions[Vertices[2]] - Positions[Vertices[0]];
+            const FVector3f Normal = FVector3f::CrossProduct(Other, Edge).GetSafeNormal();
+            if (Normal.IsNearlyZero())
+            {
+                return;
+            }
+            const FVector2f Delta = UVs[1] - UVs[0];
+            const FVector2f OtherDelta = UVs[2] - UVs[0];
+            const float UVSign = FMath::Sign(Delta.X * OtherDelta.Y - Delta.Y * OtherDelta.X);
+            const FVector3f Tangent = (UVSign * (OtherDelta.Y * Edge - Delta.Y * Other)).GetSafeNormal(UE_SMALL_NUMBER, Edge.GetSafeNormal());
+            FVertexInstanceID Corners[3];
+            for (int32 Index = 0; Index < 3; ++Index)
+            {
+                const FVertexInstanceID Corner = Description.CreateVertexInstance(Vertices[Index]);
+                Attributes.GetVertexInstanceNormals()[Corner] = Normal;
+                Attributes.GetVertexInstanceTangents()[Corner] = Tangent;
+                Attributes.GetVertexInstanceBinormalSigns()[Corner] = -UVSign;
+                Attributes.GetVertexInstanceUVs().Set(Corner, 0, UVs[Index]);
+                Corners[Index] = Corner;
+            }
+            Description.CreateTriangle(Group, Corners);
+        }
+
+        void AddQuad(FVertexID A, FVertexID B, FVertexID C, FVertexID D)
+        {
+            AddTriangle({A, B, C}, {FVector2f(0,0), FVector2f(0,-1), FVector2f(1,-1)});
+            AddTriangle({A, C, D}, {FVector2f(0,0), FVector2f(1,-1), FVector2f(1,0)});
+        }
+    };
+
+    bool SaveAsset(UObject& Asset, const TCHAR* Extension)
+    {
+        UPackage* Package = Asset.GetOutermost();
+        const FString Filename = FPackageName::LongPackageNameToFilename(Package->GetName(), Extension);
+        FSavePackageArgs Args;
+        Args.TopLevelFlags = RF_Public | RF_Standalone;
+        return UPackage::SavePackage(Package, &Asset, *Filename, Args);
+    }
+
+    bool HasTexture(const FString& Name)
+    {
+        return !Name.IsEmpty() && Name != TEXT("-") && !Name.StartsWith(TEXT("F_SKY"));
+    }
+
+    bool ContainsPoint(const FDoomWadSectorFootprint& Footprint, const FVector2D& Point)
+    {
+        for (int32 Index = 0; Index < Footprint.Triangles.Num(); Index += 3)
+        {
+            const FVector2D& A = Footprint.Vertices[Footprint.Triangles[Index]];
+            const FVector2D& B = Footprint.Vertices[Footprint.Triangles[Index + 1]];
+            const FVector2D& C = Footprint.Vertices[Footprint.Triangles[Index + 2]];
+            if (FVector2D::CrossProduct(B - A, Point - A) >= 0.0
+                && FVector2D::CrossProduct(C - B, Point - B) >= 0.0
+                && FVector2D::CrossProduct(A - C, Point - C) >= 0.0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+struct FAAWadNativeImport
+{
+    FString AssetRoot;
+    TMap<FString, UTexture2D*> Textures;
+    TMap<FString, UMaterialInterface*> Materials;
+    TArray<UObject*> AssetsToSave;
+    TStaticArray<UMaterialInterface*, 3> Parents;
+    TStaticArray<UStaticMesh*, 3> WallMeshes;
+    bool bAssetError = false;
+
+    static bool BuildDoors(const FDoomWadMapData& Map, TArray<FAAWadNativeDoor>& Doors, FOutputDevice& Output)
+    {
+        TArray<int32> Markers;
+        for (int32 Index = 0; Index < Map.Things.Num(); ++Index)
+        {
+            const FWadThing& Thing = Map.Things[Index];
+            if (Thing.Type == DoorMarker || ((Thing.Type == DoorLockMarker || Thing.Type == DoorRequiredItemMarker) && Thing.Flags != 0))
+            {
+                Markers.Add(Index);
+            }
+        }
+        if (Markers.IsEmpty())
+        {
+            return true;
+        }
+
+        TMap<int32, int32> MarkerSectors;
+        TArray<int16> Ceilings;
+        Ceilings.Reserve(Map.Sectors.Num());
+        for (int32 Sector = 0; Sector < Map.Sectors.Num(); ++Sector)
+        {
+            Ceilings.Add(Map.Sectors[Sector].CeilingHeight);
+            FDoomWadSectorFootprint Footprint;
+            if (!UDoomWadLoader::GetLastWadSectorFootprint(Sector, Footprint))
+            {
+                continue;
+            }
+            for (const int32 Marker : Markers)
+            {
+                const FWadThing& Thing = Map.Things[Marker];
+                if (ContainsPoint(Footprint, FVector2D(Thing.X, Thing.Y)))
+                {
+                    if (MarkerSectors.Contains(Marker))
+                    {
+                        Output.Logf(TEXT("WAD door marker %d touches multiple sectors."), Marker);
+                        return false;
+                    }
+                    MarkerSectors.Add(Marker, Sector);
+                }
+            }
+        }
+        TSet<int32> RestrictedSectors;
+        for (const int32 Marker : Markers)
+        {
+            if (const int32* Sector = MarkerSectors.Find(Marker); Sector && Map.Things[Marker].Type != DoorMarker)
+            {
+                RestrictedSectors.Add(*Sector);
+            }
+        }
+        for (const int32 Marker : Markers)
+        {
+            if (Map.Things[Marker].Type != DoorMarker)
+            {
+                continue;
+            }
+            const int32* Sector = MarkerSectors.Find(Marker);
+            if (!Sector || Doors.ContainsByPredicate([Sector](const FAAWadNativeDoor& Door) { return Door.Sector == *Sector; }))
+            {
+                Output.Logf(TEXT("WAD door marker %d has no unique sector."), Marker);
+                return false;
+            }
+            int32 LowestCeiling = MAX_int32;
+            for (const FWadLineDef& Line : Map.Lines)
+            {
+                if ((Line.Flags & TwoSidedLine) == 0)
+                {
+                    continue;
+                }
+                const int32 Front = Map.GetSectorForSide(Line.Side[0]);
+                const int32 Back = Map.GetSectorForSide(Line.Side[1]);
+                const int32 Neighbor = Front == *Sector ? Back : Back == *Sector ? Front : INDEX_NONE;
+                if (Ceilings.IsValidIndex(Neighbor) && Neighbor != *Sector)
+                {
+                    LowestCeiling = FMath::Min(LowestCeiling, int32(Ceilings[Neighbor]));
+                }
+            }
+            const int16 Floor = Map.Sectors[*Sector].FloorHeight;
+            if (LowestCeiling == MAX_int32 || LowestCeiling - 16 <= Floor)
+            {
+                Output.Logf(TEXT("WAD door sector %d has no valid open height."), *Sector);
+                return false;
+            }
+            // The original loader leaves a 16-unit lip and uses a 70 Hz game clock.
+            Doors.Add({ *Sector, Marker, float(Floor), float(LowestCeiling - 16),
+                105.0f / TicksPerSecond, 140.0f / TicksPerSecond, RestrictedSectors.Contains(*Sector) });
+            Ceilings[*Sector] = Floor;
+        }
+        return true;
+    }
+
+    static bool MatchesTopology(const ANativeWadLevel& Actor, const FDoomWadMapData& Map)
+    {
+        if (Actor.Sectors.Num() != Map.Sectors.Num() || Actor.Vertices.Num() != Map.Vertices.Num()
+            || Actor.Lines.Num() != Map.Lines.Num() || Actor.Sides.Num() != Map.Sides.Num())
+        {
+            return false;
+        }
+        for (int32 Index = 0; Index < Map.Vertices.Num(); ++Index)
+        {
+            if (Actor.Vertices[Index] != FIntPoint(Map.Vertices[Index].X, Map.Vertices[Index].Y))
+            {
+                return false;
+            }
+        }
+        for (int32 Index = 0; Index < Map.Lines.Num(); ++Index)
+        {
+            const FWadLineDef& Line = Map.Lines[Index];
+            const FAAWadNativeLine& Saved = Actor.Lines[Index];
+            if (Saved.Endpoints != FIntPoint(Line.From, Line.To) || Saved.Sides != FIntPoint(Line.Side[0], Line.Side[1])
+                || Saved.Flags != Line.Flags)
+            {
+                return false;
+            }
+        }
+        for (int32 Index = 0; Index < Map.Sides.Num(); ++Index)
+        {
+            if (Actor.Sides[Index].Sector != Map.GetSectorForSide(Index))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static ANativeWadLevel* FindMatchingLevel(UWorld& World, const FDoomWadMapData& Map)
+    {
+        TActorIterator<ANativeWadLevel> Levels(&World);
+        if (!Levels || !MatchesTopology(**Levels, Map))
+        {
+            return nullptr;
+        }
+        ANativeWadLevel* Actor = *Levels;
+        ++Levels;
+        return Levels ? nullptr : Actor;
+    }
+
+    static void SetOutdoorSectors(ANativeWadLevel& Actor, const FDoomWadMapData& Map)
+    {
+        for (int32 Index = 0; Index < Map.Sectors.Num(); ++Index)
+        {
+            FString Floor;
+            FString Ceiling;
+            UDoomWadLoader::GetLastWadSectorTextureNames(Index, Floor, Ceiling);
+            Actor.Sectors[Index].bOutside = Ceiling.StartsWith(TEXT("F_SKY")) || (Map.Sectors[Index].Trigger & 1) != 0;
+        }
+        Actor.bUseSectorLightingRules = true;
+    }
+
+    static bool AddPlayerStart(UWorld& World, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        const FWadThing* Start = Map.Things.FindByPredicate([](const FWadThing& Thing) { return Thing.Type == 1; });
+        if (!Start)
+        {
+            Output.Log(TEXT("The source map has no player-one start."));
+            return false;
+        }
+        const FVector2D XY(Start->X, Start->Y);
+        int32 Sector = INDEX_NONE;
+        for (int32 Index = 0; Index < Map.Sectors.Num(); ++Index)
+        {
+            FDoomWadSectorFootprint Footprint;
+            if (UDoomWadLoader::GetLastWadSectorFootprint(Index, Footprint) && ContainsPoint(Footprint, XY))
+            {
+                Sector = Index;
+                break;
+            }
+        }
+        if (Sector == INDEX_NONE)
+        {
+            Output.Log(TEXT("The source player start falls outside the sector footprints."));
+            return false;
+        }
+        for (TActorIterator<APlayerStart> Existing(&World); Existing; ++Existing)
+        {
+            if (Existing->PlayerStartTag == TEXT("AA.PlayerOne"))
+            {
+                return true;
+            }
+            Output.Log(TEXT("The level already contains a user-authored Player Start."));
+            return true;
+        }
+        const FVector Position(XY, Map.Sectors[Sector].FloorHeight + ANativeWadPlayer::CapsuleHalfHeight + 2.0);
+        FActorSpawnParameters Params;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        APlayerStart* PlayerStart = World.SpawnActor<APlayerStart>(Position, FRotator(0, Start->Angle * 45.0, 0), Params);
+        if (!PlayerStart)
+        {
+            return false;
+        }
+        PlayerStart->GetCapsuleComponent()->SetCapsuleSize(ANativeWadPlayer::CapsuleRadius, ANativeWadPlayer::CapsuleHalfHeight);
+        PlayerStart->PlayerStartTag = TEXT("AA.PlayerOne");
+        PlayerStart->SetActorLabel(TEXT("Source Player One Start"));
+        Output.Logf(TEXT("Imported player one start at (%d, %d) in sector %d."), Start->X, Start->Y, Sector);
+        return true;
+    }
+
+    static bool InstallGameplay(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        if (!AddPlayerStart(World, Map, Output))
+        {
+            return false;
+        }
+        Actor.Modify();
+        SetOutdoorSectors(Actor, Map);
+        AWorldSettings* Settings = World.GetWorldSettings();
+        Settings->Modify();
+        Settings->DefaultGameMode = ANativeWadGameMode::StaticClass();
+        return true;
+    }
+
+    static bool UpdateSavedDoors(UWorld& World, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        ANativeWadLevel* Actor = FindMatchingLevel(World, Map);
+        if (!Actor)
+        {
+            Output.Log(TEXT("The open level needs exactly one native WAD actor matching the source map."));
+            return false;
+        }
+        TArray<FAAWadNativeDoor> Doors;
+        if (!BuildDoors(Map, Doors, Output))
+        {
+            return false;
+        }
+        for (const FAAWadNativeDoor& Door : Doors)
+        {
+            FVector2D Heights;
+            if (!Actor->GetSectorSurfaceHeights(Door.Sector, Heights)
+                || !Heights.Equals(FVector2D(Door.ClosedZ, Door.ClosedZ)))
+            {
+                Output.Logf(TEXT("Door sector %d needs its authored closed height before installing door controls."), Door.Sector);
+                return false;
+            }
+        }
+        Actor->Modify();
+        Swap(Actor->Doors, Doors);
+        if (!SaveAsset(World, *FPackageName::GetMapPackageExtension()))
+        {
+            Swap(Actor->Doors, Doors);
+            return false;
+        }
+        Output.Logf(TEXT("Saved %d authored WAD doors in %s."), Actor->Doors.Num(), *World.GetOutermost()->GetName());
+        return true;
+    }
+
+    template <typename T>
+    T* FindOrCreateAsset(const FString& Folder, const FString& Name)
+    {
+        const FString Path = AssetRoot / Folder / Name;
+        if (FPackageName::DoesPackageExist(Path))
+        {
+            return LoadObject<T>(nullptr, *(Path + TEXT(".") + Name));
+        }
+        UPackage* Package = CreatePackage(*Path);
+        T* Asset = FindObject<T>(Package, *Name);
+        if (!Asset)
+        {
+            Asset = NewObject<T>(Package, *Name, AssetFlags);
+            FAssetRegistryModule::AssetCreated(Asset);
+        }
+        return Asset;
+    }
+
+    void QueueSave(UObject& Asset)
+    {
+        Asset.MarkPackageDirty();
+        AssetsToSave.AddUnique(&Asset);
+    }
+
+    UTexture2D* Texture(const FString& Name)
+    {
+        if (!HasTexture(Name))
+        {
+            return nullptr;
+        }
+        if (UTexture2D** Cached = Textures.Find(Name))
+        {
+            return *Cached;
+        }
+        UTexture2D* Source = LoadWadSurfaceTexture(Name);
+        if (!Source)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Native WAD import uses the default material for missing texture %s."), *Name);
+            Textures.Add(Name, nullptr);
+            return nullptr;
+        }
+        UTexture2D* Asset = FindOrCreateAsset<UTexture2D>(TEXT("Textures"), TEXT("T_") + Name);
+        if (!Asset)
+        {
+            bAssetError = true;
+            return nullptr;
+        }
+        FTexture2DMipMap& Mip = Source->GetPlatformData()->Mips[0];
+        const uint8* Data = static_cast<const uint8*>(Mip.BulkData.LockReadOnly());
+        Asset->Source.Init(Source->GetSizeX(), Source->GetSizeY(), 1, 1, TSF_BGRA8, Data);
+        Mip.BulkData.Unlock();
+        Asset->CompressionSettings = TC_EditorIcon;
+        Asset->MipGenSettings = TMGS_NoMipmaps;
+        Asset->NeverStream = true;
+        Asset->Filter = TF_Nearest;
+        Asset->SRGB = true;
+        Asset->PostEditChange();
+        QueueSave(*Asset);
+        Textures.Add(Name, Asset);
+        return Asset;
+    }
+
+    UMaterialInterface* Material(const FString& TextureName, EWadWallBlend Blend)
+    {
+        const uint8 Index = uint8(Blend);
+        UTexture2D* Image = Texture(TextureName);
+        if (!Image)
+        {
+            return Parents[Index];
+        }
+        const FString Name = FString::Printf(TEXT("MI_%d_%s"), Index, *TextureName);
+        if (UMaterialInterface** Cached = Materials.Find(Name))
+        {
+            return *Cached;
+        }
+        UMaterialInstanceConstant* Asset = FindOrCreateAsset<UMaterialInstanceConstant>(TEXT("Materials"), Name);
+        if (!Asset)
+        {
+            bAssetError = true;
+            return Parents[Index];
+        }
+        Asset->SetParentEditorOnly(Parents[Index]);
+        Asset->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(TEXT("SurfaceTexture")), Image);
+        Asset->PostEditChange();
+        QueueSave(*Asset);
+        Materials.Add(Name, Asset);
+        return Asset;
+    }
+
+    UStaticMesh* BuildMesh(const FString& Name, FWadMeshDescription& Geometry, UMaterialInterface* Material,
+        bool bDistanceField, TArray<FKConvexElem> Hulls = {})
+    {
+        UStaticMesh* Mesh = FindOrCreateAsset<UStaticMesh>(TEXT("Meshes"), Name);
+        if (!Mesh || Geometry.Description.Triangles().Num() == 0)
+        {
+            return nullptr;
+        }
+        Mesh->GetStaticMaterials().Reset();
+        Mesh->GetStaticMaterials().Emplace(Material, SurfaceSlot, SurfaceSlot);
+        Mesh->SetNumSourceModels(1);
+        FMeshBuildSettings& Settings = Mesh->GetSourceModel(0).BuildSettings;
+        Settings.bRecomputeNormals = false;
+        Settings.bRecomputeTangents = false;
+        Settings.bGenerateLightmapUVs = false;
+        Settings.bUseFullPrecisionUVs = true;
+        Settings.DistanceFieldResolutionScale = bDistanceField ? 1.5f : 0.0f;
+        Mesh->CreateMeshDescription(0, MoveTemp(Geometry.Description));
+        Mesh->CommitMeshDescription(0);
+        Mesh->CreateBodySetup();
+        UBodySetup* Body = Mesh->GetBodySetup();
+        Body->CollisionTraceFlag = CTF_UseSimpleAsComplex;
+        Body->AggGeom.ConvexElems = MoveTemp(Hulls);
+        Body->InvalidatePhysicsData();
+        Mesh->Build(false);
+        QueueSave(*Mesh);
+        return Mesh;
+    }
+
+    bool LoadWallMeshes()
+    {
+        const TCHAR* Names[] = {TEXT("Opaque"), TEXT("Masked"), TEXT("Translucent")};
+        for (uint8 Blend = 0; Blend < UE_ARRAY_COUNT(Names); ++Blend)
+        {
+            const FString Name = FString(TEXT("M_AANative")) + Names[Blend];
+            const FString MaterialPath = FString(TEXT("/Game/AAReview/")) + Name + TEXT(".") + Name;
+            Parents[Blend] = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
+            if (!Parents[Blend])
+            {
+                return false;
+            }
+            FWadMeshDescription Geometry;
+            const FVertexID A = Geometry.AddVertex(FVector3f(0,0,0));
+            const FVertexID B = Geometry.AddVertex(FVector3f(0,0,WallMeshSize));
+            const FVertexID C = Geometry.AddVertex(FVector3f(WallMeshSize,0,WallMeshSize));
+            const FVertexID D = Geometry.AddVertex(FVector3f(WallMeshSize,0,0));
+            Geometry.AddQuad(A, B, C, D);
+            const bool bOpaque = Blend == uint8(EWadWallBlend::Opaque);
+            if (bOpaque)
+            {
+                // Keep the textured face on the original linedef and give the solid side thickness for Lumen.
+                const FVertexID BackA = Geometry.AddVertex(FVector3f(0,SlabThickness,0));
+                const FVertexID BackB = Geometry.AddVertex(FVector3f(0,SlabThickness,WallMeshSize));
+                const FVertexID BackC = Geometry.AddVertex(FVector3f(WallMeshSize,SlabThickness,WallMeshSize));
+                const FVertexID BackD = Geometry.AddVertex(FVector3f(WallMeshSize,SlabThickness,0));
+                Geometry.AddQuad(BackD, BackC, BackB, BackA);
+                Geometry.AddQuad(B, A, BackA, BackB);
+                Geometry.AddQuad(C, B, BackB, BackC);
+                Geometry.AddQuad(D, C, BackC, BackD);
+                Geometry.AddQuad(A, D, BackD, BackA);
+            }
+            WallMeshes[Blend] = BuildMesh(FString(TEXT("SM_Wall_")) + Names[Blend], Geometry,
+                Parents[Blend], bOpaque);
+            if (!WallMeshes[Blend])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    UStaticMeshComponent* AddMesh(ANativeWadLevel& Actor, UStaticMesh* Mesh, const FString& Name, bool bCollision,
+        bool bAffectsLumen, UMaterialInterface* Override = nullptr)
+    {
+        UStaticMeshComponent* Component = NewObject<UStaticMeshComponent>(&Actor, *Name, RF_Transactional);
+        Component->SetMobility(EComponentMobility::Movable);
+        Component->SetupAttachment(Actor.GetRootComponent());
+        Component->SetCanEverAffectNavigation(false);
+        Component->SetGenerateOverlapEvents(false);
+        Component->SetCollisionProfileName(bCollision ? TEXT("BlockAll") : TEXT("NoCollision"));
+        Component->SetAffectDistanceFieldLighting(bAffectsLumen);
+        Component->SetEmissiveLightSource(bAffectsLumen);
+        Component->SetStaticMesh(Mesh);
+        if (Override)
+        {
+            Component->SetMaterial(0, Override);
+        }
+        Actor.AddInstanceComponent(Component);
+        return Component;
+    }
+
+    UStaticMeshComponent* AddPlane(ANativeWadLevel& Actor, int32 SectorIndex, const FDoomWadSectorFootprint& Footprint,
+        const FWadSector& Sector, bool bCeiling, const FString& TextureName, const FVector2D& Origin)
+    {
+        UMaterialInterface* SurfaceMaterial = Material(TextureName, EWadWallBlend::Opaque);
+        const UTexture2D* Image = Textures.FindRef(TextureName);
+        const FVector2D Size = Image ? FVector2D(Image->Source.GetSizeX(), Image->Source.GetSizeY()) : FVector2D(64.0, 64.0);
+        const bool bSky = TextureName.StartsWith(TEXT("F_SKY"));
+        const float Thickness = bCeiling ? SlabThickness : -SlabThickness;
+        FWadMeshDescription Geometry;
+        TArray<FVertexID> Front;
+        TArray<FVertexID> Back;
+        TArray<FVector2f> UVs;
+        TArray<FKConvexElem> Hulls;
+        Front.Reserve(Footprint.Vertices.Num());
+        Back.Reserve(Footprint.Vertices.Num());
+        UVs.Reserve(Footprint.Vertices.Num());
+        Hulls.Reserve(Footprint.Triangles.Num() / 3);
+        for (const FVector2D& Point : Footprint.Vertices)
+        {
+            const FVector2D Local = Point - Origin;
+            Front.Add(Geometry.AddVertex(FVector3f(Local.X, Local.Y, 0.0f)));
+            Back.Add(Geometry.AddVertex(FVector3f(Local.X, Local.Y, Thickness)));
+            UVs.Emplace(Point.X / Size.X, Point.Y / Size.Y);
+        }
+        TMap<FIntPoint, FIntPoint> Boundary;
+        for (int32 Index = 0; Index < Footprint.Triangles.Num(); Index += 3)
+        {
+            const int32 A = Footprint.Triangles[Index];
+            const int32 B = Footprint.Triangles[Index + (bCeiling ? 1 : 2)];
+            const int32 C = Footprint.Triangles[Index + (bCeiling ? 2 : 1)];
+            Geometry.AddTriangle({Front[A], Front[B], Front[C]}, {UVs[A], UVs[B], UVs[C]});
+            Geometry.AddTriangle({Back[A], Back[C], Back[B]}, {UVs[A], UVs[C], UVs[B]});
+            FKConvexElem& Hull = Hulls.AddDefaulted_GetRef();
+            for (const int32 Vertex : {A, B, C})
+            {
+                const FVector2D Point = Footprint.Vertices[Vertex] - Origin;
+                Hull.VertexData.Emplace(Point, 0.0);
+                Hull.VertexData.Emplace(Point, Thickness);
+            }
+            Hull.UpdateElemBox();
+            for (const FIntPoint Edge : {FIntPoint(A,B), FIntPoint(B,C), FIntPoint(C,A)})
+            {
+                const FIntPoint Key(FMath::Min(Edge.X, Edge.Y), FMath::Max(Edge.X, Edge.Y));
+                if (!Boundary.Remove(Key))
+                {
+                    Boundary.Add(Key, Edge);
+                }
+            }
+        }
+        for (const TPair<FIntPoint, FIntPoint>& Pair : Boundary)
+        {
+            const FIntPoint Edge = Pair.Value;
+            Geometry.AddQuad(Front[Edge.Y], Front[Edge.X], Back[Edge.X], Back[Edge.Y]);
+        }
+        const FString Name = FString::Printf(TEXT("Sector_%03d_%s"), SectorIndex, bCeiling ? TEXT("Ceiling") : TEXT("Floor"));
+        UStaticMesh* Mesh = BuildMesh(TEXT("SM_") + Name, Geometry, SurfaceMaterial, !bSky, MoveTemp(Hulls));
+        if (!Mesh)
+        {
+            return nullptr;
+        }
+        UStaticMeshComponent* Component = AddMesh(Actor, Mesh, Name, true, !bSky);
+        Component->SetRelativeLocation(FVector(Origin, bCeiling ? Sector.CeilingHeight : Sector.FloorHeight));
+        Component->SetVisibility(!bSky);
+        Component->SetDefaultCustomPrimitiveDataVector4(0, FVector4(1.0,1.0,0.0,0.0));
+        Actor.ApplyLight(*Component, FMath::Min<int32>(Sector.Light, 255), true);
+        return Component;
+    }
+
+    bool Populate(ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        if (!BuildDoors(Map, Actor.Doors, Output))
+        {
+            return false;
+        }
+        Actor.Sectors.SetNum(Map.Sectors.Num());
+        for (int32 Index = 0; Index < Map.Sectors.Num(); ++Index)
+        {
+            FDoomWadSectorFootprint Footprint;
+            if (!UDoomWadLoader::GetLastWadSectorFootprint(Index, Footprint))
+            {
+                UE_LOG(LogTemp, Error, TEXT("Native WAD import could not triangulate sector %d."), Index);
+                return false;
+            }
+            FString Floor;
+            FString Ceiling;
+            UDoomWadLoader::GetLastWadSectorTextureNames(Index, Floor, Ceiling);
+            FBox2D Bounds(ForceInit);
+            for (const FVector2D& Point : Footprint.Vertices)
+            {
+                Bounds += Point;
+            }
+            FAAWadNativeSector& Sector = Actor.Sectors[Index];
+            FWadSector SourceSector = Map.Sectors[Index];
+            if (Actor.Doors.ContainsByPredicate([Index](const FAAWadNativeDoor& Door) { return Door.Sector == Index; }))
+            {
+                SourceSector.CeilingHeight = SourceSector.FloorHeight;
+            }
+            Sector.Floor = AddPlane(Actor, Index, Footprint, SourceSector, false, Floor, Bounds.GetCenter());
+            Sector.Ceiling = AddPlane(Actor, Index, Footprint, SourceSector, true, Ceiling, Bounds.GetCenter());
+            Sector.Light = SourceSector.Light;
+            if (!Sector.Floor || !Sector.Ceiling)
+            {
+                return false;
+            }
+        }
+        for (const FWadVertex& Vertex : Map.Vertices)
+        {
+            Actor.Vertices.Emplace(Vertex.X, Vertex.Y);
+        }
+        Actor.Sides.SetNum(Map.Sides.Num());
+        for (int32 Index = 0; Index < Map.Sides.Num(); ++Index)
+        {
+            FAAWadNativeSide& Side = Actor.Sides[Index];
+            Side.Sector = Map.GetSectorForSide(Index);
+            FString Upper;
+            FString Lower;
+            FString Middle;
+            FVector2D Offset;
+            UDoomWadLoader::GetWadSideTextureNames(Map.Sides[Index], Upper, Lower, Middle, Offset);
+            Side.Textures = {Lower, Middle, Upper};
+            Side.TextureOffset = FIntPoint(Offset.X, Offset.Y);
+            Side.Bands.SetNum(3);
+        }
+        for (const FWadLineDef& Line : Map.Lines)
+        {
+            FAAWadNativeLine& Entry = Actor.Lines.AddDefaulted_GetRef();
+            Entry.Endpoints = FIntPoint(Line.From, Line.To);
+            Entry.Sides = FIntPoint(Line.Side[0], Line.Side[1]);
+            Entry.Flags = Line.Flags;
+            const bool bTwoSided = (Line.Flags & TwoSidedLine) != 0
+                && Map.GetSectorForSide(Line.Side[0]) != INDEX_NONE && Map.GetSectorForSide(Line.Side[1]) != INDEX_NONE;
+            for (const int32 SideId : Line.Side)
+            {
+                if (!Actor.Sides.IsValidIndex(SideId) || Actor.Sides[SideId].Sector == INDEX_NONE)
+                {
+                    continue;
+                }
+                FAAWadNativeSide& Side = Actor.Sides[SideId];
+                for (int32 Band = 0; Band < Side.Bands.Num(); ++Band)
+                {
+                    const bool bMiddle = Band == uint8(EWadWallBand::Middle);
+                    if (Side.Bands[Band] || (!bMiddle && !bTwoSided) || !HasTexture(Side.Textures[Band]))
+                    {
+                        continue;
+                    }
+                    const EWadWallBlend Blend = bMiddle && bTwoSided
+                        ? ((Line.Flags & 0x0020) != 0 ? EWadWallBlend::Translucent : EWadWallBlend::Masked)
+                        : EWadWallBlend::Opaque;
+                    const FString Name = FString::Printf(TEXT("Side_%04d_%d"), SideId, Band);
+                    UStaticMeshComponent* Mesh = AddMesh(Actor, WallMeshes[uint8(Blend)], Name, false,
+                        Blend == EWadWallBlend::Opaque, Material(Side.Textures[Band], Blend));
+                    Mesh->SetVisibility(false);
+                    Actor.ApplyLight(*Mesh, FMath::Min<int32>(Map.Sectors[Side.Sector].Light, 255), true);
+                    Side.Bands[Band] = Mesh;
+                }
+            }
+        }
+        FAssetCompilingManager::Get().FinishAllCompilation();
+        Actor.RegisterAllComponents();
+        for (int32 Index = 0; Index < Actor.Lines.Num(); ++Index)
+        {
+            Actor.UpdateLine(Index, true);
+        }
+        return !bAssetError;
+    }
+};
+
+bool SaveNativeWadDoors(UWorld* World, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!World || World->WorldType != EWorldType::Editor || !Map || !World->GetOutermost()->GetName().StartsWith(TEXT("/Game/")))
+    {
+        Output.Log(TEXT("Door updates require a loaded source map and an open native editor level."));
+        return false;
+    }
+    return FAAWadNativeImport::UpdateSavedDoors(*World, *Map, Output);
+}
+
+bool SaveNativeWadGameplay(UWorld* World, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!World || World->WorldType != EWorldType::Editor || !Map || !World->GetOutermost()->GetName().StartsWith(TEXT("/Game/")))
+    {
+        return false;
+    }
+    ANativeWadLevel* Actor = FAAWadNativeImport::FindMatchingLevel(*World, *Map);
+    if (!Actor || !FAAWadNativeImport::InstallGameplay(*World, *Actor, *Map, Output)
+        || !SaveAsset(*World, *FPackageName::GetMapPackageExtension()))
+    {
+        return false;
+    }
+    Output.Logf(TEXT("Saved WAD gameplay settings in %s."), *World->GetOutermost()->GetName());
+    return true;
+}
+
+bool SaveNativeWadLevel(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || FPackageName::DoesPackageExist(MapPackage) || FindPackage(nullptr, *MapPackage))
+    {
+        Output.Log(TEXT("Native WAD import needs a loaded map and a new /Game/ package path."));
+        return false;
+    }
+    FAAWadNativeImport Import;
+    Import.AssetRoot = MapPackage + TEXT("_Assets");
+    if (!Import.LoadWallMeshes())
+    {
+        Output.Log(TEXT("Missing native wall mesh materials. Run scripts/create_wall_materials.py in Unreal first."));
+        return false;
+    }
+    const FName Name(*FPackageName::GetShortName(MapPackage));
+    UPackage* Package = CreatePackage(*MapPackage);
+    UWorld* World = UWorld::CreateWorld(EWorldType::Editor, false, Name, Package);
+    if (!World)
+    {
+        return false;
+    }
+    World->SetFlags(RF_Public | RF_Standalone);
+    ANativeWadLevel* Actor = World->SpawnActor<ANativeWadLevel>();
+    Actor->SetActorLabel(TEXT("Amulets & Armor Level"));
+    bool bSaved = Import.Populate(*Actor, *Map, Output) && Import.InstallGameplay(*World, *Actor, *Map, Output);
+    if (bSaved)
+    {
+        APostProcessVolume* Volume = World->SpawnActor<APostProcessVolume>();
+        ConfigureWadLumen(Volume->Settings);
+        Volume->bUnbound = true;
+        Volume->SetActorLabel(TEXT("Sector Lighting and Lumen"));
+        FAssetCompilingManager::Get().FinishAllCompilation();
+        for (UObject* Asset : Import.AssetsToSave)
+        {
+            bSaved &= SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension());
+        }
+        bSaved = bSaved && SaveAsset(*World, *FPackageName::GetMapPackageExtension());
+    }
+    if (bSaved)
+    {
+        FAssetRegistryModule::AssetCreated(World);
+        Output.Logf(TEXT("Saved native WAD level %s with %d sectors and %d lines (%d assets)."),
+            *MapPackage, Map->Sectors.Num(), Map->Lines.Num(), Import.AssetsToSave.Num());
+    }
+    World->DestroyWorld(false);
+    return bSaved;
+}
+
+#endif

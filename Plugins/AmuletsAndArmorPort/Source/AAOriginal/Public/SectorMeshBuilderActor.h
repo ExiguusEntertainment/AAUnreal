@@ -1,5 +1,6 @@
 #pragma once
 #include "CoreMinimal.h"
+#include "DoomWadWalls.h"
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
 #include "SectorMeshBuilderActor.generated.h"
@@ -7,9 +8,9 @@
 class UProceduralMeshComponent;
 class USceneComponent;
 class UMaterialInterface;
+class UMaterialInstanceDynamic;
 
 // Experimental: builds per-sector meshes (floor, ceiling, and wall strips) from last loaded WAD topology.
-// Limitations: holes (islands) not handled yet; sectors with multiple disjoint polygons will build multiple loops.
 UCLASS(Blueprintable, hidecategories=(Input, Replication, HLOD, WorldPartition, Rendering))
 class AAORIGINAL_API ASectorMeshBuilderActor : public AActor
 {
@@ -20,6 +21,13 @@ public:
     UFUNCTION(CallInEditor, Category="Sector Mesh")
     void BuildSectorsFromLastWad();
 
+    void SetBuildWallsEnabled(bool bEnabled) { bBuildWalls = bEnabled; }
+    void SetBuildFloorsEnabled(bool bEnabled) { bBuildFloorsAndCeilings = bEnabled; }
+    void SetBuildCeilingsEnabled(bool bEnabled) { bBuildCeilings = bEnabled; }
+    void SetFloorVertexColor(const FColor& InColor) { FloorVertexColor = InColor; }
+    void SetCeilingVertexColor(const FColor& InColor) { CeilingVertexColor = InColor; }
+    void SetWallVertexColor(const FColor& InColor) { WallVertexColor = InColor; }
+
     // Runtime controls: move floor/ceiling independently (values in Unreal units)
     UFUNCTION(BlueprintCallable, Category="Sector Mesh|Runtime")
     void SetSectorFloorZ(int32 SectorIndex, float NewFloorZ_UU);
@@ -27,23 +35,43 @@ public:
     UFUNCTION(BlueprintCallable, Category="Sector Mesh|Runtime")
     void SetSectorCeilingZ(int32 SectorIndex, float NewCeilZ_UU);
 
+    // Offsets from the imported position, in source texels. Follows the original
+    // floor scroll direction on both horizontal surfaces and the sidedef direction on walls.
+    UFUNCTION(BlueprintCallable, Category="Sector Mesh|Runtime")
+    bool SetSectorTextureScrollTexels(int32 SectorIndex, bool bCeiling, FVector2D OffsetTexels);
+
+    UFUNCTION(BlueprintCallable, Category="Sector Mesh|Runtime")
+    bool SetWallTextureScrollTexels(int32 SideIndex, EWadWallBand Band, FVector2D OffsetTexels);
+
+    // Actor-relative Z in Unreal units, read from the two generated surfaces.
+    bool GetSectorSurfaceHeights(int32 SectorIndex, FVector2D& OutHeights) const;
+
 protected:
     virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
     void ClearChildren();
+    void BuildWalls(const FDoomWadMapData& Map);
+    void BuildWallBatch(int32 BatchIndex);
+    void SetSectorSurfaceZ(int32 SectorIndex, float NewZ_UU, bool bCeiling);
 
-    // Build a simple floor/ceiling mesh for a polygon
-    static void BuildPolygonMesh(const TArray<FVector2D>& Poly, float Z, bool bCeiling, float UnitsToUU, float UVScale, TArray<FVector>& OutVerts, TArray<int32>& OutIndices, TArray<FVector>& OutNormals, TArray<FVector2D>& OutUV0, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents);
+    // The builder owns the data needed to move its sectors even after another WAD is loaded.
+    FDoomWadMapData WallMap;
+    TArray<FWadSectorHeightRange> SectorHeights;
+    TArray<TArray<int32>> WallBatchesBySector;
+    TArray<TArray<int32>> WallBatchesBySide;
+    TArray<TArray<TWeakObjectPtr<UProceduralMeshComponent>>> WallBatches;
+    double BuiltUnitsToUU = 1.0;
 
-    // Very simple ear clipping triangulation (no holes). Returns triangle indices into OutVerts (local poly indexing)
-    static bool TriangulateEarClip(const TArray<FVector2D>& InPoly, TArray<int32>& OutLocalIndices);
+    struct FWallTextureScroll
+    {
+        FVector2D Offset = FVector2D::ZeroVector;
+        TArray<TWeakObjectPtr<UMaterialInstanceDynamic>, TInlineAllocator<2>> Materials;
+    };
+    TMap<uint64, FWallTextureScroll> WallTextureScrolls;
 
-    // Extract oriented edge loops for a sector (each edge oriented so sector is on the left of the edge direction)
-    static void BuildSectorLoops(int32 SectorIndex,
-                                 const TArray<FIntPoint>& Lines,
-                                 const TArray<FIntPoint>& LineSectors,
-                                 TArray<TArray<int32>>& OutLoops);
+    UPROPERTY(Transient)
+    TMap<FString, TObjectPtr<UMaterialInterface>> WallMaterials;
 
     // Settings
     UPROPERTY(EditAnywhere, Category="Sector Mesh")
@@ -58,13 +86,8 @@ private:
     UPROPERTY(EditAnywhere, Category="Sector Mesh")
     bool bBuildFloorsAndCeilings = true;
 
-    // Prefer BSP subsector polygons for floor/ceiling when available
     UPROPERTY(EditAnywhere, Category="Sector Mesh")
-    bool bUseSubsectorPolysForFloors = false;
-
-    // Two-sided walls: also generate a middle band across overlapping height range
-    UPROPERTY(EditAnywhere, Category="Sector Mesh")
-    bool bBuildMiddleBands = false;
+    bool bBuildCeilings = true;
 
     // Materials
     UPROPERTY(EditAnywhere, Category="Sector Mesh|Materials")
@@ -76,15 +99,14 @@ private:
     UPROPERTY(EditAnywhere, Category="Sector Mesh|Materials")
     TObjectPtr<UMaterialInterface> WallMaterial = nullptr;
 
-    // UV scale controls
-    UPROPERTY(EditAnywhere, Category="Sector Mesh|UV")
-    float FloorCeilUVScale = 0.01f;
+    UPROPERTY(EditAnywhere, Category="Sector Mesh|Materials")
+    FColor FloorVertexColor = FColor::Red;
 
-    UPROPERTY(EditAnywhere, Category="Sector Mesh|UV")
-    float WallUScale = 0.01f;
+    UPROPERTY(EditAnywhere, Category="Sector Mesh|Materials")
+    FColor CeilingVertexColor = FColor::Blue;
 
-    UPROPERTY(EditAnywhere, Category="Sector Mesh|UV")
-    float WallVScale = 0.01f;
+    UPROPERTY(EditAnywhere, Category="Sector Mesh|Materials")
+    FColor WallVertexColor = FColor(255, 224, 96, 255);
 
     // Debug: only build a specific sector if >= 0
     UPROPERTY(EditAnywhere, Category="Sector Mesh|Debug")

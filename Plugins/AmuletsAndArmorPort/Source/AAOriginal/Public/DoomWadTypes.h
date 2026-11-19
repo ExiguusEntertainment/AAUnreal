@@ -19,6 +19,14 @@ struct FWadLumpDirectoryEntry
 };
 
 struct FWadVertex { int16 X; int16 Y; };
+struct FWadThing
+{
+    int16 X;
+    int16 Y;
+    uint16 Angle;
+    int16 Type;
+    uint16 Flags;
+};
 
 struct FWadLineDef
 {
@@ -91,9 +99,42 @@ using T_3dNode         = FWadNode;
 static_assert(sizeof(FWadHeader) == 12, "FWadHeader size mismatch");
 static_assert(sizeof(FWadLumpDirectoryEntry) == 16, "FWadLumpDirectoryEntry size mismatch");
 static_assert(sizeof(FWadVertex) == 4, "FWadVertex size mismatch");
+static_assert(sizeof(FWadThing) == 10, "FWadThing size mismatch");
 static_assert(sizeof(FWadLineDef) == 14, "FWadLineDef size mismatch");
 static_assert(sizeof(FWadSideDef) == 30, "FWadSideDef size mismatch");
 static_assert(sizeof(FWadSector) == 26, "FWadSector size mismatch");
 static_assert(sizeof(FWadSeg) == 12, "FWadSeg size mismatch");
 static_assert(sizeof(FWadSubSector) == 4, "FWadSubSector size mismatch");
 static_assert(sizeof(FWadNode) == 28, "FWadNode size mismatch");
+
+// Source-order arrays: a record's zero-based index is its stable ID within this map.
+// Positions, heights, offsets, and flags retain the original values.
+struct FDoomWadMapData
+{
+    FString Marker;
+    TArray<FWadVertex> Vertices;
+    TArray<FWadLineDef> Lines;
+    TArray<FWadSideDef> Sides;
+    TArray<FWadSector> Sectors;
+    TArray<FWadThing> Things;
+    TArray<FWadSeg> Segs;
+    TArray<FWadSubSector> SubSectors;
+    TArray<FWadNode> Nodes;
+
+    int32 GetSectorForSide(int32 SideIndex) const
+    {
+        if (Sides.IsValidIndex(SideIndex) && Sectors.IsValidIndex(Sides[SideIndex].Sector))
+        {
+            return Sides[SideIndex].Sector;
+        }
+        return INDEX_NONE;
+    }
+};
+
+// One sector in source XY units. Triangle indices are counterclockwise triples.
+struct FDoomWadSectorFootprint
+{
+    TArray<FVector2D> Vertices;
+    TArray<FIntPoint> BoundaryEdges;
+    TArray<int32> Triangles;
+};

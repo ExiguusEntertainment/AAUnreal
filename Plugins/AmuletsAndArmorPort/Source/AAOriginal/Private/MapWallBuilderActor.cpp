@@ -3,9 +3,9 @@
 #include "LegacyMapLoader.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Components/StaticMeshComponent.h"
-#include "Editor.h"
 
 AMapWallBuilderActor::AMapWallBuilderActor()
 {

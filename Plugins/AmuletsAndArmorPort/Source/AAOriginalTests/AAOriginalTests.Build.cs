@@ -18,7 +18,8 @@ public class AAOriginalTests : ModuleRules
         // Needed for IPluginManager (Interfaces/IPluginManager.h) implementation
         PrivateDependencyModuleNames.AddRange(new[]
         {
-            "Projects"
+            "Projects",
+            "ProceduralMeshComponent"
         });
 
         if (Target.Type != TargetType.Editor)

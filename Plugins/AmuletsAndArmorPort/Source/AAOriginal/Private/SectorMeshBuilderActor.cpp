@@ -1,16 +1,256 @@
 #include "SectorMeshBuilderActor.h"
 #include "DoomWadLoader.h"
+#include "DoomWadWalls.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
 #include "ProceduralMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "KismetProceduralMeshLibrary.h"
+#include "UObject/ConstructorHelpers.h"
+#include "Engine/Texture2D.h"
+#include "TextureResource.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 ASectorMeshBuilderActor::ASectorMeshBuilderActor()
 {
     PrimaryActorTick.bCanEverTick = false;
     SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     SetRootComponent(SceneRoot);
+
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> VertexColorMatFinder(
+        TEXT("/Engine/EngineDebugMaterials/VertexColorMaterial.VertexColorMaterial"));
+    if (VertexColorMatFinder.Succeeded())
+    {
+        if (!FloorMaterial) FloorMaterial = VertexColorMatFinder.Object;
+        if (!CeilingMaterial) CeilingMaterial = VertexColorMatFinder.Object;
+        if (!WallMaterial) WallMaterial = VertexColorMatFinder.Object;
+    }
+}
+
+namespace
+{
+    constexpr const TCHAR* OpaqueSurfaceMaterialPath = TEXT("/Game/AAReview/M_AAWallOpaque.M_AAWallOpaque");
+    const FName SurfaceTextureParameter(TEXT("SurfaceTexture"));
+    const FName SurfaceOffsetParameter(TEXT("SurfaceOffset"));
+    constexpr int32 AAPictureResourceHeaderSize = 14;
+    constexpr int32 AAPictureResourceEntrySize = 39;
+    struct FPictureResEntry
+    {
+        int32 FileOffset = 0;
+        int32 Size = 0;
+    };
+
+    struct FPictureResourceCache
+    {
+        bool bInitialized = false;
+        bool bInitSucceeded = false;
+        TMap<FString, FPictureResEntry> Entries;
+        TArray<FColor> Palette;
+        TMap<FString, TWeakObjectPtr<UTexture2D>> TextureCache;
+    };
+
+    static FPictureResourceCache GPictureResourceCache;
+
+    static FString NormalizeTextureName(const FString& TextureName)
+    {
+        return TextureName.TrimStartAndEnd().ToUpper().Left(8);
+    }
+
+    static bool IsUsableTextureName(const FString& TextureName)
+    {
+        const FString Normalized = NormalizeTextureName(TextureName);
+        return !Normalized.IsEmpty() && Normalized != TEXT("-");
+    }
+
+    static FString GetArtFinalPath(const FString& LeafName)
+    {
+        return FPaths::ConvertRelativePathToFull(
+            FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal"), LeafName));
+    }
+
+    static bool LoadGamePalette(TArray<FColor>& OutPalette)
+    {
+        TArray<uint8> RawBytes;
+        if (!FFileHelper::LoadFileToArray(RawBytes, *GetArtFinalPath(TEXT("GAME.PAL"))) || RawBytes.Num() < (256 * 3))
+        {
+            return false;
+        }
+
+        OutPalette.Reset(256);
+        for (int32 PaletteIndex = 0; PaletteIndex < 256; ++PaletteIndex)
+        {
+            const uint8 R = uint8(((int32)RawBytes[(PaletteIndex * 3) + 0] & 0x3F) * 255 / 63);
+            const uint8 G = uint8(((int32)RawBytes[(PaletteIndex * 3) + 1] & 0x3F) * 255 / 63);
+            const uint8 B = uint8(((int32)RawBytes[(PaletteIndex * 3) + 2] & 0x3F) * 255 / 63);
+            OutPalette.Add(FColor(R, G, B, 255));
+        }
+        return true;
+    }
+
+    static bool LoadPictureResourceIndex(TMap<FString, FPictureResEntry>& OutEntries)
+    {
+        TArray<uint8> ResourceBytes;
+        if (!FFileHelper::LoadFileToArray(ResourceBytes, *GetArtFinalPath(TEXT("PICS.RES"))) || ResourceBytes.Num() < AAPictureResourceHeaderSize)
+        {
+            return false;
+        }
+
+        const uint32 UniqueId = *(const uint32*)(ResourceBytes.GetData() + 0);
+        const uint32 IndexOffset = *(const uint32*)(ResourceBytes.GetData() + 4);
+        const uint32 IndexSize = *(const uint32*)(ResourceBytes.GetData() + 8);
+        const uint16 NumEntries = *(const uint16*)(ResourceBytes.GetData() + 12);
+        if (UniqueId != 0x21736552u || IndexOffset + IndexSize > (uint32)ResourceBytes.Num() || IndexSize != (uint32)NumEntries * AAPictureResourceEntrySize)
+        {
+            return false;
+        }
+
+        OutEntries.Reset();
+        OutEntries.Reserve(NumEntries);
+        for (uint16 EntryIndex = 0; EntryIndex < NumEntries; ++EntryIndex)
+        {
+            const uint8* EntryPtr = ResourceBytes.GetData() + IndexOffset + (EntryIndex * AAPictureResourceEntrySize);
+            FString ResourceName = FString(ANSI_TO_TCHAR(reinterpret_cast<const char*>(EntryPtr + 4))).Left(14).TrimEnd();
+            ResourceName = NormalizeTextureName(ResourceName);
+            if (ResourceName.IsEmpty())
+            {
+                continue;
+            }
+
+            FPictureResEntry& Entry = OutEntries.FindOrAdd(ResourceName);
+            Entry.FileOffset = *(const int32*)(EntryPtr + 18);
+            Entry.Size = *(const int32*)(EntryPtr + 22);
+        }
+        return OutEntries.Num() > 0;
+    }
+
+    static bool EnsurePictureResourceCache()
+    {
+        if (GPictureResourceCache.bInitialized)
+        {
+            return GPictureResourceCache.bInitSucceeded;
+        }
+
+        GPictureResourceCache.bInitialized = true;
+        GPictureResourceCache.bInitSucceeded =
+            LoadGamePalette(GPictureResourceCache.Palette) &&
+            LoadPictureResourceIndex(GPictureResourceCache.Entries);
+        return GPictureResourceCache.bInitSucceeded;
+    }
+
+    static UTexture2D* LoadSurfaceTexture(const FString& TextureName)
+    {
+        const FString Normalized = NormalizeTextureName(TextureName);
+        if (!IsUsableTextureName(Normalized) || !EnsurePictureResourceCache())
+        {
+            return nullptr;
+        }
+
+        if (const TWeakObjectPtr<UTexture2D>* ExistingTexture = GPictureResourceCache.TextureCache.Find(Normalized);
+            ExistingTexture && ExistingTexture->IsValid())
+        {
+            return ExistingTexture->Get();
+        }
+
+        const FPictureResEntry* Entry = GPictureResourceCache.Entries.Find(Normalized);
+        if (!Entry)
+        {
+            return nullptr;
+        }
+
+        TArray<uint8> ResourceBytes;
+        if (!FFileHelper::LoadFileToArray(ResourceBytes, *GetArtFinalPath(TEXT("PICS.RES"))))
+        {
+            return nullptr;
+        }
+        if (Entry->FileOffset < 0 || Entry->Size < 4 || int64(Entry->FileOffset) + Entry->Size > ResourceBytes.Num())
+        {
+            return nullptr;
+        }
+
+        const uint8* DataPtr = ResourceBytes.GetData() + Entry->FileOffset;
+        // The map renderer stores height first, then width, followed by one column at a time.
+        const int32 Height = DataPtr[0] | (int32(DataPtr[1]) << 8);
+        const int32 Width = DataPtr[2] | (int32(DataPtr[3]) << 8);
+        const int64 PixelCount = int64(Width) * Height;
+        if (Width <= 0 || Height <= 0 || PixelCount > Entry->Size - 4)
+        {
+            return nullptr;
+        }
+
+        TArray<FColor> Pixels;
+        Pixels.SetNumUninitialized(int32(PixelCount));
+        for (int32 Y = 0; Y < Height; ++Y)
+        {
+            for (int32 X = 0; X < Width; ++X)
+            {
+                const uint8 PaletteIndex = DataPtr[4 + X * Height + Y];
+                FColor& Pixel = Pixels[Y * Width + X];
+                Pixel = GPictureResourceCache.Palette[PaletteIndex];
+                Pixel.A = PaletteIndex == 0 ? 0 : 255;
+            }
+        }
+
+        UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+        if (!Texture)
+        {
+            return nullptr;
+        }
+
+        Texture->MipGenSettings = TMGS_NoMipmaps;
+        Texture->NeverStream = true;
+        Texture->Filter = TF_Nearest;
+        Texture->AddressX = TA_Wrap;
+        Texture->AddressY = TA_Wrap;
+        Texture->SRGB = true;
+
+        FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
+        void* DestData = Mip.BulkData.Lock(LOCK_READ_WRITE);
+        FMemory::Memcpy(DestData, Pixels.GetData(), Pixels.Num() * sizeof(FColor));
+        Mip.BulkData.Unlock();
+        Texture->UpdateResource();
+
+        GPictureResourceCache.TextureCache.Add(Normalized, Texture);
+        return Texture;
+    }
+
+    static FVector2D TextureDimensions(const UTexture2D* Texture)
+    {
+        return Texture ? FVector2D(Texture->GetSizeX(), Texture->GetSizeY()) : FVector2D(64.0, 64.0);
+    }
+
+    static const UTexture2D* GetBoundSurfaceTexture(UMaterialInstanceDynamic* Material)
+    {
+        return Material ? Cast<UTexture2D>(Material->K2_GetTextureParameterValue(SurfaceTextureParameter)) : nullptr;
+    }
+
+    static void ApplySurfaceOffset(UMaterialInstanceDynamic& Material, FVector2D Texels)
+    {
+        const FVector2D Size = TextureDimensions(GetBoundSurfaceTexture(&Material));
+        Material.SetVectorParameterValue(SurfaceOffsetParameter, FLinearColor(
+            float(FMath::Fmod(Texels.X, Size.X) / Size.X), float(FMath::Fmod(Texels.Y, Size.Y) / Size.Y), 0.0f, 0.0f));
+    }
+
+    static UMaterialInstanceDynamic* MakePlaneMaterial(UObject* Owner, const FString& TextureName)
+    {
+        UTexture2D* Texture = LoadSurfaceTexture(TextureName);
+        UMaterialInterface* Parent = Texture ? LoadObject<UMaterialInterface>(nullptr, OpaqueSurfaceMaterialPath) : nullptr;
+        if (!Parent)
+        {
+            return nullptr;
+        }
+        UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Parent, Owner);
+        Material->SetTextureParameterValue(SurfaceTextureParameter, Texture);
+        return Material;
+    }
+
+}
+
+UTexture2D* LoadWadSurfaceTexture(const FString& TextureName)
+{
+    return LoadSurfaceTexture(TextureName);
 }
 
 void ASectorMeshBuilderActor::OnConstruction(const FTransform& Transform)
@@ -21,6 +261,23 @@ void ASectorMeshBuilderActor::OnConstruction(const FTransform& Transform)
 void ASectorMeshBuilderActor::ClearChildren()
 {
     if (!bClearPrevious) return;
+
+    for (TObjectPtr<USceneComponent>& Root : FloorRoots)
+    {
+        if (Root)
+        {
+            Root->DestroyComponent();
+        }
+    }
+
+    for (TObjectPtr<USceneComponent>& Root : CeilRoots)
+    {
+        if (Root)
+        {
+            Root->DestroyComponent();
+        }
+    }
+
     TArray<UActorComponent*> Comps;
     GetComponents(Comps);
     for (UActorComponent* C : Comps)
@@ -30,83 +287,11 @@ void ASectorMeshBuilderActor::ClearChildren()
             C->DestroyComponent();
         }
     }
-}
 
-static int32 FindNextEdgeStart(int32 CurrentEnd, const TMultiMap<int32, int32>& FromTo)
-{
-    TArray<int32> ToCandidates; FromTo.MultiFind(CurrentEnd, ToCandidates);
-    if (ToCandidates.Num() > 0) return ToCandidates[0];
-    return INDEX_NONE;
-}
-
-void ASectorMeshBuilderActor::BuildSectorLoops(int32 SectorIndex,
-                                               const TArray<FIntPoint>& Lines,
-                                               const TArray<FIntPoint>& LineSectors,
-                                               TArray<TArray<int32>>& OutLoops)
-{
-    OutLoops.Reset();
-
-    TMultiMap<int32,int32> FromTo;
-    TSet<uint64> EdgeSet;
-
-    auto MakeKey = [](int32 A, int32 B)->uint64 { return (uint64(uint32(A))<<32) | uint32(B); };
-
-    for (int32 i=0;i<Lines.Num();++i)
-    {
-        const FIntPoint& L = Lines[i];
-        const FIntPoint& LS = LineSectors[i];
-        if (LS.X == SectorIndex)
-        {
-            if (L.X != L.Y)
-            {
-                FromTo.Add(L.X, L.Y);
-                EdgeSet.Add(MakeKey(L.X, L.Y));
-            }
-        }
-        if (LS.Y == SectorIndex)
-        {
-            if (L.X != L.Y)
-            {
-                FromTo.Add(L.Y, L.X);
-                EdgeSet.Add(MakeKey(L.Y, L.X));
-            }
-        }
-    }
-
-    TSet<uint64> Used;
-    for (auto It = EdgeSet.CreateConstIterator(); It; ++It)
-    {
-        const uint64 Key = *It;
-        if (Used.Contains(Key)) continue;
-
-        int32 StartA = int32(Key >> 32);
-        int32 StartB = int32(Key & 0xffffffff);
-        TArray<int32> Loop;
-        Loop.Add(StartA);
-        Loop.Add(StartB);
-        Used.Add(Key);
-
-        int32 Curr = StartB;
-        int32 Guard = 0;
-        while (Guard++ < 100000)
-        {
-            int32 Next = INDEX_NONE;
-            TArray<int32> Candidates; FromTo.MultiFind(Curr, Candidates);
-            for (int32 C : Candidates)
-            {
-                uint64 K2 = MakeKey(Curr, C);
-                if (!Used.Contains(K2)) { Next = C; Used.Add(K2); break; }
-            }
-            if (Next == INDEX_NONE) break;
-            if (Next == Loop[0]) { /* close without duplicating first */ break; }
-            Loop.Add(Next);
-            Curr = Next;
-        }
-        if (Loop.Num() >= 3)
-        {
-            OutLoops.Add(Loop);
-        }
-    }
+    FloorRoots.Reset();
+    CeilRoots.Reset();
+    FloorPMCs.Reset();
+    CeilPMCs.Reset();
 }
 
 static void AppendMeshToPMC(UProceduralMeshComponent* PMC, const TArray<FVector>& Verts, const TArray<int32>& Indices,
@@ -116,355 +301,568 @@ static void AppendMeshToPMC(UProceduralMeshComponent* PMC, const TArray<FVector>
     PMC->CreateMeshSection(Section, Verts, Indices, Normals, UV0, Colors, Tangents, true);
 }
 
-void ASectorMeshBuilderActor::BuildPolygonMesh(const TArray<FVector2D>& Poly, float Z, bool bCeiling, float UnitsToUU, float UVScale,
-                                               TArray<FVector>& OutVerts, TArray<int32>& OutIndices, TArray<FVector>& OutNormals, TArray<FVector2D>& OutUV0, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents)
+static void BuildFootprintMesh(UProceduralMeshComponent* PMC, const FDoomWadSectorFootprint& Footprint,
+                              bool bCeiling, float UnitsToUU, const FColor& VertexColor)
 {
-    OutVerts.Reset(); OutIndices.Reset(); OutNormals.Reset(); OutUV0.Reset(); OutColors.Reset(); OutTangents.Reset();
-    if (Poly.Num() < 3) return;
-
-    // Triangulate with orientation handling inside the ear clipper
-    TArray<int32> LocalTri;
-    if (!TriangulateEarClip(Poly, LocalTri)) return;
-
-    for (const FVector2D& Pt : Poly)
+    TArray<FVector> Vertices;
+    TArray<FVector2D> UVs;
+    TArray<FColor> Colors;
+    Vertices.Reserve(Footprint.Vertices.Num());
+    UVs.Reserve(Footprint.Vertices.Num());
+    const FVector2D TextureSize = TextureDimensions(GetBoundSurfaceTexture(Cast<UMaterialInstanceDynamic>(PMC->GetMaterial(0))));
+    Colors.Init(VertexColor, Footprint.Vertices.Num());
+    for (const FVector2D& Point : Footprint.Vertices)
     {
-        OutVerts.Add(FVector(Pt.X * UnitsToUU, Pt.Y * UnitsToUU, Z));
-        OutUV0.Add(FVector2D(Pt.X * UVScale, Pt.Y * UVScale));
-        OutColors.Add(FColor::White);
+        Vertices.Emplace(Point.X * UnitsToUU, Point.Y * UnitsToUU, 0.0);
+        UVs.Emplace(Point.X / TextureSize.X, Point.Y / TextureSize.Y);
     }
 
-    OutIndices = LocalTri;
-
-    // Flip floor winding so it faces toward +Z viewer by default; keep ceiling as produced so it faces -Z viewer
+    TArray<int32> Indices = Footprint.Triangles;
+    // Unreal mesh winding faces the floor up and the ceiling down.
     if (!bCeiling)
     {
-        for (int32 i=0;i+2<OutIndices.Num(); i+=3)
+        for (int32 Index = 0; Index < Indices.Num(); Index += 3)
         {
-            Swap(OutIndices[i+1], OutIndices[i+2]);
+            Swap(Indices[Index + 1], Indices[Index + 2]);
         }
     }
 
-    // Compute normals/tangents from geometry and UVs
-    UKismetProceduralMeshLibrary::CalculateTangentsForMesh(OutVerts, OutIndices, OutUV0, OutNormals, OutTangents);
+    TArray<FVector> Normals;
+    TArray<FProcMeshTangent> Tangents;
+    UKismetProceduralMeshLibrary::CalculateTangentsForMesh(Vertices, Indices, UVs, Normals, Tangents);
+    AppendMeshToPMC(PMC, Vertices, Indices, Normals, UVs, Colors, Tangents);
 }
 
-static void CalculateWallQuadUVs(const FVector& Q0, const FVector& Q1, const FVector& Q2, const FVector& Q3,
-                                  float Length, float WallUScale, float WallVScale,
-                                  TArray<FVector2D>& WallUV, TArray<FColor>& WallColors)
+namespace
 {
-    // UVs per-quad based on edge length and vertical size
-    const float ULen = Length * WallUScale;
-    const float VLen = (Q1 - Q0).Size() * WallVScale;
-    WallUV.Add(FVector2D(0.f, 0.f));
-    WallUV.Add(FVector2D(0.f, VLen));
-    WallUV.Add(FVector2D(ULen, VLen));
-    WallUV.Add(FVector2D(ULen, 0.f));
-    WallColors.Add(FColor::White); WallColors.Add(FColor::White); WallColors.Add(FColor::White); WallColors.Add(FColor::White);
-}
+    constexpr int32 WallLinesPerBatch = 64;
+    constexpr uint64 SharedWallSection = MAX_uint64;
 
-bool ASectorMeshBuilderActor::TriangulateEarClip(const TArray<FVector2D>& InPoly, TArray<int32>& OutIndices)
-{
-    OutIndices.Reset();
-    const int32 N = InPoly.Num();
-    if (N < 3) return false;
-
-    auto Area2 = [&](int32 a, int32 b, int32 c) -> float
+    uint64 WallSurfaceKey(int32 SideIndex, EWadWallBand Band)
     {
-        const FVector2D &A = InPoly[a], &B=InPoly[b], &C=InPoly[c];
-        return (B.X - A.X)*(C.Y - A.Y) - (B.Y - A.Y)*(C.X - A.X);
-    };
-
-    // Orientation
-    float Sum = 0; for (int32 i=0;i<N;i++){ int32 j=(i+1)%N; Sum += InPoly[i].X*InPoly[j].Y - InPoly[j].X*InPoly[i].Y; }
-    bool bCCW = Sum > 0;
-
-    TArray<int32> V; V.Reserve(N);
-    if (bCCW) { for (int32 i=0;i<N;++i) V.Add(i);} else { for (int32 i=0;i<N;++i) V.Add(N-1-i);}    
-
-    auto PointInTri = [&](const FVector2D& A, const FVector2D& B, const FVector2D& C, const FVector2D& P)->bool
-    {
-        float a = ((B.Y - C.Y)*(P.X - C.X) + (C.X - B.X)*(P.Y - C.Y)) /
-                  ((B.Y - C.Y)*(A.X - C.X) + (C.X - B.X)*(A.Y - C.Y));
-        float b = ((C.Y - A.Y)*(P.X - C.X) + (A.X - C.X)*(P.Y - C.Y)) /
-                  ((B.Y - C.Y)*(A.X - C.X) + (C.X - B.X)*(A.Y - C.Y));
-        float c = 1.0f - a - b;
-        return a >= 0 && b >= 0 && c >= 0;
-    };
-
-    int32 Guard=0;
-    while (V.Num() > 2 && Guard++ < 100000)
-    {
-        bool Clipped=false;
-        const int32 n=V.Num();
-        for (int32 i=0;i<n;i++)
-        {
-            int32 i0 = (i + n - 1) % n;
-            int32 i1 = i;
-            int32 i2 = (i + 1) % n;
-            if (Area2(V[i0], V[i1], V[i2]) <= 0) continue; // reflex or colinear
-            bool HasInside=false;
-            for (int32 j=0;j<n;j++) if (j!=i0 && j!=i1 && j!=i2){ if (PointInTri(InPoly[V[i0]],InPoly[V[i1]],InPoly[V[i2]], InPoly[V[j]])){ HasInside=true; break; } }
-            if (HasInside) continue;
-            OutIndices.Add(V[i0]); OutIndices.Add(V[i1]); OutIndices.Add(V[i2]);
-            V.RemoveAt(i1); Clipped=true; break;
-        }
-        if (!Clipped) break;
+        return (uint64(SideIndex) << 2) | uint64(Band);
     }
 
-    return OutIndices.Num() >= 3;
+    struct FWallMeshSection
+    {
+        FString TextureName;
+        EWadWallBlend Blend = EWadWallBlend::Opaque;
+        uint64 ScrollKey = SharedWallSection;
+        UTexture2D* Texture = nullptr;
+        TArray<FVector> Vertices;
+        TArray<int32> Indices;
+        TArray<FVector> Normals;
+        TArray<FVector2D> UVs;
+        TArray<FColor> Colors;
+        TArray<FProcMeshTangent> Tangents;
+    };
+
+    const TCHAR* WallComponentTag(EWadWallBlend Blend)
+    {
+        switch (Blend)
+        {
+        case EWadWallBlend::Masked: return TEXT("AA.Wall.Masked");
+        case EWadWallBlend::Translucent: return TEXT("AA.Wall.Translucent");
+        default: return TEXT("AA.Wall.Opaque");
+        }
+    }
+
+    const TCHAR* WallMaterialPath(EWadWallBlend Blend)
+    {
+        switch (Blend)
+        {
+        case EWadWallBlend::Masked: return TEXT("/Game/AAReview/M_AAWallMasked.M_AAWallMasked");
+        case EWadWallBlend::Translucent: return TEXT("/Game/AAReview/M_AAWallTranslucent.M_AAWallTranslucent");
+        default: return OpaqueSurfaceMaterialPath;
+        }
+    }
+
+    void AppendWallQuad(TArray<FVector>& Vertices, TArray<int32>& Indices, const FVector2D& From, const FVector2D& To,
+        double Bottom, double Top, double UnitsToUU, bool bTwoSidedCollision)
+    {
+        const int32 First = Vertices.Num();
+        Vertices.Emplace(From.X * UnitsToUU, From.Y * UnitsToUU, Bottom * UnitsToUU);
+        Vertices.Emplace(From.X * UnitsToUU, From.Y * UnitsToUU, Top * UnitsToUU);
+        Vertices.Emplace(To.X * UnitsToUU, To.Y * UnitsToUU, Top * UnitsToUU);
+        Vertices.Emplace(To.X * UnitsToUU, To.Y * UnitsToUU, Bottom * UnitsToUU);
+        Indices.Append({First, First + 1, First + 2, First, First + 2, First + 3});
+        if (bTwoSidedCollision)
+        {
+            Indices.Append({First, First + 2, First + 1, First, First + 3, First + 2});
+        }
+    }
+}
+
+void ASectorMeshBuilderActor::BuildWalls(const FDoomWadMapData& Map)
+{
+    WallMap = Map;
+    WallBatches.SetNum(FMath::DivideAndRoundUp(Map.Lines.Num(), WallLinesPerBatch));
+    WallBatchesBySector.SetNum(Map.Sectors.Num());
+    WallBatchesBySide.SetNum(Map.Sides.Num());
+    for (int32 Index = 0; Index < Map.Lines.Num(); ++Index)
+    {
+        const FWadLineDef& Line = Map.Lines[Index];
+        for (int32 Side : Line.Side)
+        {
+            if (WallBatchesBySide.IsValidIndex(Side))
+            {
+                WallBatchesBySide[Side].AddUnique(Index / WallLinesPerBatch);
+            }
+            const int32 SectorIndex = Map.GetSectorForSide(Side);
+            if (WallBatchesBySector.IsValidIndex(SectorIndex))
+            {
+                WallBatchesBySector[SectorIndex].AddUnique(Index / WallLinesPerBatch);
+            }
+        }
+    }
+    for (int32 Index = 0; Index < WallBatches.Num(); ++Index)
+    {
+        BuildWallBatch(Index);
+    }
+}
+
+void ASectorMeshBuilderActor::BuildWallBatch(int32 BatchIndex)
+{
+    TArray<TWeakObjectPtr<UProceduralMeshComponent>>& BatchMeshes = WallBatches[BatchIndex];
+    for (const TWeakObjectPtr<UProceduralMeshComponent>& Mesh : BatchMeshes)
+    {
+        if (Mesh.IsValid())
+        {
+            Mesh->DestroyComponent();
+        }
+    }
+    BatchMeshes.Reset();
+
+    TArray<FWallMeshSection> Sections;
+    TArray<FVector> CollisionVertices;
+    TArray<int32> CollisionIndices;
+    TArray<FVector> CreatureVertices;
+    TArray<int32> CreatureIndices;
+
+    const int32 StartLine = BatchIndex * WallLinesPerBatch;
+    const int32 EndLine = FMath::Min(StartLine + WallLinesPerBatch, WallMap.Lines.Num());
+    for (int32 LineIndex = StartLine; LineIndex < EndLine; ++LineIndex)
+    {
+        FWadWallLine Line;
+        if (!BuildWadWallLine(WallMap, LineIndex, Line, SectorHeights)
+            || (SectorFilter >= 0 && Line.Sectors.X != SectorFilter && Line.Sectors.Y != SectorFilter))
+        {
+            continue;
+        }
+
+        for (const FWadWallSurface& Surface : Line.Surfaces)
+        {
+            if (SectorFilter >= 0 && Surface.SectorIndex != SectorFilter)
+            {
+                continue;
+            }
+            FString Upper;
+            FString Lower;
+            FString Middle;
+            FVector2D Offset;
+            UDoomWadLoader::GetWadSideTextureNames(WallMap.Sides[Surface.SideIndex], Upper, Lower, Middle, Offset);
+            const FString& TextureName = Surface.Band == EWadWallBand::Upper ? Upper
+                : Surface.Band == EWadWallBand::Lower ? Lower : Middle;
+
+            const uint64 SurfaceKey = WallSurfaceKey(Surface.SideIndex, Surface.Band);
+            const uint64 ScrollKey = WallTextureScrolls.Contains(SurfaceKey) ? SurfaceKey : SharedWallSection;
+            FWallMeshSection* Section = Sections.FindByPredicate([&](const FWallMeshSection& Candidate)
+            {
+                return Candidate.Blend == Surface.Blend && Candidate.TextureName == TextureName && Candidate.ScrollKey == ScrollKey;
+            });
+            if (!Section)
+            {
+                Section = &Sections.AddDefaulted_GetRef();
+                Section->Blend = Surface.Blend;
+                Section->TextureName = TextureName;
+                Section->ScrollKey = ScrollKey;
+                Section->Texture = LoadSurfaceTexture(TextureName);
+            }
+
+            const FVector2D& From = Surface.bBack ? Line.To : Line.From;
+            const FVector2D& To = Surface.bBack ? Line.From : Line.To;
+            AppendWallQuad(Section->Vertices, Section->Indices, From, To, Surface.Bottom, Surface.Top, BuiltUnitsToUU, false);
+
+            const FVector2D Direction = (To - From).GetSafeNormal();
+            const FVector Normal(Direction.Y, -Direction.X, 0.0);
+            const FProcMeshTangent Tangent(FVector(Direction.X, Direction.Y, 0.0), false);
+            const FVector2D Size = TextureDimensions(Section->Texture);
+            const double U0 = Offset.X / Size.X;
+            const double U1 = (Offset.X + (To - From).Size()) / Size.X;
+            const double VBottom = (Offset.Y + Surface.VOrigin - Surface.Bottom) / Size.Y;
+            const double VTop = (Offset.Y + Surface.VOrigin - Surface.Top) / Size.Y;
+            Section->UVs.Append({FVector2D(U0, VBottom), FVector2D(U0, VTop),
+                FVector2D(U1, VTop), FVector2D(U1, VBottom)});
+            for (int32 Corner = 0; Corner < 4; ++Corner)
+            {
+                Section->Normals.Add(Normal);
+                Section->Colors.Add(WallVertexColor);
+                Section->Tangents.Add(Tangent);
+            }
+        }
+
+        for (const FWadWallCollision& Span : Line.Collision)
+        {
+            TArray<FVector>& Vertices = Span.bCreatureOnly ? CreatureVertices : CollisionVertices;
+            TArray<int32>& Indices = Span.bCreatureOnly ? CreatureIndices : CollisionIndices;
+            AppendWallQuad(Vertices, Indices, Line.From, Line.To, Span.Bottom, Span.Top, BuiltUnitsToUU, true);
+        }
+    }
+
+    for (EWadWallBlend Blend : {EWadWallBlend::Opaque, EWadWallBlend::Masked, EWadWallBlend::Translucent})
+    {
+        if (!Sections.ContainsByPredicate([Blend](const FWallMeshSection& Section) { return Section.Blend == Blend; }))
+        {
+            continue;
+        }
+        UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr, WallMaterialPath(Blend));
+        if (!Parent && Blend != EWadWallBlend::Opaque)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Missing wall material %s. Its walls keep their collision."), WallMaterialPath(Blend));
+            continue;
+        }
+
+        UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(this);
+        Mesh->ComponentTags.Add(FName(WallComponentTag(Blend)));
+        Mesh->SetCanEverAffectNavigation(false);
+        Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Mesh->SetupAttachment(SceneRoot);
+        for (const FWallMeshSection& Section : Sections)
+        {
+            if (Section.Blend != Blend)
+            {
+                continue;
+            }
+            const int32 SectionIndex = Mesh->GetNumSections();
+            Mesh->CreateMeshSection(SectionIndex, Section.Vertices, Section.Indices, Section.Normals, Section.UVs,
+                Section.Colors, Section.Tangents, false);
+            if (Parent)
+            {
+                const FString Key = FString::Printf(TEXT("%d:%s:%llu"), int32(Blend),
+                    *Section.TextureName, Section.ScrollKey);
+                TObjectPtr<UMaterialInterface>& Material = WallMaterials.FindOrAdd(Key);
+                if (!Material)
+                {
+                    UMaterialInstanceDynamic* Instance = UMaterialInstanceDynamic::Create(Parent, this);
+                    if (Section.Texture)
+                    {
+                        Instance->SetTextureParameterValue(SurfaceTextureParameter, Section.Texture);
+                    }
+                    else
+                    {
+                        Instance->SetVectorParameterValue(TEXT("SurfaceTint"), FLinearColor(WallVertexColor));
+                    }
+                    Material = Instance;
+                }
+                if (FWallTextureScroll* Scroll = WallTextureScrolls.Find(Section.ScrollKey))
+                {
+                    if (UMaterialInstanceDynamic* Instance = Cast<UMaterialInstanceDynamic>(Material.Get()))
+                    {
+                        ApplySurfaceOffset(*Instance, Scroll->Offset);
+                        Scroll->Materials.AddUnique(Instance);
+                    }
+                }
+                Mesh->SetMaterial(SectionIndex, Material);
+            }
+            else
+            {
+                Mesh->SetMaterial(SectionIndex, WallMaterial);
+            }
+        }
+        Mesh->RegisterComponent();
+        BatchMeshes.Add(Mesh);
+    }
+
+    const auto BuildCollision = [this, &BatchMeshes](const TCHAR* Tag, const TArray<FVector>& Vertices, const TArray<int32>& Indices, bool bCreatureOnly)
+    {
+        if (Indices.IsEmpty())
+        {
+            return;
+        }
+        UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(this);
+        Mesh->ComponentTags.Add(FName(Tag));
+        Mesh->SetCanEverAffectNavigation(false);
+        Mesh->SetVisibility(false);
+        Mesh->SetHiddenInGame(true);
+        Mesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+        if (bCreatureOnly)
+        {
+            // A creature collision channel can opt into these spans without blocking the player.
+            Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        }
+        Mesh->SetupAttachment(SceneRoot);
+        Mesh->CreateMeshSection(0, Vertices, Indices, {}, {}, {}, {}, true);
+        Mesh->RegisterComponent();
+        BatchMeshes.Add(Mesh);
+    };
+    BuildCollision(TEXT("AA.Wall.Collision"), CollisionVertices, CollisionIndices, false);
+    BuildCollision(TEXT("AA.Wall.CreatureOnly"), CreatureVertices, CreatureIndices, true);
 }
 
 void ASectorMeshBuilderActor::BuildSectorsFromLastWad()
 {
     UWorld* World = GetWorld(); if (!World) return;
 
-    // Fetch topology
-    TArray<FVector2D> Verts2D; TArray<FIntPoint> Lines; TArray<FIntPoint> LineSectors; TArray<FIntPoint> SectorHeights;
-    if (!UDoomWadLoader::GetLastWadWallTopology(Verts2D, Lines, LineSectors, SectorHeights))
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map)
     {
         UE_LOG(LogTemp, Warning, TEXT("No WAD topology loaded. Use AA.LoadWad first."));
         return;
     }
 
-    ClearChildren();
+    if (!FMath::IsFinite(UnitsToUU) || UnitsToUU <= 0.0f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Sector map scale must be finite and positive."));
+        return;
+    }
 
-    // For each sector, build loops and generate floor/ceiling; walls TBD
-    for (int32 SectorIdx = 0; SectorIdx < SectorHeights.Num(); ++SectorIdx)
+    ClearChildren();
+    BuiltUnitsToUU = UnitsToUU;
+    WallMap = FDoomWadMapData();
+    WallBatches.Reset();
+    WallBatchesBySector.Reset();
+    WallBatchesBySide.Reset();
+    WallTextureScrolls.Reset();
+    WallMaterials.Reset();
+    SectorHeights.Reset(Map->Sectors.Num());
+    for (const FWadSector& Sector : Map->Sectors)
+    {
+        SectorHeights.Add(FWadSectorHeightRange{double(Sector.FloorHeight), double(Sector.CeilingHeight)});
+    }
+    FloorRoots.SetNum(Map->Sectors.Num());
+    CeilRoots.SetNum(Map->Sectors.Num());
+    FloorPMCs.SetNum(Map->Sectors.Num());
+    CeilPMCs.SetNum(Map->Sectors.Num());
+
+    int32 TexturedFloorSections = 0;
+    int32 FallbackFloorSections = 0;
+    int32 TexturedCeilSections = 0;
+    int32 FallbackCeilSections = 0;
+
+    // Build both horizontal surfaces from one footprint.
+    for (int32 SectorIdx = 0; bBuildFloorsAndCeilings && SectorIdx < Map->Sectors.Num(); ++SectorIdx)
     {
         if (SectorFilter >= 0 && SectorIdx != SectorFilter) continue;
 
-        const int32 FloorZ = SectorHeights[SectorIdx].X;
-        const int32 CeilZ = SectorHeights[SectorIdx].Y;
-        if (CeilZ <= FloorZ) continue;
+        const int32 FloorZ = Map->Sectors[SectorIdx].FloorHeight;
+        const int32 CeilZ = Map->Sectors[SectorIdx].CeilingHeight;
+        if (CeilZ < FloorZ) continue;
 
-        UProceduralMeshComponent* PMC_Walls = nullptr;
+        FString FloorTextureName;
+        FString CeilingTextureName;
+        UDoomWadLoader::GetLastWadSectorTextureNames(SectorIdx, FloorTextureName, CeilingTextureName);
+
         UProceduralMeshComponent* PMC_Floor = nullptr;
         UProceduralMeshComponent* PMC_Ceil = nullptr;
-        TArray<FVector> WallVerts; TArray<int32> WallIndices; TArray<FVector> WallNormals; TArray<FVector2D> WallUV; TArray<FColor> WallColors; TArray<FProcMeshTangent> WallTangents;
+
+        USceneComponent* FloorRoot = nullptr;
+        USceneComponent* CeilRoot = nullptr;
+        if (bBuildFloorsAndCeilings)
+        {
+            FloorRoot = NewObject<USceneComponent>(this);
+            FloorRoot->SetMobility(EComponentMobility::Movable);
+            FloorRoot->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
+            FloorRoot->SetRelativeLocation(FVector(0.0f, 0.0f, (float)FloorZ * UnitsToUU));
+            FloorRoot->RegisterComponent();
+            FloorRoots[SectorIdx] = FloorRoot;
+
+            if (bBuildCeilings)
+            {
+                CeilRoot = NewObject<USceneComponent>(this);
+                CeilRoot->SetMobility(EComponentMobility::Movable);
+                CeilRoot->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
+                CeilRoot->SetRelativeLocation(FVector(0.0f, 0.0f, (float)CeilZ * UnitsToUU));
+                CeilRoot->RegisterComponent();
+                CeilRoots[SectorIdx] = CeilRoot;
+            }
+        }
+
+        auto EnsureFloorPMC = [&]() -> UProceduralMeshComponent*
+        {
+            if (!PMC_Floor)
+            {
+                USceneComponent* const AttachParent = FloorRoot ? FloorRoot : SceneRoot.Get();
+                PMC_Floor = NewObject<UProceduralMeshComponent>(this);
+                PMC_Floor->ComponentTags.Add(TEXT("AA.Sector.Floor"));
+                PMC_Floor->ComponentTags.Add(FName(*FString::Printf(TEXT("AA.Sector.%d"), SectorIdx)));
+                PMC_Floor->SetCanEverAffectNavigation(false);
+                PMC_Floor->AttachToComponent(AttachParent, FAttachmentTransformRules::KeepRelativeTransform);
+                PMC_Floor->RegisterComponent();
+                if (UMaterialInterface* SurfaceMaterial = MakePlaneMaterial(PMC_Floor, FloorTextureName))
+                {
+                    PMC_Floor->SetMaterial(0, SurfaceMaterial);
+                    ++TexturedFloorSections;
+                }
+                else if (FloorMaterial)
+                {
+                    PMC_Floor->SetMaterial(0, FloorMaterial);
+                    ++FallbackFloorSections;
+                }
+                FloorPMCs[SectorIdx] = PMC_Floor;
+            }
+            return PMC_Floor;
+        };
+
+        auto EnsureCeilPMC = [&]() -> UProceduralMeshComponent*
+        {
+            if (!PMC_Ceil)
+            {
+                USceneComponent* const AttachParent = CeilRoot ? CeilRoot : SceneRoot.Get();
+                PMC_Ceil = NewObject<UProceduralMeshComponent>(this);
+                PMC_Ceil->ComponentTags.Add(TEXT("AA.Sector.Ceiling"));
+                PMC_Ceil->ComponentTags.Add(FName(*FString::Printf(TEXT("AA.Sector.%d"), SectorIdx)));
+                PMC_Ceil->SetCanEverAffectNavigation(false);
+                PMC_Ceil->AttachToComponent(AttachParent, FAttachmentTransformRules::KeepRelativeTransform);
+                PMC_Ceil->RegisterComponent();
+                if (CeilingTextureName.StartsWith(TEXT("F_SKY")))
+                {
+                    // The original renderer draws the sky through this ceiling.
+                    PMC_Ceil->SetVisibility(false);
+                }
+                else if (UMaterialInterface* SurfaceMaterial = MakePlaneMaterial(PMC_Ceil, CeilingTextureName))
+                {
+                    PMC_Ceil->SetMaterial(0, SurfaceMaterial);
+                    ++TexturedCeilSections;
+                }
+                else if (CeilingMaterial)
+                {
+                    PMC_Ceil->SetMaterial(0, CeilingMaterial);
+                    ++FallbackCeilSections;
+                }
+                CeilPMCs[SectorIdx] = PMC_Ceil;
+            }
+            return PMC_Ceil;
+        };
 
         if (bBuildFloorsAndCeilings)
         {
-            PMC_Floor = NewObject<UProceduralMeshComponent>(this);
-            PMC_Floor->RegisterComponent(); PMC_Floor->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
-            if (FloorMaterial) PMC_Floor->SetMaterial(0, FloorMaterial);
-
-            PMC_Ceil = NewObject<UProceduralMeshComponent>(this);
-            PMC_Ceil->RegisterComponent(); PMC_Ceil->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
-            if (CeilingMaterial) PMC_Ceil->SetMaterial(0, CeilingMaterial);
-        }
-
-        // Select polygon sources: subsector polys (preferred) or fallback linedef loops
-        struct FPolyList { TArray<int32> Offsets; TArray<int32> Counts; TArray<FVector2D> Points; };
-        FPolyList PolyList;
-        bool bHaveSubsectorPolys = false;
-        if (bUseSubsectorPolysForFloors)
-        {
-            bHaveSubsectorPolys = UDoomWadLoader::GetLastWadSectorSubsectorPolys(SectorIdx, PolyList.Offsets, PolyList.Counts, PolyList.Points);
-        }
-
-        TArray<TArray<int32>> Loops; // fallback loops
-        if (!bHaveSubsectorPolys)
-        {
-            BuildSectorLoops(SectorIdx, Lines, LineSectors, Loops);
-        }
-
-        auto BuildFloorCeilForPoly = [&](const TArray<FVector2D>& Poly)
-        {
-            if (!bBuildFloorsAndCeilings) return;
-            // Floor
+            FDoomWadSectorFootprint Footprint;
+            if (UDoomWadLoader::GetLastWadSectorFootprint(SectorIdx, Footprint))
             {
-                TArray<FVector> V; TArray<int32> I; TArray<FVector> N; TArray<FVector2D> UV; TArray<FColor> C; TArray<FProcMeshTangent> T;
-                BuildPolygonMesh(Poly, (float)FloorZ * UnitsToUU, false, UnitsToUU, FloorCeilUVScale, V, I, N, UV, C, T);
-                if (V.Num() && I.Num()) AppendMeshToPMC(PMC_Floor, V, I, N, UV, C, T);
-            }
-            // Ceiling
-            {
-                TArray<FVector> V; TArray<int32> I; TArray<FVector> N; TArray<FVector2D> UV; TArray<FColor> C; TArray<FProcMeshTangent> T;
-                BuildPolygonMesh(Poly, (float)CeilZ * UnitsToUU, true, UnitsToUU, FloorCeilUVScale, V, I, N, UV, C, T);
-                if (V.Num() && I.Num()) AppendMeshToPMC(PMC_Ceil, V, I, N, UV, C, T);
-            }
-        };
-
-        if (bHaveSubsectorPolys)
-        {
-            for (int32 i=0;i<PolyList.Offsets.Num(); ++i)
-            {
-                const int32 Off = PolyList.Offsets[i];
-                const int32 Cnt = PolyList.Counts[i];
-                if (Cnt < 3 || Off < 0 || Off + Cnt > PolyList.Points.Num()) continue;
-                TArray<FVector2D> Poly; Poly.Reserve(Cnt);
-                for (int32 k=0;k<Cnt;++k) Poly.Add(PolyList.Points[Off + k]);
-                BuildFloorCeilForPoly(Poly);
-            }
-        }
-        else
-        {
-            for (const TArray<int32>& Loop : Loops)
-            {
-                if (Loop.Num() < 3) continue;
-                const int32 LastIndex = (Loop.Last() == Loop[0]) ? Loop.Num()-1 : Loop.Num();
-                TArray<FVector2D> Poly; Poly.Reserve(LastIndex);
-                for (int32 i=0;i<LastIndex;++i) { if (Verts2D.IsValidIndex(Loop[i])) Poly.Add(Verts2D[Loop[i]]); }
-                if (Poly.Num() < 3) continue;
-                BuildFloorCeilForPoly(Poly);
-            }
-        }
-
-        // Walls: derive working loops
-        TArray<TArray<int32>> WallLoops;
-        if (!bHaveSubsectorPolys)
-        {
-            WallLoops = Loops;
-        }
-        else
-        {
-            // Build pseudo-loops from subsector polys by mapping to nearest vertex indices
-            for (int32 i=0;i<PolyList.Offsets.Num(); ++i)
-            {
-                const int32 Off = PolyList.Offsets[i];
-                const int32 Cnt = PolyList.Counts[i];
-                if (Cnt < 3 || Off < 0 || Off + Cnt > PolyList.Points.Num()) continue;
-                TArray<int32> Loop;
-                for (int32 k=0;k<Cnt;++k)
+                BuildFootprintMesh(EnsureFloorPMC(), Footprint, false, UnitsToUU, FloorVertexColor);
+                if (bBuildCeilings)
                 {
-                    const FVector2D Pt = PolyList.Points[Off+k];
-                    int32 BestIdx=-1; float BestD2=FLT_MAX;
-                    for (int32 vi=0; vi<Verts2D.Num(); ++vi)
-                    {
-                        const float d2 = FVector2D::DistSquared(Pt, Verts2D[vi]);
-                        if (d2 < BestD2) { BestD2 = d2; BestIdx = vi; }
-                    }
-                    if (BestIdx>=0) Loop.Add(BestIdx);
-                }
-                if (Loop.Num()>=3) WallLoops.Add(Loop);
-            }
-        }
-
-        if (bBuildWalls && WallLoops.Num() > 0)
-        {
-            PMC_Walls = NewObject<UProceduralMeshComponent>(this);
-            PMC_Walls->RegisterComponent();
-            PMC_Walls->AttachToComponent(SceneRoot, FAttachmentTransformRules::KeepRelativeTransform);
-            if (WallMaterial) PMC_Walls->SetMaterial(0, WallMaterial);
-
-            for (const TArray<int32>& Loop : WallLoops)
-            {
-                if (Loop.Num() < 3) continue;
-                const int32 LastIndex = Loop.Num();
-                for (int32 i=0;i<LastIndex;++i)
-                {
-                    const int32 AIdx = Loop[i];
-                    const int32 BIdx = Loop[(i+1) % LastIndex];
-                    if (!Verts2D.IsValidIndex(AIdx) || !Verts2D.IsValidIndex(BIdx)) continue;
-
-                    int32 LineIndex = -1; bool bReversed = false;
-                    for (int32 li=0; li<Lines.Num(); ++li)
-                    {
-                        const FIntPoint& L = Lines[li];
-                        if (L.X == AIdx && L.Y == BIdx) { LineIndex = li; bReversed = false; break; }
-                        if (L.X == BIdx && L.Y == AIdx) { LineIndex = li; bReversed = true; break; }
-                    }
-                    if (LineIndex == -1) continue;
-
-                    const FIntPoint& LS = LineSectors[LineIndex];
-                    int32 Neighbor = -1;
-                    if (!bReversed)
-                    {
-                        if (LS.X == SectorIdx) Neighbor = LS.Y; else if (LS.Y == SectorIdx) Neighbor = LS.X;
-                    }
-                    else
-                    {
-                        if (LS.Y == SectorIdx) Neighbor = LS.X; else if (LS.X == SectorIdx) Neighbor = LS.Y;
-                    }
-
-                    const FVector2D A2 = Verts2D[AIdx];
-                    const FVector2D B2 = Verts2D[BIdx];
-                    const FVector ABase(A2.X * UnitsToUU, A2.Y * UnitsToUU, (float)FloorZ * UnitsToUU);
-                    const FVector BBase(B2.X * UnitsToUU, B2.Y * UnitsToUU, (float)FloorZ * UnitsToUU);
-                    const FVector ATop (A2.X * UnitsToUU, A2.Y * UnitsToUU, (float)CeilZ * UnitsToUU);
-                    const FVector BTop (B2.X * UnitsToUU, B2.Y * UnitsToUU, (float)CeilZ * UnitsToUU);
-
-                    const FVector Edge = (BBase - ABase);
-                    const float Length = FVector(Edge.X, Edge.Y, 0.f).Size();
-                    if (Length <= KINDA_SMALL_NUMBER) continue;
-
-                    const FVector2D Dir2 = (B2 - A2).GetSafeNormal();
-                    const FVector InNormal = FVector(-Dir2.Y, Dir2.X, 0.f);
-
-                    auto AddQuad = [&](const FVector& Q0, const FVector& Q1, const FVector& Q2, const FVector& Q3)
-                    {
-                        const int32 Base = WallVerts.Num();
-                        WallVerts.Add(Q0); WallVerts.Add(Q1); WallVerts.Add(Q2); WallVerts.Add(Q3);
-                        CalculateWallQuadUVs(Q0, Q1, Q2, Q3, Length, WallUScale, WallVScale, WallUV, WallColors);
-                        WallIndices.Add(Base + 0); WallIndices.Add(Base + 1); WallIndices.Add(Base + 2);
-                        WallIndices.Add(Base + 0); WallIndices.Add(Base + 2); WallIndices.Add(Base + 3);
-                    };
-
-                    if (Neighbor == -1)
-                    {
-                        AddQuad(ABase, ATop, BTop, BBase);
-                    }
-                    else
-                    {
-                        const int32 NFloor = SectorHeights.IsValidIndex(Neighbor) ? SectorHeights[Neighbor].X : FloorZ;
-                        const int32 NCeil  = SectorHeights.IsValidIndex(Neighbor) ? SectorHeights[Neighbor].Y : CeilZ;
-
-                        if (NFloor > FloorZ)
-                        {
-                            const float Z0 = (float)FloorZ * UnitsToUU;
-                            const float Z1 = (float)FMath::Min(CeilZ, NFloor) * UnitsToUU;
-                            if (Z1 > Z0 + KINDA_SMALL_NUMBER)
-                            {
-                                AddQuad(
-                                    FVector(ABase.X, ABase.Y, Z0),
-                                    FVector(ABase.X, ABase.Y, Z1),
-                                    FVector(BBase.X, BBase.Y, Z1),
-                                    FVector(BBase.X, BBase.Y, Z0));
-                            }
-                        }
-
-                        if (NCeil < CeilZ)
-                        {
-                            const float Z0 = (float)FMath::Max(FloorZ, NCeil) * UnitsToUU;
-                            const float Z1 = (float)CeilZ * UnitsToUU;
-                            if (Z1 > Z0 + KINDA_SMALL_NUMBER)
-                            {
-                                AddQuad(
-                                    FVector(ABase.X, ABase.Y, Z0),
-                                    FVector(ABase.X, ABase.Y, Z1),
-                                    FVector(BBase.X, BBase.Y, Z1),
-                                    FVector(BBase.X, BBase.Y, Z0));
-                            }
-                        }
-
-                        if (bBuildMiddleBands)
-                        {
-                            const int32 ZMin = FMath::Max(FloorZ, NFloor);
-                            const int32 ZMax = FMath::Min(CeilZ, NCeil);
-                            if (ZMax > ZMin)
-                            {
-                                const float Z0 = (float)ZMin * UnitsToUU;
-                                const float Z1 = (float)ZMax * UnitsToUU;
-                                AddQuad(
-                                    FVector(ABase.X, ABase.Y, Z0),
-                                    FVector(ABase.X, ABase.Y, Z1),
-                                    FVector(BBase.X, BBase.Y, Z1),
-                                    FVector(BBase.X, BBase.Y, Z0));
-                            }
-                        }
-                    }
+                    BuildFootprintMesh(EnsureCeilPMC(), Footprint, true, UnitsToUU, CeilingVertexColor);
                 }
             }
-
-            // Compute normals/tangents for walls from geometry
-            UKismetProceduralMeshLibrary::CalculateTangentsForMesh(WallVerts, WallIndices, WallUV, WallNormals, WallTangents);
-
-            if (WallVerts.Num() && WallIndices.Num())
+            else
             {
-                AppendMeshToPMC(PMC_Walls, WallVerts, WallIndices, WallNormals, WallUV, WallColors, WallTangents);
+                UE_LOG(LogTemp, Warning, TEXT("Sector %d: could not triangulate the linedef boundaries."), SectorIdx);
+            }
+        }
+
+    }
+
+    if (bBuildWalls)
+    {
+        BuildWalls(*Map);
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("Sector materials: floors textured=%d fallback=%d, ceilings textured=%d fallback=%d"),
+        TexturedFloorSections, FallbackFloorSections, TexturedCeilSections, FallbackCeilSections);
+    UE_LOG(LogTemp, Display, TEXT("Built per-sector meshes."));
+}
+
+bool ASectorMeshBuilderActor::GetSectorSurfaceHeights(int32 SectorIndex, FVector2D& OutHeights) const
+{
+    if (!FloorRoots.IsValidIndex(SectorIndex) || !CeilRoots.IsValidIndex(SectorIndex)
+        || !FloorRoots[SectorIndex] || !CeilRoots[SectorIndex])
+    {
+        return false;
+    }
+    OutHeights = FVector2D(FloorRoots[SectorIndex]->GetRelativeLocation().Z,
+                           CeilRoots[SectorIndex]->GetRelativeLocation().Z);
+    return true;
+}
+
+void ASectorMeshBuilderActor::SetSectorFloorZ(int32 SectorIndex, float NewFloorZ_UU)
+{
+    SetSectorSurfaceZ(SectorIndex, NewFloorZ_UU, false);
+}
+
+void ASectorMeshBuilderActor::SetSectorCeilingZ(int32 SectorIndex, float NewCeilZ_UU)
+{
+    SetSectorSurfaceZ(SectorIndex, NewCeilZ_UU, true);
+}
+
+void ASectorMeshBuilderActor::SetSectorSurfaceZ(int32 SectorIndex, float NewZ_UU, bool bCeiling)
+{
+    const auto& Roots = bCeiling ? CeilRoots : FloorRoots;
+    if (!Roots.IsValidIndex(SectorIndex) || !Roots[SectorIndex] || !SectorHeights.IsValidIndex(SectorIndex)
+        || !FMath::IsFinite(NewZ_UU))
+    {
+        return;
+    }
+
+    FWadSectorHeightRange& Heights = SectorHeights[SectorIndex];
+    const double Requested = NewZ_UU / BuiltUnitsToUU;
+    const double NewHeight = bCeiling ? FMath::Max(Requested, Heights.Floor) : FMath::Min(Requested, Heights.Ceiling);
+    double& Height = bCeiling ? Heights.Ceiling : Heights.Floor;
+    if (Height == NewHeight)
+    {
+        return;
+    }
+    Height = NewHeight;
+
+    USceneComponent* Root = Roots[SectorIndex].Get();
+    FVector Location = Root->GetRelativeLocation();
+    Location.Z = NewHeight * BuiltUnitsToUU;
+    Root->SetRelativeLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
+
+    if (WallBatchesBySector.IsValidIndex(SectorIndex))
+    {
+        // Cook replacement collision before returning so movement and queries see the same opening.
+        for (int32 BatchIndex : WallBatchesBySector[SectorIndex])
+        {
+            BuildWallBatch(BatchIndex);
+        }
+    }
+}
+
+bool ASectorMeshBuilderActor::SetSectorTextureScrollTexels(int32 SectorIndex, bool bCeiling, FVector2D OffsetTexels)
+{
+    const auto& Meshes = bCeiling ? CeilPMCs : FloorPMCs;
+    if (OffsetTexels.ContainsNaN() || !Meshes.IsValidIndex(SectorIndex) || !Meshes[SectorIndex] || !Meshes[SectorIndex]->IsVisible())
+    {
+        return false;
+    }
+    UMaterialInstanceDynamic* Material = Cast<UMaterialInstanceDynamic>(Meshes[SectorIndex]->GetMaterial(0));
+    if (!GetBoundSurfaceTexture(Material))
+    {
+        return false;
+    }
+    ApplySurfaceOffset(*Material, -OffsetTexels);
+    return true;
+}
+
+bool ASectorMeshBuilderActor::SetWallTextureScrollTexels(int32 SideIndex, EWadWallBand Band, FVector2D OffsetTexels)
+{
+    if (OffsetTexels.ContainsNaN() || uint8(Band) > uint8(EWadWallBand::Upper)
+        || !WallBatchesBySide.IsValidIndex(SideIndex) || WallBatchesBySide[SideIndex].IsEmpty())
+    {
+        return false;
+    }
+    const uint64 Key = WallSurfaceKey(SideIndex, Band);
+    if (FWallTextureScroll* Scroll = WallTextureScrolls.Find(Key))
+    {
+        Scroll->Offset = OffsetTexels;
+        for (const TWeakObjectPtr<UMaterialInstanceDynamic>& Material : Scroll->Materials)
+        {
+            if (Material.IsValid())
+            {
+                ApplySurfaceOffset(*Material.Get(), OffsetTexels);
             }
         }
     }
-
-    UE_LOG(LogTemp, Display, TEXT("Built per-sector meshes."));
+    else if (!OffsetTexels.IsZero())
+    {
+        WallTextureScrolls.FindOrAdd(Key).Offset = OffsetTexels;
+        // Split this band out of its shared material section once. Later scroll
+        // updates only set a material parameter and never rebuild the mesh.
+        for (int32 BatchIndex : WallBatchesBySide[SideIndex])
+        {
+            BuildWallBatch(BatchIndex);
+        }
+    }
+    return true;
 }

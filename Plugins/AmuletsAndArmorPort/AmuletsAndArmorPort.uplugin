@@ -6,6 +6,12 @@
 	"Description": "Port of the DOS/Windows project with an Unreal adapter.",
 	"Category": "Integration",
 	"EnabledByDefault": true,
+	"Plugins": [
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
+		}
+	],
 	"Modules": [
 		{
 			"Name": "AAOriginal",
