@@ -19,6 +19,7 @@
 #include "UnrealClient.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #if WITH_EDITOR
 #include "AssetCompilingManager.h"
@@ -463,9 +464,11 @@ namespace
     };
 
     enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll };
-    enum class EL25Review { None, Passages, KeyReload, DoorReload };
+    enum class EL25Review { None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload };
     constexpr const TCHAR* L25KeySlot = TEXT("NativeWadChurchKeyReview");
     constexpr const TCHAR* L25DoorSlot = TEXT("NativeWadChurchDoorReview");
+    constexpr const TCHAR* L20ReviewSlot = TEXT("NativeWadChurchL20Review");
+    constexpr const TCHAR* L60ReviewSlot = TEXT("NativeWadChurchL60Review");
     constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
     enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
 
@@ -1002,7 +1005,7 @@ namespace
             return true;
         }
 
-        bool PlaceL25Player(ANativeWadLevel& Level, ANativeWadPlayer& Player, const FVector2D& Position)
+        bool PlaceReviewPlayer(ANativeWadLevel& Level, ANativeWadPlayer& Player, const FVector2D& Position)
         {
             const int32 Sector = Level.FindWadSector(Position);
             if (!Level.GetSectors().IsValidIndex(Sector))
@@ -1043,7 +1046,7 @@ namespace
                 if (Now >= 1.2)
                 {
                     if (First.X != 132.0 || Second.X != 132.0 || Bridge.X != -72.0 || TimedGate.Y != -44.0
-                        || ExitGate.Y != 136.0 || !PlaceL25Player(Level, Player, BridgeApproach))
+                        || ExitGate.Y != 136.0 || !PlaceReviewPlayer(Level, Player, BridgeApproach))
                     {
                         return Finish(&Player, TEXT("L25 startup did not initialize the original passages and plates"));
                     }
@@ -1072,12 +1075,15 @@ namespace
                 break;
             case 3:
                 bDone = WalkTo(Player, {-180, 775});
+                if (bDone && !PlaceReviewPlayer(Level, Player, {-64, -408}))
+                {
+                    return Finish(&Player, TEXT("could not reach the next fixture after crossing L25's bridge"));
+                }
                 break;
             case 4:
                 if (Bridge.X == -72.0)
                 {
-                    if (!FMath::IsNearlyEqual(Now - StageTime, 9.0, 0.18)
-                        || !PlaceL25Player(Level, Player, {-64, -408}))
+                    if (!FMath::IsNearlyEqual(Now - StageTime, 9.0, 0.18))
                     {
                         return Finish(&Player, TEXT("L25's bridge did not restore after the authored delay"));
                     }
@@ -1106,7 +1112,8 @@ namespace
                 break;
             case 7:
                 bDone = WalkTo(Player, {-64, -896});
-                if (bDone && Level.FindWadSector(FVector2D(Player.GetActorLocation())) != 99)
+                if (bDone && (Level.FindWadSector(FVector2D(Player.GetActorLocation())) != 99
+                    || !PlaceReviewPlayer(Level, Player, FirstApproach)))
                 {
                     return Finish(&Player, TEXT("the player did not cross L25's timed gate"));
                 }
@@ -1114,8 +1121,7 @@ namespace
             case 8:
                 if (TimedGate.Y == -44.0)
                 {
-                    if (!FMath::IsNearlyEqual(Now - StageTime, 9.0, 0.35)
-                        || !PlaceL25Player(Level, Player, FirstApproach))
+                    if (!FMath::IsNearlyEqual(Now - StageTime, 9.0, 0.35))
                     {
                         return Finish(&Player, TEXT("L25's pressure-plate gate did not finish the authored cycle"));
                     }
@@ -1134,7 +1140,7 @@ namespace
                 {
                     FWadLevelCheckpoint State;
                     if (!Level.WriteCheckpoint(State) || State.Variables[1] != 1 || ExitGate.Y != 136.0
-                        || !PlaceL25Player(Level, Player, {90, -2724}))
+                        || !PlaceReviewPlayer(Level, Player, {90, -2724}))
                     {
                         return Finish(&Player, TEXT("reusing the same L25 plate incorrectly advanced the exit"));
                     }
@@ -1146,7 +1152,7 @@ namespace
                 {
                     FWadLevelCheckpoint State;
                     if (!Level.WriteCheckpoint(State) || State.Variables[1] != 0
-                        || !PlaceL25Player(Level, Player, FirstApproach))
+                        || !PlaceReviewPlayer(Level, Player, FirstApproach))
                     {
                         return Finish(&Player, TEXT("L25's reset plate lost the source counter reset"));
                     }
@@ -1156,7 +1162,7 @@ namespace
             case 13:
                 if (WalkTo(Player, FirstPlate) && First.X == 112.0)
                 {
-                    if (!PlaceL25Player(Level, Player, {-108, -2792}))
+                    if (!PlaceReviewPlayer(Level, Player, {-108, -2792}))
                     {
                         return Finish(&Player, TEXT("the second L25 plate approach is missing"));
                     }
@@ -1249,7 +1255,7 @@ namespace
                 {
                     return Finish(&Player, TEXT("the fresh process did not restore the pending one-shot generator"));
                 }
-                if (!PlaceL25Player(Level, Player, {40, -3290}))
+                if (!PlaceReviewPlayer(Level, Player, {40, -3290}))
                 {
                     return Finish(&Player, TEXT("the L25 key door approach is missing"));
                 }
@@ -1267,7 +1273,7 @@ namespace
                 {
                     return Finish(&Player, TEXT("L25 did not refuse the door without its key"));
                 }
-                if (!PlaceL25Player(Level, Player, {-8, -2700}))
+                if (!PlaceReviewPlayer(Level, Player, {-8, -2700}))
                 {
                     return Finish(&Player, TEXT("the L25 key approach is missing"));
                 }
@@ -1289,7 +1295,7 @@ namespace
             }
             else if (NextPoint == 4 && Player.GetItemCount(ChurchKey) == 1)
             {
-                if (!PlaceL25Player(Level, Player, {40, -3290}))
+                if (!PlaceReviewPlayer(Level, Player, {40, -3290}))
                 {
                     return Finish(&Player, TEXT("could not return to the L25 key door approach"));
                 }
@@ -1325,6 +1331,561 @@ namespace
             return true;
         }
 
+        bool TickChurchKnights(UWorld& Current, ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            ANativeWadGuardian* Foot = nullptr;
+            ANativeWadGuardian* Mounted = nullptr;
+            int32 Count = 0;
+            for (TActorIterator<ANativeWadGuardian> Knight(&Current); Knight; ++Knight)
+            {
+                ++Count;
+                if (Knight->ActorHasTag(TEXT("WAD Knight Thing 6"))) { Foot = *Knight; }
+                if (Knight->ActorHasTag(TEXT("WAD Knight Thing 3"))) { Mounted = *Knight; }
+            }
+            if (Count != 9 || !Foot || !Mounted)
+            {
+                return Finish(&Player, TEXT("L25 is missing one of the nine authored knights"));
+            }
+            if (NextPoint == 0)
+            {
+                if (!FVector2D(Player.GetActorLocation()).Equals({298, 1636}, 3.0)
+                    || Foot->GetEncounterHealth() != 3000 || Mounted->GetEncounterHealth() != 3000
+                    || !PlaceReviewPlayer(Level, Player, {730, 123}))
+                {
+                    return Finish(&Player, TEXT("the L25 knight review requires the original spawn and source health"));
+                }
+                HealthBeforeTravel = Player.GetHealth();
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 1 || NextPoint == 2)
+            {
+                const bool bMounted = NextPoint == 1;
+                ANativeWadGuardian& Target = bMounted ? *Mounted : *Foot;
+                if (!bCapturedEncounter)
+                {
+                    Aim(Player, Target.GetActorLocation());
+                    bool bSaved = false;
+                    if (CaptureView(Player, bMounted ? TEXT("mounted-knight") : TEXT("crossbowman"), bSaved))
+                    {
+                        if (!bSaved)
+                        {
+                            return Finish(&Player, TEXT("could not capture the authored knight"));
+                        }
+                        bCapturedEncounter = true;
+                    }
+                }
+                const int32 Damage = HealthBeforeTravel - Player.GetHealth();
+                if (Damage > NativeWadRules::ChurchBoltDamage)
+                {
+                    return Finish(&Player, TEXT("the isolated knight volley applied unexpected damage"));
+                }
+                if (bCapturedEncounter && Target.GetBoltsFired() > 0 && Damage == NativeWadRules::ChurchBoltDamage)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L25's %s landed its authored 300-damage bolt."), *Target.GetEncounterName());
+                    if (bMounted)
+                    {
+                        if (!PlaceReviewPlayer(Level, Player, {-589, -700}))
+                        {
+                            return Finish(&Player, TEXT("the L25 crossbowman approach is missing"));
+                        }
+                        bCapturedEncounter = false;
+                        HealthBeforeTravel = Player.GetHealth();
+                        ++NextPoint;
+                    }
+                    else
+                    {
+                        const FVector2D ClosePosition = FVector2D(Foot->GetActorLocation()) + FVector2D(44, 0);
+                        if (!PlaceReviewPlayer(Level, Player, ClosePosition))
+                        {
+                            return Finish(&Player, TEXT("the L25 melee approach is missing"));
+                        }
+                        ExperienceBeforeTravel = Player.GetExperience();
+                        ++NextPoint;
+                    }
+                }
+                return true;
+            }
+            if (Player.GetExperience() > ExperienceBeforeTravel && Foot->GetEncounterHealth() < 3000)
+            {
+                UE_LOG(LogTemp, Display, TEXT("Verified player dagger input damages the authored L25 crossbowman and awards experience."));
+                return Finish(&Player);
+            }
+            const FVector Offset = Foot->GetActorLocation() - Player.GetActorLocation();
+            Aim(Player, Foot->GetActorLocation());
+            if (Offset.Size2D() > 60.0)
+            {
+                Walk(Player);
+            }
+            else
+            {
+                Stop(Player);
+                if (Current.GetTimeSeconds() >= StageTime)
+                {
+                    Press(Player, EKeys::LeftControl);
+                    StageTime = Current.GetTimeSeconds() + 0.75;
+                }
+            }
+            return true;
+        }
+
+        bool BeginChurchExit(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            const auto* Fixture = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(L25DoorSlot, 0));
+            const double ArrivalHour = Level.GetTimeOfDayHours();
+            if (!Fixture || Fixture->LevelPackage != TEXT("/Game/Maps/L25") || !Fixture->Level.UnlockedItemDoors.Contains(148)
+                || !Level.RestoreCheckpoint(Fixture->Level) || !PlaceReviewPlayer(Level, Player, FVector2D(Fixture->Position)))
+            {
+                return Finish(&Player, TEXT("the church exit review needs the L25 key-door checkpoint from ChurchKeyReload"));
+            }
+            Level.SetTimeOfDayHours(ArrivalHour);
+            TownReview = ETownReview::None;
+            NextPoint = 0;
+            CaptureFrames = 0;
+            UE_LOG(LogTemp, Display, TEXT("Loaded the verified L25 key-door state for the final walk, keeping the active quest from Town Hall."));
+            return true;
+        }
+
+        bool TickChurchExit(UWorld& Current, ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            const UNativeWadTravelState* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            const FString Map = Current.RemovePIEPrefix(Current.GetMapName());
+            if (!Travel || Travel->Quest.Active != 1)
+            {
+                return Finish(&Player, TEXT("the Church of Andrew route lost the active quest from town"));
+            }
+            if (Map == TEXT("L25"))
+            {
+                if (NextPoint == 2 && Travel->Quest.ResumeMaps.FindRef(1) == 20)
+                {
+                    return true;
+                }
+                const auto* Link = Level.GetLevelLinks().FindByPredicate([](const FAAWadNativeLevelLink& Entry)
+                    { return Entry.SourceThing == 85 && Entry.Sector == 149; });
+                const auto* KeyDoor = Level.GetDoors().FindByPredicate([](const FAAWadNativeDoor& Entry) { return Entry.Sector == 148; });
+                FVector2D Heights = FVector2D::ZeroVector;
+                if (!Link || Link->Destination.ToSoftObjectPath().GetLongPackageName() != TEXT("/Game/Maps/L20")
+                    || !KeyDoor || !Level.GetSectorSurfaceHeights(148, Heights) || Travel->Quest.ResumeMaps.FindRef(1) != 25)
+                {
+                    return Finish(&Player, TEXT("L25 lost its authored link or key door"));
+                }
+                if (NextPoint == 0 && Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {9, -3290, 17});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                    return true;
+                }
+                if (NextPoint == 1 && Heights.Y == KeyDoor->OpenZ)
+                {
+                    Aim(Player, {-182, -3290, 17});
+                    bool bSaved = false;
+                    if (CaptureView(Player, TEXT("l25-exit-passage"), bSaved))
+                    {
+                        if (!bSaved)
+                        {
+                            return Finish(&Player, TEXT("could not capture the L25 exit passage"));
+                        }
+                        ++NextPoint;
+                    }
+                    return true;
+                }
+                if (NextPoint == 2)
+                {
+                    RecordTownCharacter(Player);
+                    HourBeforeTravel = Level.GetTimeOfDayHours();
+                    if (WalkTo(Player, {-224, -3290}))
+                    {
+                        return Finish(&Player, TEXT("walking into L25 sector 149 did not travel to L20"));
+                    }
+                }
+                return true;
+            }
+            const FWadLevelCheckpoint* L25 = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L25"));
+            if (Map != TEXT("L20") || !FVector2D(Player.GetActorLocation()).Equals({-1084, 4630}, 3.0)
+                || Travel->Quest.ResumeMaps.FindRef(1) != 20 || !MatchesTownCharacter(Player)
+                || !FMath::IsNearlyEqual(Level.GetTimeOfDayHours(), HourBeforeTravel, 0.02)
+                || !L25 || !L25->UnlockedItemDoors.Contains(148) || L25->Encounters.Num() != 9)
+            {
+                return Finish(&Player, TEXT("L20 did not receive the original spawn, character, clock, or archived church"));
+            }
+            if (!bArrivalCaptured)
+            {
+                bArrivalCaptured = true;
+                bWalking = false;
+                Camera.Reset();
+            }
+            bool bSaved = false;
+            if (CaptureView(Player, TEXT("l20-arrival"), bSaved))
+            {
+                if (!bSaved || !Player.SaveWadCheckpoint(L20ReviewSlot))
+                {
+                    return Finish(&Player, TEXT("could not capture and save the L20 arrival"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified W through L25's original exit takes the active quest to the L20 spawn and archives L25."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickL20Reload(UWorld& Current, ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            constexpr int32 TimedFloor = 16;
+            const FVector2D Approach(-624, 2400);
+            const FVector2D Plate(-740, 2400);
+            const UNativeWadTravelState* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            FVector2D Heights;
+            if (!Travel || !Level.GetSectorSurfaceHeights(TimedFloor, Heights))
+            {
+                return Finish(&Player, TEXT("L20 lost its checkpoint or its authored timed floor"));
+            }
+            if (!Player.HasRestoredWadCheckpoint())
+            {
+                return true;
+            }
+            if (NextPoint == 0)
+            {
+                const FWadLevelCheckpoint* L25 = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L25"));
+                if (Travel->Quest.Active != 1 || Travel->Quest.ResumeMaps.FindRef(1) != 20
+                    || !FVector2D(Player.GetActorLocation()).Equals({-1084, 4630}, 3.0)
+                    || !L25 || !L25->UnlockedItemDoors.Contains(148) || L25->Encounters.Num() != 9
+                    || !PlaceReviewPlayer(Level, Player, Approach))
+                {
+                    return Finish(&Player, TEXT("restart lost the L20 resume point or archived L25 state"));
+                }
+                ++NextPoint;
+                UE_LOG(LogTemp, Display, TEXT("Verified the L20 checkpoint restored the active quest, original spawn, and archived L25."));
+                return true;
+            }
+            if (NextPoint == 1)
+            {
+                if (!bTrailActionPressed && Level.FindActivitySector(FVector2D(Player.GetActorLocation())) == TimedFloor)
+                {
+                    StageTime = Current.GetTimeSeconds();
+                    bTrailActionPressed = true;
+                }
+                if (WalkTo(Player, Plate))
+                {
+                    ++NextPoint;
+                }
+            }
+            else if (NextPoint == 2 && WalkTo(Player, Approach))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 3 && Heights.X == -300.0)
+            {
+                Aim(Player, {-754, 2400, -142});
+                bool bSaved = false;
+                if (CaptureView(Player, TEXT("l20-lowered-floor"), bSaved))
+                {
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture L20's lowered floor"));
+                    }
+                    ++NextPoint;
+                }
+            }
+            else if (NextPoint == 4 && Heights.X == -16.0)
+            {
+                if (!bTrailActionPressed || !FMath::IsNearlyEqual(Current.GetTimeSeconds() - StageTime, 9.0, 0.25))
+                {
+                    return Finish(&Player, TEXT("L20's floor did not use the authored nine-second cycle"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified L20 activity 1 lowers floor 16 to Z-300 and returns it after its authored cycle."));
+                if (!PlaceReviewPlayer(Level, Player, {-1400, 2714}))
+                {
+                    return Finish(&Player, TEXT("the authored L20 bolt plate approach is missing"));
+                }
+                TrapMissilesBefore = Level.GetScriptMissileCount(NativeWadRules::PiercingCrossbowBolt);
+                ++NextPoint;
+            }
+            else if (NextPoint == 5 && WalkTo(Player, {-1400, 2660}))
+            {
+                if (Level.GetScriptMissileCount(NativeWadRules::PiercingCrossbowBolt) != TrapMissilesBefore + 1)
+                {
+                    return Finish(&Player, TEXT("L20's plate did not launch its authored piercing bolt"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified L20 sector 41 launches the original piercing bolt through activity 7."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+
+        bool TickChurchScenery(UWorld& Current, ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            const bool bL20 = L25Review == EL25Review::L20Scenery;
+            const FVector2D Start = bL20 ? FVector2D(-1910, 3311) : FVector2D(1000, 408);
+            const FVector2D Target = bL20 ? FVector2D(-1799, 3311) : FVector2D(1184, 408);
+            const FVector2D CameraPoint = bL20 ? FVector2D(-2170, 1540) : FVector2D(960, -210);
+            const double Now = Current.GetTimeSeconds();
+            bool bSaved = false;
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                int32 Count = 0;
+                const ANativeWadScenery* Fixture = nullptr;
+                const FName Tag(bL20 ? TEXT("WAD Scenery Thing 80") : TEXT("WAD Scenery Thing 10"));
+                for (TActorIterator<ANativeWadScenery> Prop(&Current); Prop; ++Prop)
+                {
+                    ++Count;
+                    if (Prop->ActorHasTag(Tag))
+                    {
+                        Fixture = *Prop;
+                    }
+                }
+                if (!Fixture || Count != (bL20 ? 82 : 102) || !PlaceReviewPlayer(Level, Player, Start))
+                {
+                    return Finish(&Player, TEXT("scenery is missing from its authored map"));
+                }
+                // Match the native bolt sweep. Aim at the rock's height to verify passability through its sprite.
+                const double TraceZ = Fixture->GetActorLocation().Z + (bL20 ? 7.0 : 38.0);
+                const FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeWadSceneryReview), true, &Player);
+                FHitResult Hit;
+                const bool bHit = Current.SweepSingleByChannel(Hit, FVector(Start, TraceZ), FVector(Target, TraceZ),
+                    FQuat::Identity, ECC_Visibility, FCollisionShape::MakeSphere(5.0f), Query);
+                const bool bExpectedHit = bL20 ? !bHit : bHit && Hit.GetActor() == Fixture;
+                if (!bExpectedHit)
+                {
+                    return Finish(&Player, TEXT("the projectile collision channel disagrees with the scenery's passability"));
+                }
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (WalkTo(Player, Target) || Now - StageTime >= 2.0)
+                {
+                    Stop(Player);
+                    const double ExpectedX = bL20 ? Target.X : Target.X - 20 - ANativeWadPlayer::CapsuleRadius;
+                    if (!FMath::IsNearlyEqual(Player.GetActorLocation().X, ExpectedX, bL20 ? 6.0 : 3.0))
+                    {
+                        return Finish(&Player, TEXT("movement did not match the authored scenery collision"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("%s at X%.1f."),
+                        bL20 ? TEXT("Verified W crosses L20's passable rock Thing 80")
+                             : TEXT("Verified W stops at L25's solid tree Thing 10 and its source radius"),
+                        Player.GetActorLocation().X);
+                    if (!PlaceReviewPlayer(Level, Player, CameraPoint))
+                    {
+                        return Finish(&Player, TEXT("could not reach the scenery camera position"));
+                    }
+                    const FVector View = Player.GetPawnViewLocation();
+                    Aim(Player, View + (bL20 ? FVector(270, 25, 10) : FVector(-230, -228, 0)));
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (CaptureView(Player, bL20 ? TEXT("column-court") : TEXT("churchyard"), bSaved))
+                {
+                    const FVector2D SecondView = bL20 ? FVector2D(-1905, 2215) : FVector2D(910, 665);
+                    if (!bSaved || !PlaceReviewPlayer(Level, Player, SecondView))
+                    {
+                        return Finish(&Player, TEXT("could not capture the authored scenery"));
+                    }
+                    Aim(Player, Player.GetPawnViewLocation() + (bL20 ? FVector(150, 260, 4) : FVector(-200, -260, 14)));
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (CaptureView(Player, bL20 ? TEXT("grove") : TEXT("church-approach"), bSaved))
+                {
+                    return Finish(&Player, bSaved ? nullptr : TEXT("could not capture the second view of the authored scenery"));
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickL20Exit(UWorld& Current, ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            constexpr int32 Gate = 87;
+            const FVector2D Spawn(-3076, -3);
+            const UNativeWadTravelState* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel || Travel->Quest.Active != 1)
+            {
+                return Finish(&Player, TEXT("the L20 exit review needs the active church quest"));
+            }
+            bool bSaved = false;
+            if (Current.GetMapName().EndsWith(TEXT("L60")))
+            {
+                const FWadLevelCheckpoint* L20 = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L20"));
+                double ArrivalHour = Level.GetTimeOfDayHours();
+                if (!Level.HasDaySky() && !LexTryParseString(ArrivalHour, Current.URL.GetOption(TEXT("WadHour="), TEXT("-1"))))
+                {
+                    return Finish(&Player, TEXT("L60 could not read the travel clock"));
+                }
+                if (Travel->Quest.ResumeMaps.FindRef(1) != 60 || !FVector2D(Player.GetActorLocation()).Equals(Spawn, 3.0)
+                    || !MatchesTownCharacter(Player) || !FMath::IsNearlyEqual(ArrivalHour, HourBeforeTravel, 0.02)
+                    || !L20 || L20->SectorHeights.FindRef(Gate).Y != 190.0 || L20->Encounters.Num() != 16
+                    || !Travel->VisitedLevels.Contains(TEXT("/Game/Maps/L25")))
+                {
+                    return Finish(&Player, TEXT("L60 did not receive the authored spawn, character, clock or L20 gate state"));
+                }
+                if (!bArrivalCaptured)
+                {
+                    bArrivalCaptured = true;
+                    bWalking = false;
+                    Camera.Reset();
+                }
+                if (CaptureView(Player, TEXT("l60-arrival"), bSaved))
+                {
+                    if (!bSaved || !Player.SaveWadCheckpoint(L60ReviewSlot))
+                    {
+                        return Finish(&Player, TEXT("could not capture and save the L60 arrival"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L20 Thing 138 travels to L60 and saves the active quest and opened gate."));
+                    return Finish(&Player);
+                }
+                return true;
+            }
+
+            const int32 ResumeMap = Travel->Quest.ResumeMaps.FindRef(1);
+            if (NextPoint == 8 && ResumeMap == 60)
+            {
+                return true; // The travel subsystem has advanced while Unreal is still in the outgoing world.
+            }
+            const auto* Link = Level.GetLevelLinks().FindByPredicate([](const FAAWadNativeLevelLink& Entry)
+                { return Entry.SourceThing == 138 && Entry.Sector == 131; });
+            FVector2D GateHeights = FVector2D::ZeroVector;
+            if (ResumeMap != 20 || !Player.HasRestoredWadCheckpoint()
+                || !Link || Link->Destination.ToSoftObjectPath().GetLongPackageName() != TEXT("/Game/Maps/L60")
+                || !Level.GetSectorSurfaceHeights(Gate, GateHeights))
+            {
+                return Finish(&Player, TEXT("the L20 exit review needs ChurchL20's checkpoint and authored link"));
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (GateHeights != FVector2D(112, 112) || !PlaceReviewPlayer(Level, Player, {0, 1640}))
+                {
+                    return Finish(&Player, TEXT("L20's exit gate did not start closed or the plate approach was missing"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (WalkTo(Player, {0, 1690}))
+                {
+                    if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) != 108
+                        || !Player.GetInteractionMessage().Contains(TEXT("The exit has now been opened")))
+                    {
+                        return Finish(&Player, TEXT("the L20 plate did not run authored activity 12"));
+                    }
+                    StageTime = Current.GetTimeSeconds();
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (GateHeights.Y == 190.0)
+                {
+                    const double Elapsed = Current.GetTimeSeconds() - StageTime;
+                    if (!FMath::IsNearlyEqual(Elapsed, 3.0, 0.25) || !PlaceReviewPlayer(Level, Player, {-171, 1792}))
+                    {
+                        return Finish(&Player, TEXT("L20 gate 87 opened at the wrong speed or its approach was missing"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L20 activity 12 raised exit gate 87 from Z112 to Z190 in %.2fs."), Elapsed);
+                    Aim(Player, {140, 1792, Player.GetPawnViewLocation().Z});
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (CaptureView(Player, TEXT("l20-open-exit"), bSaved))
+                {
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture the open L20 exit gate"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (WalkTo(Player, {30, 1792}))
+                {
+                    if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) != 88)
+                    {
+                        return Finish(&Player, TEXT("the player did not cross the open L20 gate"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 5:
+                if (WalkTo(Player, {196, 1792}))
+                {
+                    ++NextPoint;
+                }
+                break;
+            case 6:
+                if (WalkTo(Player, {196, 1888}))
+                {
+                    ++NextPoint;
+                }
+                break;
+            case 7:
+                if (WalkTo(Player, {212, 1903}))
+                {
+                    ++NextPoint;
+                }
+                break;
+            case 8:
+                RecordTownCharacter(Player);
+                HourBeforeTravel = Level.GetTimeOfDayHours();
+                if (WalkTo(Player, {212, 1946}))
+                {
+                    return Finish(&Player, TEXT("walking into L20 sector 131 did not travel to L60"));
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickL60Reload(UWorld& Current, ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            if (NextPoint == 0)
+            {
+                const auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(L60ReviewSlot, 0));
+                const UNativeWadTravelState* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+                const FWadLevelCheckpoint* L20 = Travel ? Travel->VisitedLevels.Find(TEXT("/Game/Maps/L20")) : nullptr;
+                int32 SceneryCount = 0;
+                for (TActorIterator<ANativeWadScenery> Prop(&Current); Prop; ++Prop)
+                {
+                    ++SceneryCount;
+                }
+                if (!Save || !Player.HasRestoredWadCheckpoint() || !Travel || Travel->Quest.Active != 1
+                    || Travel->Quest.ResumeMaps.FindRef(1) != 60 || !L20 || L20->SectorHeights.FindRef(87).Y != 190.0
+                    || !FVector2D(Player.GetActorLocation()).Equals({-3076, -3}, 3.0)
+                    || Save->Level.Encounters.Num() != 25 || SceneryCount != 84)
+                {
+                    return Finish(&Player, TEXT("the L60 checkpoint did not restore its quest, player, scenery and archived L20 gate"));
+                }
+                const FURL Options(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
+                const FString Items = FString::JoinBy(Player.GetCarriedItems(), TEXT(","), [](int32 Type) { return LexToString(Type); });
+                if (Items != Options.GetOption(TEXT("WadItems="), TEXT(""))
+                    || Player.GetHealth() != FCString::Atoi(Options.GetOption(TEXT("WadHealth="), TEXT("-1")))
+                    || Player.GetExperience() != FCString::Atoi(Options.GetOption(TEXT("WadXP="), TEXT("-1"))))
+                {
+                    return Finish(&Player, TEXT("the L60 checkpoint changed the character's items, health or experience"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the L60 checkpoint restored the quest, authored spawn, encounters, scenery and archived L20 gate."));
+                if (!PlaceReviewPlayer(Level, Player, {-1400, 0}))
+                {
+                    return Finish(&Player, TEXT("the original L60 column hall was missing"));
+                }
+                Aim(Player, {-800, 0, Player.GetPawnViewLocation().Z + 20});
+                ++NextPoint;
+            }
+            bool bSaved = false;
+            return !CaptureView(Player, TEXT("l60-column-hall"), bSaved)
+                || Finish(&Player, bSaved ? nullptr : TEXT("could not capture the L60 column hall"));
+        }
+
         bool TickL25(UWorld& Current, ANativeWadPlayer& Player)
         {
             if (HeldKey)
@@ -1338,7 +1899,18 @@ namespace
             {
                 return Finish(&Player, TEXT("the L25 review lost its level or stopped making progress"));
             }
-            return L25Review == EL25Review::Passages ? TickL25Passages(Current, **Level, Player) : TickL25Key(**Level, Player);
+            switch (L25Review)
+            {
+            case EL25Review::Passages: return TickL25Passages(Current, **Level, Player);
+            case EL25Review::Knights: return TickChurchKnights(Current, **Level, Player);
+            case EL25Review::Exit: return TickChurchExit(Current, **Level, Player);
+            case EL25Review::L20Reload: return TickL20Reload(Current, **Level, Player);
+            case EL25Review::Scenery:
+            case EL25Review::L20Scenery: return TickChurchScenery(Current, **Level, Player);
+            case EL25Review::L20Exit: return TickL20Exit(Current, **Level, Player);
+            case EL25Review::L60Reload: return TickL60Reload(Current, **Level, Player);
+            default: return TickL25Key(**Level, Player);
+            }
         }
 
 
@@ -1457,6 +2029,10 @@ namespace
             if (HourBeforeTravel > 0.0 && !FMath::IsNearlyEqual(Level->GetTimeOfDayHours(), HourBeforeTravel, 0.02))
             {
                 return Finish(&Player, TEXT("the original quest handoff changed the campaign clock"));
+            }
+            if (L25Review == EL25Review::Exit)
+            {
+                return BeginChurchExit(**Level, Player);
             }
             bool bSaved = false;
             if (!CaptureView(Player, TEXT("arrival"), bSaved))
@@ -3177,9 +3753,14 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
 {
     const EL25Review L25Review = Mode == TEXT("churchpassages") ? EL25Review::Passages
         : Mode == TEXT("churchkeyreload") ? EL25Review::KeyReload
-        : Mode == TEXT("churchdoorreload") ? EL25Review::DoorReload : EL25Review::None;
+        : Mode == TEXT("churchdoorreload") ? EL25Review::DoorReload : Mode == TEXT("churchknights") ? EL25Review::Knights
+        : Mode == TEXT("churchjourney") ? EL25Review::Exit : Mode == TEXT("churchl20reload") ? EL25Review::L20Reload
+        : Mode == TEXT("churchscenery") ? EL25Review::Scenery : Mode == TEXT("churchl20scenery") ? EL25Review::L20Scenery
+        : Mode == TEXT("churchl20exit") ? EL25Review::L20Exit : Mode == TEXT("churchl60reload") ? EL25Review::L60Reload
+        : EL25Review::None;
     const ETownReview TownReview = Mode == TEXT("towntour") ? ETownReview::Tour : Mode == TEXT("townfailure") ? ETownReview::Failure
-        : Mode == TEXT("townreload") ? ETownReview::Reload : Mode == TEXT("townstart") ? ETownReview::Start
+        : Mode == TEXT("townreload") || L25Review == EL25Review::Exit ? ETownReview::Reload
+        : Mode == TEXT("townstart") ? ETownReview::Start
         : Mode == TEXT("townscroll") ? ETownReview::Scroll : ETownReview::None;
     const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start || TownReview == ETownReview::Scroll;
     const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
@@ -3190,7 +3771,10 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bL22Trap = Mode == TEXT("l22trap");
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
     const bool bDoorReload = Mode == TEXT("doorreload");
-    const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : L25Review != EL25Review::None ? TEXT("L25") : bAmbient ? TEXT("L301")
+    const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
+    const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bStartsInL20 ? TEXT("L20")
+        : L25Review == EL25Review::L60Reload ? TEXT("L60")
+        : L25Review != EL25Review::None ? TEXT("L25") : bAmbient ? TEXT("L301")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
         : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");

@@ -472,7 +472,8 @@ void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
 {
     const EWadBoltEffect Effect = Command.Target == 4015 ? EWadBoltEffect::Poison
         : Command.Target == 4016 ? EWadBoltEffect::Paralyze : EWadBoltEffect::Damage;
-    const int32 Damage = Effect == EWadBoltEffect::Poison ? PoisonMissileDamage : 100;
+    const int32 Damage = Effect == EWadBoltEffect::Poison ? PoisonMissileDamage
+        : Command.Target == NativeWadRules::PiercingCrossbowBolt ? NativeWadRules::ChurchBoltDamage : 100;
     UMaterialInterface* Art = Command.Target == 4015 ? ScriptMissileArt.Get() : ScriptMissileMaterials.FindRef(Command.Target).Get();
     const FVector Start = GetActorTransform().TransformPosition(FVector(Command.Position));
     const FVector Destination = GetActorTransform().TransformPosition(FVector(Command.Aim));

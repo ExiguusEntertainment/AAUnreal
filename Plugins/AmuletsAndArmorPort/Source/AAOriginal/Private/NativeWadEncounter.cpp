@@ -12,12 +12,6 @@
 namespace
 {
     using namespace NativeWadRules;
-    // CRELOGIC.C extends the table's five ticks by half, then shortens the fleeing update by a quarter.
-    constexpr int32 GuardianUpdateTicks = 5 + (5 >> 1);
-    constexpr int32 GuardianRetreatTicks = GuardianUpdateTicks - (GuardianUpdateTicks >> 2);
-    constexpr double MeleeRange = 60.0;
-    constexpr double BoltMinRange = 250.0;
-
     void SetSprite(UStaticMeshComponent& Sprite, UStaticMesh* Plane, UMaterialInterface* Material, double Scale)
     {
         Sprite.SetStaticMesh(Plane);
@@ -59,6 +53,12 @@ void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Stand
     HurtMaterial = Hurt;
     BoltMaterial = Bolt;
     Profile = InProfile;
+    GetCapsuleComponent()->SetCapsuleSize(Profile.CollisionRadius, Profile.CollisionHalfHeight);
+    GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
+    if (Profile.SpriteSize.X > 0 && Profile.SpriteSize.Y > 0)
+    {
+        Sprite->SetRelativeScale3D(FVector(Profile.SpriteSize * 0.01, 1.0));
+    }
 }
 
 void ANativeWadGuardian::BeginPlay()
@@ -90,10 +90,17 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     }
 
     LogicTime += DeltaSeconds;
-    const double Interval = (Health < Profile.RetreatHealth ? GuardianRetreatTicks : GuardianUpdateTicks) / TicksPerSecond;
+    const FVector Offset = Player->GetActorLocation() - GetActorLocation();
+    const FVector TowardPlayer = Offset.GetSafeNormal2D();
+    const double Distance = Offset.Size2D();
+    const bool bRetreat = Health < Profile.RetreatHealth;
+    const bool bCloseRetreat = Profile.bKeepsBoltDistance && Distance < Profile.MinBoltRange;
+    // CRELOGIC.C extends the table's update by half and shortens the fleeing update by a quarter.
+    const int32 UpdateTicks = Profile.UpdateTicks + (Profile.UpdateTicks >> 1);
+    const double Interval = (bRetreat ? UpdateTicks - (UpdateTicks >> 2) : UpdateTicks) / TicksPerSecond;
     const int32 Updates = FMath::FloorToInt(LogicTime / Interval);
     LogicTime -= Updates * Interval;
-    const int32 Recovery = FMath::Min(Updates, Profile.MaxHealth - Health);
+    const int32 Recovery = FMath::Min(Updates * Profile.RegenPerUpdate, Profile.MaxHealth - Health);
     Health += Recovery;
     RegeneratedHealth += Recovery;
     if (bHasTarget)
@@ -109,11 +116,8 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         Sprite->SetMaterial(0, Pose);
     }
-    const FVector Offset = Player->GetActorLocation() - GetActorLocation();
-    const FVector TowardPlayer = Offset.GetSafeNormal2D();
-    const double Distance = Offset.Size2D();
     const bool bVisible = Player->GetHealth() > 0 && CanSeePlayer(*Player);
-    const bool bMelee = bVisible && Distance < MeleeRange && FMath::Abs(Offset.Z) <= 26.0;
+    const bool bMelee = bVisible && Distance < Profile.MeleeRange && FMath::Abs(Offset.Z) <= 26.0;
     if (HitTime > 0.0 && Now >= HitTime)
     {
         HitTime = 0.0;
@@ -129,8 +133,8 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     }
     if (!bHasTarget)
     {
-        // Source acquisition has a 270 degree field of view and waits five updates before striking.
-        if (FVector::DotProduct(GetActorForwardVector(), TowardPlayer) < -UE_SQRT_2 * 0.5)
+        if (FVector::DotProduct(GetActorForwardVector(), TowardPlayer)
+            < FMath::Cos(FMath::DegreesToRadians(Profile.VisionHalfAngle)))
         {
             return;
         }
@@ -140,22 +144,22 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         return;
     }
-    const bool bRetreat = Health < Profile.RetreatHealth;
-    if (bRetreat || Distance > Profile.BoltRange || (!bMelee && Distance <= BoltMinRange))
+    if (bRetreat || bCloseRetreat || Distance > Profile.BoltRange || (!bMelee && Distance <= Profile.MinBoltRange))
     {
-        AddMovementInput(bRetreat ? -TowardPlayer : TowardPlayer, 1.0f, true);
+        AddMovementInput(bRetreat || bCloseRetreat ? -TowardPlayer : TowardPlayer, 1.0f, true);
     }
     if (Updates == 0)
     {
         return;
     }
-    if (bMelee && MeleeDelay == 0)
+    if (bMelee && Profile.MeleeDamage > 0 && MeleeDelay == 0)
     {
         MeleeDelay = Profile.MeleeDelayUpdates;
         HitTime = Now + 18 / TicksPerSecond;
         AttackPoseUntil = Now + 20 / TicksPerSecond;
     }
-    else if (!bMelee && Distance <= Profile.BoltRange && (Distance > BoltMinRange || bRetreat) && BoltDelay == 0)
+    else if (!bMelee && Distance <= Profile.BoltRange
+        && (Profile.bKeepsBoltDistance || Distance > Profile.MinBoltRange || bRetreat) && BoltDelay == 0)
     {
         BoltDelay = Profile.RangedDelayUpdates;
         AttackPoseUntil = Now + 20 / TicksPerSecond;

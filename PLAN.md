@@ -74,6 +74,7 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 
 - `AA.ImportNativeWad Content/TestData/L30.MAP L30 /Game/Maps/L30` saves the map and its mesh, texture, and material assets under `Content/Maps`. The command takes a new package path. Set `AA_NATIVE_WAD_MATERIALS=1` when running `scripts/create_wall_materials.py` to rebuild the native material parents.
 - The saved actor owns the sector and wall records needed by the height and scroll controls. Each floor and ceiling has a movable Static Mesh. Wall bands stay on their source lines while their visible and collision spans change with sector height. Opaque surfaces have thickness for Lumen, and floor and ceiling collision follows the original triangulated footprint.
+- Visible faces and the closed shells for Lumen use separate material sections. The shell's mask prevents slab skirts and wall caps from competing with the textured stair risers, ceiling lips, and sector edges. Use `AA.RefreshNativeWadSurfaces </Game/MapPackage>` to update previously generated native meshes in place.
 - Sector light values set an emissive baseline on the textured surfaces. `SetSectorLightLevel` adjusts a sector at runtime. The saved level enables Lumen global illumination and reflections at fixed exposure.
 - Reopened `/Game/Maps/L30` in a fresh Unreal editor process. Sector 147 passed the closed, partial, open, raised-floor, and reclosed collision checks, including traces against the moved floor and ceiling. Independent texture scroll and light adjustment passed on the reopened surfaces. All seven WAD regression tests passed.
 - `AA.ExportNativeL30Review ReviewArtifacts/L30-step6.png 850` captures dark sector 14 (light 50) facing bright sector 13 (light 255) through doorway 147. The three frames show the door closed, the door open, and the same open view with Lumen disabled. The foreground floor receives visible indirect light in the open Lumen view. The review is in `Saved/L30-Step6-Review.html`.
@@ -193,10 +194,29 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 62. **Generate and use L25's authored key.** A fresh process restored the pending generator and released item 258 once. The test confirmed door 148 refused E without the key, then consumed the collected key on use. A second restart checked the permanent unlock.
 
 - The L25 walkthrough starts at the authored spawn, then stages the player at the original approaches for the timed passages, plates, and key door. Each crossing, plate entry, and use action runs through normal player controls.
-- Run `AA.ExportNativeWadPortReview TownScroll <OutputPng> [ImageSize]` in standalone Town Hall and `ChurchPassages` in standalone L25. Start L25 with `?WadLoad=NativeWadChurchKeyReview` for `ChurchKeyReload` and `?WadLoad=NativeWadChurchDoorReview` for `ChurchDoorReload`. The older L30 checkpoint, the original Town Hall checkpoint, and all nine WAD regression tests passed.
+- Run `AA.ExportNativeWadPortReview TownScroll <OutputPng> [ImageSize]` in standalone Town Hall and `ChurchPassages` in standalone L25. With the knights active, use the review character options `?WadMaxHealth=10000?WadHealth=10000` for the timed waits. Start L25 with `?WadLoad=NativeWadChurchKeyReview` for `ChurchKeyReload` and `?WadLoad=NativeWadChurchDoorReview` for `ChurchDoorReload`. The older L30 checkpoint, the original Town Hall checkpoint, and all nine WAD regression tests passed.
 - The screenshots are in `Saved/Wad-Town-Scroll-and-L25-Review.html`.
 
-- L25's authored knight encounters and the playable L20 continuation are follow-up work.
+### The Church of Andrew and the route into L20
+
+63. **Place both authored knight variants.** Imported two mounted knights and seven crossbowmen in L25 from Thing types 1008 and 1009. Their original sprite poses, collision sizes, 3,000 health, bolt artwork, and combat values run through the native encounter code.
+64. **Verify the L25 encounters.** Staged approaches isolated source Things 3 and 6. Each knight hit the player for 300 with its own bolt. Using a readied dagger against the crossbowman reduced its health and awarded experience.
+65. **Build native L20 and run its original activities.** Imported 142 sectors, 668 lines, 15 ordinary doors, 16 knight placements, and all seventeen activities from `S20.SRP`. Player input verified floor 16's nine-second cycle to Z−300 and back to Z−16, and the piercing bolt from sector 41.
+66. **Continue the active quest through L25's authored exit.** The replay accepted *The Knights of Andrew* in Town Hall, loaded the tested key-door state, then walked through door 148 and into sector 149. L20 received the character and clock at its authored spawn `(-1084, 4630)`. A fresh process restored the quest resume point and archived L25 state.
+
+- Run `AA.ExportNativeWadPortReview ChurchKnights <OutputPng> [ImageSize]` in L25 with `?WadItems=200?WadReady=0`. Run `ChurchJourney` in Town Hall with `?WadLoad=NativeWadTownReview` after generating the key-door checkpoint with `ChurchKeyReload`. Run `ChurchL20Reload` in L20 with `?WadLoad=NativeWadChurchL20Review`. All nine WAD regression tests passed, and the older L30 checkpoint still loaded.
+- The screenshots are in `Saved/Wad-L25-Knights-and-L20-Review.html`.
+
+### Church scenery and the route into L60
+
+67. **Restore the original scenery placements.** Imported 102 placements in L25 and 82 in L20 from the source Things, including the churchyard trees and tombs, the L20 groves and columns, and the original furnishings and torches. The original object definitions supply sprite dimensions, viewing angles, animation timing, and mounting flags.
+68. **Check scenery collision in play.** First-person input stopped at L25's solid courtyard tree and crossed L20's passable rock. The native bolt collision sweep respected both objects' passability. The captures show the church grounds, L20 columns, and grove.
+69. **Open L20's authored exit.** Walking into sector 108 ran activity 12 from `S20.SRP`. It raised ceiling 87 from Z112 to Z190 in the authored three seconds and displayed the original exit message. The player crossed the open gate and followed Thing 138 in sector 131 to L60.
+70. **Import L60 and resume the active quest there.** Built all 258 sectors and 1,276 lines, the original spawn, 84 scenery placements, 25 knights, and startup activity 0 from `S60.SRP`. A fresh Unreal process restored the quest and the archived L20 gate from a checkpoint at L60's original spawn `(-3076, -3)`. L60's remaining puzzle activities, the Necklace of Andrew pickup, and quest turn-in are follow-up work.
+
+- The walkthrough stages the player at the original pressure-plate and gate approaches. The plate entry, gate crossing, and level transition use regular player movement.
+- Run `AA.ExportNativeWadPortReview ChurchScenery <OutputPng> [ImageSize]` in L25 and `ChurchL20Scenery` in L20. Use `ChurchL20Exit` in L20 with `?WadLoad=NativeWadChurchL20Review`, and `ChurchL60Reload` in a fresh L60 process with `?WadLoad=NativeWadChurchL60Review`.
+- The L25 knight combat and L20 timed-floor and trap replays still pass, along with all nine WAD regression tests. The screenshots are in `Saved/Wad-Scenery-and-L60-Review.html`.
 
 ### Asset follow-ups
 
@@ -204,6 +224,7 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - [ ] Restore `MARBGRAY` and `AASHITTY` in L31 when the source textures are available. The L31 importer uses the default material for those surfaces.
 - [ ] Restore `MARBGRAY` in L22. The import uses the default material for the affected surfaces.
 - [ ] Restore `AASHITTY` in L25 when the source texture is available. The native import uses the default material for that surface.
+- [ ] Restore `MARBLE1` and `MARBGRAY` in L60 when the source textures are available. The import uses the default material on the affected surfaces.
 
 ## 2026-04-11 Review Findings
 

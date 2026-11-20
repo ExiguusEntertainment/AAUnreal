@@ -34,23 +34,28 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "EngineUtils.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/WorldSettings.h"
+#include "HAL/FileManager.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionCameraVectorWS.h"
+#include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MeshDescription.h"
+#include "Misc/DefaultValueHelper.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/ConvexElem.h"
 #include "StaticMeshAttributes.h"
+#include "StaticMeshCompiler.h"
 #include "TextureResource.h"
 #include "UObject/SavePackage.h"
 #include "WadSurfaceTextures.h"
@@ -67,6 +72,74 @@ namespace
     constexpr uint16 TwoSidedLine = 0x0004;
     constexpr float TicksPerSecond = 70.0f;
     const FName SurfaceSlot(TEXT("Surface"));
+    const FName ShellSlot(TEXT("LightingShell"));
+    constexpr const TCHAR* ShellMaterialPackage = TEXT("/Game/AAReview/M_AANativeLightingShell");
+
+    UMaterial* LoadOrCreateLightingShell()
+    {
+        const FString ObjectPath = FString(ShellMaterialPackage) + TEXT(".M_AANativeLightingShell");
+        if (FPackageName::DoesPackageExist(ShellMaterialPackage))
+        {
+            return LoadObject<UMaterial>(nullptr, *ObjectPath);
+        }
+        UPackage* Package = CreatePackage(ShellMaterialPackage);
+        const FName Name(TEXT("M_AANativeLightingShell"));
+        if (UMaterial* Existing = FindObject<UMaterial>(Package, *Name.ToString()))
+        {
+            return Existing;
+        }
+        UMaterial* Material = NewObject<UMaterial>(Package, Name, AssetFlags);
+        // Distance-field generation uses opaque and masked triangles. The zero mask keeps
+        // these closing faces out of the raster/depth passes where they overlap actual walls and flats.
+        Material->BlendMode = BLEND_Masked;
+        Material->SetShadingModel(MSM_Unlit);
+        auto* Mask = NewObject<UMaterialExpressionConstant>(Material);
+        Mask->R = 0.0f;
+        Material->GetExpressionCollection().AddExpression(Mask);
+        Material->GetEditorOnlyData()->OpacityMask.Connect(0, Mask);
+        Material->PostEditChange();
+        Material->MarkPackageDirty();
+        FAssetRegistryModule::AssetCreated(Material);
+        return Material;
+    }
+
+    // The generated front lies at Y0 for walls and Z0 for flats. Keep its exact vertices,
+    // UVs and material slot, and assign the backs and side caps to their own section.
+    bool SplitLightingShell(UStaticMesh& Mesh, FMeshDescription& Description, int32 FrontAxis, UMaterial& Shell)
+    {
+        if (Description.PolygonGroups().Num() != 1 || Description.Polygons().Num() == 0 || Mesh.GetStaticMaterials().Num() != 1)
+        {
+            return false;
+        }
+        FStaticMeshAttributes Attributes(Description);
+        const auto Positions = Attributes.GetVertexPositions();
+        TArray<FPolygonID> Caps;
+        for (const FPolygonID Polygon : Description.Polygons().GetElementIDs())
+        {
+            for (const FVertexInstanceID Corner : Description.GetPolygonVertexInstances(Polygon))
+            {
+                if (!FMath::IsNearlyZero(Positions[Description.GetVertexInstanceVertex(Corner)][FrontAxis]))
+                {
+                    Caps.Add(Polygon);
+                    break;
+                }
+            }
+        }
+        if (Caps.IsEmpty() || Caps.Num() == Description.Polygons().Num())
+        {
+            return false;
+        }
+        const FPolygonGroupID Group = Description.CreatePolygonGroup();
+        Attributes.GetPolygonGroupMaterialSlotNames()[Group] = ShellSlot;
+        for (const FPolygonID Polygon : Caps)
+        {
+            Description.SetPolygonPolygonGroup(Polygon, Group);
+        }
+        Mesh.GetStaticMaterials().Emplace(&Shell, ShellSlot, ShellSlot);
+        Mesh.GetSectionInfoMap().Set(0, 1, FMeshSectionInfo(1));
+        Mesh.GetOriginalSectionInfoMap().Set(0, 1, FMeshSectionInfo(1));
+        return true;
+    }
 
     struct FWadMeshDescription
     {
@@ -627,12 +700,17 @@ struct FAAWadNativeImport
             return false;
         }
         const FString MapName = FPaths::GetBaseFilename(WadPath).ToUpper();
+        const bool bChurchQuestMap = MapName == TEXT("L25") || MapName == TEXT("L20") || MapName == TEXT("L60");
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L25") && !InstallL25Script(World, Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L20") && !InstallL20Script(Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L60") && !InstallL60Startup(Actor, Map, WadPath, Output))
+            || (bChurchQuestMap && (!InstallChurchScenery(World, Actor, Map, Output)
+                || !InstallChurchEncounters(World, Actor, Map, Output)))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output))))
         {
@@ -755,6 +833,265 @@ struct FAAWadNativeImport
         return !bAssetError;
     }
 
+    bool InstallL20Script(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
+    {
+        constexpr int32 EntryActivities[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+        if (!InstallActivities(Actor, Map, WadPath, TEXT("S20.SRP"), EntryActivities, Output)
+            || !InstallPuzzleSwitch(Actor, 791, Output))
+        {
+            return false;
+        }
+        Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        UMaterial* Bolt = SpriteMaterial(TEXT("ChurchPiercingBolt"), TEXT("ARROW7/1.CPC"));
+        if (!Actor.ScriptMissileMesh || !Bolt)
+        {
+            return false;
+        }
+        Actor.ScriptMissileMaterials.Add(NativeWadRules::PiercingCrossbowBolt, Bolt);
+        return !bAssetError;
+    }
+
+    static bool InstallL60Startup(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
+    {
+        constexpr int32 EntryActivities[] = {0};
+        return InstallActivities(Actor, Map, WadPath, TEXT("S60.SRP"), EntryActivities, Output);
+    }
+
+    bool ImportSceneryDefinition(const FString& Resource, FWadSceneryDefinition& Definition)
+    {
+        const FString Directory = FPaths::ProjectDir() /
+            TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/OBJS") / Resource;
+        const FString ObjectName = Resource == TEXT("DEAD01") ? TEXT("DEAD") : Resource;
+        TArray<FString> Lines;
+        const FString DefinitionPath = Directory / (ObjectName + TEXT(".INF"));
+        if (!FFileHelper::LoadFileToStringArray(Lines, *DefinitionPath))
+        {
+            return false;
+        }
+        TArray<int32> Values;
+        for (const FString& Line : Lines)
+        {
+            const int32 Comment = Line.Find(TEXT(";"));
+            const FString Number = (Comment == INDEX_NONE ? Line : Line.Left(Comment)).TrimStartAndEnd();
+            if (!Number.IsEmpty())
+            {
+                int32 Value;
+                if (!FDefaultValueHelper::ParseInt(Number, Value))
+                {
+                    return false;
+                }
+                Values.Add(Value);
+            }
+        }
+
+        // INF stores the object header, first stance, frame headers, then the picture IDs for those frames.
+        constexpr int32 StanceStart = 8;
+        constexpr int32 FrameStart = 12;
+        constexpr int32 FrameFields = 4;
+        if (Values.Num() < FrameStart || Values[0] != 1 || Values[1] < 0 || Values[StanceStart] < 1
+            || Values[StanceStart] > (Values.Num() - FrameStart) / FrameFields
+            || Values[StanceStart + 1] < 0 || Values[StanceStart + 2] < 0 || Values[StanceStart + 2] > 2)
+        {
+            return false;
+        }
+        constexpr int32 Passable = 0x0001;
+        constexpr int32 FullyPassable = 0x2000;
+        constexpr int32 DoNotSink = 0x0100;
+        constexpr int32 StickToCeiling = 0x0200;
+        constexpr int32 Raised = 0x0400;
+        Definition.Radius = Values[1];
+        Definition.bPassable = (Values[2] & (Passable | FullyPassable)) != 0 || Definition.Radius == 0;
+        Definition.bStaysAboveLiquid = (Values[7] & DoNotSink) != 0;
+        Definition.bHanging = (Values[7] & StickToCeiling) != 0;
+        Definition.bRaised = (Values[7] & Raised) != 0;
+        Definition.FrameTicks = Values[StanceStart + 1];
+        Definition.AnimationType = Values[StanceStart + 2];
+        const int32 Frames = Values[StanceStart];
+        int32 PictureIndex = FrameStart + FrameFields * Frames;
+
+        const FString FileListPath = Directory / (ObjectName + TEXT(".FL"));
+        if (!FFileHelper::LoadFileToStringArray(Lines, *FileListPath))
+        {
+            return false;
+        }
+        TMap<int32, FString> PictureFiles;
+        for (const FString& Line : Lines)
+        {
+            TArray<FString> Words;
+            Line.ParseIntoArrayWS(Words);
+            if (Words.Num() >= 2 && FPaths::GetExtension(Words[0]).Equals(TEXT("CPC"), ESearchCase::IgnoreCase)
+                && Words[1].IsNumeric())
+            {
+                PictureFiles.Add(FCString::Atoi(*Words[1]), Words[0].ToUpper());
+            }
+        }
+
+        TMap<int32, FWadSceneryView> Pictures;
+        for (int32 Frame = 0; Frame < Frames; ++Frame)
+        {
+            const int32 AngleCount = Values[FrameStart + FrameFields * Frame];
+            if ((AngleCount != 1 && AngleCount != 4 && AngleCount != 8)
+                || Values.Num() - PictureIndex < AngleCount)
+            {
+                return false;
+            }
+            FWadSceneryFrame& Result = Definition.Frames.AddDefaulted_GetRef();
+            for (int32 View = 0; View < AngleCount; ++View)
+            {
+                const int32 SignedId = Values[PictureIndex++];
+                if (SignedId == MIN_int32)
+                {
+                    return false;
+                }
+                const int32 PictureId = FMath::Abs(SignedId);
+                if (!Pictures.Contains(PictureId))
+                {
+                    const FString* PictureFile = PictureFiles.Find(PictureId);
+                    if (!PictureFile)
+                    {
+                        return false;
+                    }
+                    FWadSceneryView NewPicture;
+                    NewPicture.Material = SpriteMaterial(FString::Printf(TEXT("Scenery_%s_%d"), *Resource, PictureId),
+                        Resource / *PictureFile, &NewPicture.Size);
+                    if (!NewPicture.Material)
+                    {
+                        return false;
+                    }
+                    Pictures.Add(PictureId, NewPicture);
+                }
+                FWadSceneryView& ResultView = Result.Views.Add_GetRef(Pictures.FindChecked(PictureId));
+                ResultView.bMirrored = SignedId < 0;
+            }
+        }
+        return true;
+    }
+
+    bool InstallChurchScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        // These are fixed scenery types from OBJS.FL. Pickup, encounter and script types have their own importers.
+        static const TMap<int32, FString> Resources = {
+            {11, TEXT("COLUMN")}, {20, TEXT("MOSSROCK")}, {27, TEXT("TORCH1")}, {30, TEXT("GLOWER")},
+            {38, TEXT("TROPHY")}, {41, TEXT("BRAFIR")}, {48, TEXT("CB04")}, {79, TEXT("BIGTREE")},
+            {81, TEXT("MYROCK1")}, {115, TEXT("BGVASE")}, {137, TEXT("CHAIR01")}, {138, TEXT("TABLE01")},
+            {142, TEXT("TOMB3")}, {151, TEXT("STATUE")}, {285, TEXT("RUBL4")}, {294, TEXT("CANDAB1")},
+            {296, TEXT("CANDSTK1")}, {669, TEXT("FNTN")}, {3104, TEXT("DEAD01")}, {4071, TEXT("TREE1")},
+            {4072, TEXT("TREE2")}, {4074, TEXT("TREE4")}, {4076, TEXT("TREE6")}, {4077, TEXT("TREE7")},
+            {4078, TEXT("TREE8")}, {4083, TEXT("TORCH2")}
+        };
+        UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        if (!Plane)
+        {
+            return false;
+        }
+        TMap<int32, FWadSceneryDefinition> Definitions;
+        int32 Count = 0;
+        int32 PassableCount = 0;
+        for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+        {
+            const FWadThing& Thing = Map.Things[Id];
+            const FString* Resource = Resources.Find(Thing.Type);
+            if (!Resource)
+            {
+                continue;
+            }
+            const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+            if (!Map.Sectors.IsValidIndex(Sector))
+            {
+                Output.Logf(TEXT("Scenery thing %d (%s) falls outside the authored floor."), Id, **Resource);
+                return false;
+            }
+            if (!Definitions.Contains(Thing.Type) && !ImportSceneryDefinition(*Resource, Definitions.Add(Thing.Type)))
+            {
+                Output.Logf(TEXT("Could not import scenery thing %d (%s) from its original object definition."), Id, **Resource);
+                return false;
+            }
+            const FString Tag = FString::Printf(TEXT("WAD Scenery Thing %d"), Id);
+            ANativeWadScenery* Scenery = ImportSliceThing<ANativeWadScenery>(World, Map, Id, 0.0, *Tag);
+            if (!Scenery)
+            {
+                return false;
+            }
+            Scenery->SetActorLocationAndRotation(FVector(Thing.X, Thing.Y, 0.0), FRotator(0, Thing.Angle * 45.0, 0));
+            const FWadSceneryDefinition& Definition = Definitions.FindChecked(Thing.Type);
+            Scenery->Configure(Actor, Plane, Definition, Sector, Id);
+            ++Count;
+            PassableCount += Definition.bPassable ? 1 : 0;
+        }
+        Output.Logf(TEXT("Imported %d authored scenery placements (%d solid, %d passable)."), Count, Count - PassableCount, PassableCount);
+        return !bAssetError;
+    }
+
+    bool InstallChurchEncounters(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        using namespace NativeWadRules;
+        auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        if (!Plane)
+        {
+            return false;
+        }
+        for (const bool bMounted : {false, true})
+        {
+            const int32 Type = bMounted ? ChurchMountedKnight : ChurchFootKnight;
+            const FString AssetName = bMounted ? TEXT("MountedKnight") : TEXT("FootKnight");
+            auto* Standing = SpriteMaterial(AssetName, bMounted ? TEXT("KNITHRS/KHSRUN03.CPC") : TEXT("KXW/KXW001.CPC"));
+            auto* Attack = bMounted ? Standing : SpriteMaterial(AssetName + TEXT("Attack"), TEXT("KXW/KXA005.CPC"));
+            auto* Hurt = SpriteMaterial(AssetName + TEXT("Hurt"), bMounted ? TEXT("KNITHRS/KHSDI02.CPC") : TEXT("KXW/KXD001.CPC"));
+            auto* Down = SpriteMaterial(AssetName + TEXT("Down"), bMounted ? TEXT("KNITHRS/KHSDI08.CPC") : TEXT("KXW/KXD008.CPC"));
+            auto* Bolt = SpriteMaterial(bMounted ? TEXT("KnightPiercingBolt") : TEXT("KnightGrayBolt"),
+                bMounted ? TEXT("ARROW7/1.CPC") : TEXT("ARROW1/BOLT0.CPC"));
+            if (!Standing || !Attack || !Hurt || !Down || !Bolt)
+            {
+                return false;
+            }
+            // CREDATA.H supplies combat values, while the object definitions supply radius and standing sprite size.
+            FWadEncounterProfile Profile;
+            Profile.Name = bMounted ? TEXT("Mounted Knight of Andrew") : TEXT("Knight of Andrew Crossbowman");
+            Profile.MaxHealth = 3000;
+            Profile.RetreatHealth = bMounted ? 0 : 500;
+            Profile.MeleeDamage = bMounted ? 200 : 0;
+            Profile.BoltDamage = ChurchBoltDamage;
+            Profile.BoltRange = 1000;
+            Profile.MeleeDelayUpdates = 10;
+            Profile.RangedDelayUpdates = 20;
+            Profile.CollisionRadius = bMounted ? 32.0f : 20.0f;
+            Profile.SpriteSize = bMounted ? FVector2D(101, 83) : FVector2D(61, 62);
+            Profile.CollisionHalfHeight = float(Profile.SpriteSize.Y * 0.5);
+            Profile.WalkSpeed = bMounted ? 154.0f : 105.0f;
+            Profile.UpdateTicks = 7;
+            Profile.RegenPerUpdate = bMounted ? 5 : 1;
+            Profile.MeleeRange = bMounted ? 75.0f : 60.0f;
+            Profile.VisionHalfAngle = bMounted ? 67.5f : 90.0f;
+            Profile.bKeepsBoltDistance = true;
+            int32 Count = 0;
+            for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+            {
+                const FWadThing& Thing = Map.Things[Id];
+                if (Thing.Type != Type)
+                {
+                    continue;
+                }
+                const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+                if (!Map.Sectors.IsValidIndex(Sector))
+                {
+                    Output.Logf(TEXT("%s thing %d falls outside the authored floor."), *Profile.Name, Id);
+                    return false;
+                }
+                const FString Tag = FString::Printf(TEXT("WAD Knight Thing %d"), Id);
+                auto* Knight = ImportSliceThing<ANativeWadGuardian>(World, Map, Id,
+                    Actor.GetWalkingHeight(Sector) + Profile.CollisionHalfHeight + 2.0, *Tag);
+                if (!Knight)
+                {
+                    return false;
+                }
+                Knight->Configure(Plane, Standing, Down, Attack, Hurt, Bolt, Profile);
+                ++Count;
+            }
+            Output.Logf(TEXT("Imported %d authored %s placements (thing type %d)."), Count, *Profile.Name, Type);
+        }
+        return !bAssetError;
+    }
+
     bool InstallL22Journal(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
     {
         constexpr int32 JournalType = NativeWadRules::JugurthaJournal;
@@ -864,13 +1201,17 @@ struct FAAWadNativeImport
         AssetsToSave.AddUnique(&Asset);
     }
 
-    UMaterial* SpriteMaterial(const FString& Name, const FString& PicturePath)
+    UMaterial* SpriteMaterial(const FString& Name, const FString& PicturePath, FIntPoint* OutSize = nullptr)
     {
         FIntPoint Size;
         TArray<FColor> Pixels;
         if (!LoadWadSprite(PicturePath, Size, Pixels))
         {
             return nullptr;
+        }
+        if (OutSize)
+        {
+            *OutSize = Size;
         }
         UTexture2D* Picture = FindOrCreateAsset<UTexture2D>(TEXT("Things"), TEXT("T_") + Name);
         UMaterial* Result = FindOrCreateAsset<UMaterial>(TEXT("Things"), TEXT("M_") + Name);
@@ -1277,7 +1618,7 @@ struct FAAWadNativeImport
     }
 
     UStaticMesh* BuildMesh(const FString& Name, FWadMeshDescription& Geometry, UMaterialInterface* Material,
-        bool bDistanceField, TArray<FKConvexElem> Hulls = {})
+        bool bDistanceField, TArray<FKConvexElem> Hulls = {}, int32 FrontAxis = INDEX_NONE)
     {
         UStaticMesh* Mesh = FindOrCreateAsset<UStaticMesh>(TEXT("Meshes"), Name);
         if (!Mesh || Geometry.Description.Triangles().Num() == 0)
@@ -1286,6 +1627,20 @@ struct FAAWadNativeImport
         }
         Mesh->GetStaticMaterials().Reset();
         Mesh->GetStaticMaterials().Emplace(Material, SurfaceSlot, SurfaceSlot);
+        if (FrontAxis != INDEX_NONE)
+        {
+            Mesh->GetSectionInfoMap().Set(0, 0, FMeshSectionInfo(0));
+            Mesh->GetOriginalSectionInfoMap().Set(0, 0, FMeshSectionInfo(0));
+            UMaterial* Shell = LoadOrCreateLightingShell();
+            if (!Shell || !SplitLightingShell(*Mesh, Geometry.Description, FrontAxis, *Shell))
+            {
+                return nullptr;
+            }
+            if (Shell->GetOutermost()->IsDirty())
+            {
+                AssetsToSave.AddUnique(Shell);
+            }
+        }
         Mesh->SetNumSourceModels(1);
         FMeshBuildSettings& Settings = Mesh->GetSourceModel(0).BuildSettings;
         Settings.bRecomputeNormals = false;
@@ -1338,7 +1693,7 @@ struct FAAWadNativeImport
                 Geometry.AddQuad(A, D, BackD, BackA);
             }
             WallMeshes[Blend] = BuildMesh(FString(TEXT("SM_Wall_")) + Names[Blend], Geometry,
-                Parents[Blend], bOpaque);
+                Parents[Blend], bOpaque, {}, bOpaque ? 1 : INDEX_NONE);
             if (!WallMeshes[Blend])
             {
                 return false;
@@ -1422,7 +1777,7 @@ struct FAAWadNativeImport
             Geometry.AddQuad(Front[Edge.Y], Front[Edge.X], Back[Edge.X], Back[Edge.Y]);
         }
         const FString Name = FString::Printf(TEXT("Sector_%03d_%s"), SectorIndex, bCeiling ? TEXT("Ceiling") : TEXT("Floor"));
-        UStaticMesh* Mesh = BuildMesh(TEXT("SM_") + Name, Geometry, SurfaceMaterial, !bSky, MoveTemp(Hulls));
+        UStaticMesh* Mesh = BuildMesh(TEXT("SM_") + Name, Geometry, SurfaceMaterial, !bSky, MoveTemp(Hulls), 2);
         if (!Mesh)
         {
             return nullptr;
@@ -1586,6 +1941,76 @@ bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice&
         return false;
     }
     Output.Logf(TEXT("Saved WAD gameplay settings in %s."), *World->GetOutermost()->GetName());
+    return true;
+}
+
+bool RefreshNativeWadSurfaces(const FString& MapPackage, FOutputDevice& Output)
+{
+    if (!MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage))
+    {
+        Output.Log(TEXT("Usage: AA.RefreshNativeWadSurfaces </Game/MapPackage>"));
+        return false;
+    }
+    const FString MeshRoot = MapPackage + TEXT("_Assets/Meshes");
+    const FString OpaqueWall = TEXT("SM_Wall_Opaque");
+    if (!FPackageName::DoesPackageExist(MeshRoot / OpaqueWall))
+    {
+        Output.Logf(TEXT("%s has no generated native WAD wall mesh."), *MapPackage);
+        return false;
+    }
+    TArray<FString> MeshFiles;
+    const FString Extension = FPackageName::GetAssetPackageExtension();
+    const FString Pattern = FPackageName::LongPackageNameToFilename(MeshRoot) / (TEXT("SM_Sector_*") + Extension);
+    IFileManager::Get().FindFiles(MeshFiles, *Pattern, true, false);
+    if (MeshFiles.IsEmpty())
+    {
+        return false;
+    }
+    MeshFiles.Add(OpaqueWall + Extension);
+
+    UMaterial* Shell = LoadOrCreateLightingShell();
+    if (!Shell || (Shell->GetOutermost()->IsDirty() && !SaveAsset(*Shell, *Extension)))
+    {
+        return false;
+    }
+    TArray<UStaticMesh*> ChangedMeshes;
+    for (const FString& File : MeshFiles)
+    {
+        const FString Name = FPaths::GetBaseFilename(File);
+        const FString ObjectPath = MeshRoot / (Name + TEXT(".") + Name);
+        UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *ObjectPath);
+        if (!Mesh)
+        {
+            return false;
+        }
+        FStaticMeshCompilingManager::Get().FinishCompilation({Mesh});
+        const auto& Materials = Mesh->GetStaticMaterials();
+        if (Materials.IsValidIndex(1) && Materials[1].MaterialSlotName == ShellSlot && Materials[1].MaterialInterface == Shell)
+        {
+            continue;
+        }
+        FMeshDescription* Geometry = Mesh->GetMeshDescription(0);
+        if (!Geometry || !SplitLightingShell(*Mesh, *Geometry, Name == OpaqueWall ? 1 : 2, *Shell))
+        {
+            Output.Logf(TEXT("Could not split the generated lighting shell for %s."), *ObjectPath);
+            return false;
+        }
+        Mesh->CommitMeshDescription(0);
+        Mesh->Build(false);
+        Mesh->MarkPackageDirty();
+        ChangedMeshes.Add(Mesh);
+    }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UStaticMesh* Mesh : ChangedMeshes)
+    {
+        if (!SaveAsset(*Mesh, *Extension))
+        {
+            return false;
+        }
+    }
+    Output.Logf(TEXT("Refreshed %d of %d native WAD surface meshes for %s."),
+        ChangedMeshes.Num(), MeshFiles.Num(), *MapPackage);
     return true;
 }
 

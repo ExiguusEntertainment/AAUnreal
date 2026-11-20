@@ -975,6 +975,16 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD gameplay import finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADSURFACES")))
+        {
+            const FString Package = FParse::Token(Cmd, false);
+            if (!RefreshNativeWadSurfaces(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadSurfaces failed for %s."), *Package);
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD surface refresh finished"));
+            return true;
+        }
 #endif
         else if (FParse::Command(&Cmd, TEXT("AA.USEWADDOOR")))
         {
@@ -1056,7 +1066,10 @@ public:
                     || Review == TEXT("l22trap") || Review == TEXT("liftsave") || Review == TEXT("liftreload")
                     || Review == TEXT("doorreload") || Review == TEXT("towntour") || Review == TEXT("townfailure")
                     || Review == TEXT("townreload") || Review == TEXT("townstart") || Review == TEXT("townscroll")
-                    || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload"))
+                    || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload")
+                    || Review == TEXT("churchknights") || Review == TEXT("churchjourney") || Review == TEXT("churchl20reload")
+                    || Review == TEXT("churchscenery") || Review == TEXT("churchl20scenery")
+                    || Review == TEXT("churchl20exit") || Review == TEXT("churchl60reload"))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }

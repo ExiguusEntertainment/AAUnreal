@@ -39,6 +39,27 @@ struct FWadEncounterProfile
     int32 MeleeDelayUpdates = 30;
     UPROPERTY()
     int32 RangedDelayUpdates = 50;
+
+    UPROPERTY()
+    float CollisionRadius = 20.0f;
+    UPROPERTY()
+    float CollisionHalfHeight = 26.0f;
+    UPROPERTY()
+    FVector2D SpriteSize = FVector2D::ZeroVector;
+    UPROPERTY()
+    float WalkSpeed = 190.0f;
+    UPROPERTY()
+    int32 UpdateTicks = 5;
+    UPROPERTY()
+    int32 RegenPerUpdate = 1;
+    UPROPERTY()
+    float MeleeRange = 60.0f;
+    UPROPERTY()
+    float MinBoltRange = 250.0f;
+    UPROPERTY()
+    float VisionHalfAngle = 135.0f;
+    UPROPERTY()
+    bool bKeepsBoltDistance = false;
 };
 
 UCLASS()
