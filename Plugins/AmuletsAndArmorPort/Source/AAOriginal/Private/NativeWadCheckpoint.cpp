@@ -1,5 +1,6 @@
 #include "NativeWadCheckpoint.h"
 
+#include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -139,6 +140,10 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
     Save->View = GetControlRotation();
     Save->NeedsTime = NeedsTime;
     Save->PlayerOptions = MakeTravelOptions();
+    if (const UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
+    {
+        Save->VisitedLevels = Travel->VisitedLevels;
+    }
     if (!UGameplayStatics::SaveGameToSlot(Save, Slot.IsEmpty() ? UNativeWadCheckpoint::Slot : Slot, 0))
     {
         return false;
@@ -186,6 +191,44 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
     LastActivitySector = Level->FindActivitySector(FVector2D(Save->Position));
     LastLevelLink = Level->FindLevelLinkAt(FVector2D(Save->Position));
     bCheckedLevelLink = true;
+    if (UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
+    {
+        Travel->VisitedLevels = Save->VisitedLevels;
+    }
     bCheckpointRestored = true;
     UE_LOG(LogTemp, Display, TEXT("Restored WAD checkpoint in %s."), *Save->LevelPackage);
+}
+
+void ANativeWadPlayer::ArchiveDeparture()
+{
+    const ANativeWadLevel* Level = NativeLevel.Get();
+    UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    FWadLevelCheckpoint Snapshot;
+    if (Level && Travel && Level->WriteCheckpoint(Snapshot))
+    {
+        const FString Package = CheckpointMap(*GetWorld());
+        Travel->VisitedLevels.Add(Package, MoveTemp(Snapshot));
+        UE_LOG(LogTemp, Display, TEXT("Archived WAD level %s on departure."), *Package);
+    }
+}
+
+void ANativeWadPlayer::RestoreVisitedLevel()
+{
+    const UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    ANativeWadLevel* Level = NativeLevel.Get();
+    if (!Travel || !Level)
+    {
+        return;
+    }
+    const FString Package = CheckpointMap(*GetWorld());
+    if (const FWadLevelCheckpoint* Snapshot = Travel->VisitedLevels.Find(Package))
+    {
+        // The campaign clock travels with the player and keeps advancing across map visits.
+        const double ArrivalHour = Level->GetTimeOfDayHours();
+        if (Level->RestoreCheckpoint(*Snapshot))
+        {
+            Level->SetTimeOfDayHours(ArrivalHour);
+            UE_LOG(LogTemp, Display, TEXT("Restored visited WAD level %s."), *Package);
+        }
+    }
 }

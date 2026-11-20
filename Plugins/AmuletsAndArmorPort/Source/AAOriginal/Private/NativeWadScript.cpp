@@ -152,6 +152,17 @@ namespace
                     return false;
                 }
                 break;
+            case 15:
+            {
+                int32 Args[3];
+                if (!Reader.Literals(Args))
+                {
+                    return false;
+                }
+                Command.Operation = EWadScriptOperation::TeleportPlayer;
+                Command.Position = FIntVector(Args[0], Args[1], Args[2]);
+                break;
+            }
             case 22:
             case 23:
             case 63:

@@ -128,10 +128,17 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
 void ANativeWadPlayer::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    if (bRestoreCheckpointOnTick && GetController())
+    if (bRestoreVisitedOnTick && GetController())
     {
-        bRestoreCheckpointOnTick = false;
-        RestoreWadCheckpoint();
+        bRestoreVisitedOnTick = false;
+        if (bRestoreCheckpointOnTick)
+        {
+            RestoreWadCheckpoint();
+        }
+        else
+        {
+            RestoreVisitedLevel();
+        }
     }
     if (QuakeTime > 0.0)
     {
@@ -152,13 +159,19 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         {
             MoveInViewDirection(Forward, Right);
         }
+        if (const ANativeWadLevel* Level = NativeLevel.Get())
+        {
+            const FVector Feet = GetActorLocation() - FVector(0, 0, CapsuleHalfHeight);
+            const FVector2D CurrentInput = Level->GetCurrentInput(Feet);
+            AddMovementInput(FVector(CurrentInput.GetSafeNormal(), 0), CurrentInput.Size());
+        }
         if (ShouldShowEncounterHUD())
         {
             TickNeeds(DeltaSeconds);
         }
         if (ANativeWadLevel* Level = NativeLevel.Get())
         {
-            Level->CheckActivitySector(FVector2D(GetActorLocation()), LastActivitySector);
+            Level->CheckActivitySector(*this, LastActivitySector);
         }
         CheckLevelLink();
     }
@@ -188,7 +201,13 @@ void ANativeWadPlayer::CheckLevelLink()
     }
     UE_LOG(LogTemp, Display, TEXT("Entered WAD level link sector %d (thing %d), loading %s."),
         Link.Sector, Link.SourceThing, *Package);
-    UGameplayStatics::OpenLevelBySoftObjectPtr(this, Link.Destination, true, MakeTravelOptions());
+    TravelToWadLevel(Link.Destination);
+}
+
+void ANativeWadPlayer::TravelToWadLevel(const TSoftObjectPtr<UWorld>& Destination)
+{
+    ArchiveDeparture();
+    UGameplayStatics::OpenLevelBySoftObjectPtr(this, Destination, true, MakeTravelOptions());
 }
 
 FString ANativeWadPlayer::MakeTravelOptions() const

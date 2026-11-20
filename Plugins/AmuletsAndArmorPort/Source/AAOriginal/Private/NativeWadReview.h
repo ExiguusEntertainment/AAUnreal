@@ -13,3 +13,4 @@ bool StartNativeWadLightingReview(UWorld* World, const FString& OutputPath, int3
 bool StartNativeL30PlayerReview(UWorld* World, const FString& OutputPath, int32 ImageSize);
 bool StartNativeWadWalkReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bLevelLink, bool bSlice,
     bool bSecondMap, bool bCampaign, bool bCheckpoint);
+bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bReload);

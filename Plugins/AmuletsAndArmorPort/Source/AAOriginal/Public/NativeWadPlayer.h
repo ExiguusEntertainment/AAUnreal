@@ -52,6 +52,7 @@ public:
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
     bool SaveWadCheckpoint(const FString& Slot = FString()) const;
     bool HasRestoredWadCheckpoint() const { return bCheckpointRestored; }
+    void TravelToWadLevel(const TSoftObjectPtr<UWorld>& Destination);
     UFUNCTION(Exec)
     void WadSave();
     UFUNCTION(Exec)
@@ -84,6 +85,8 @@ private:
     void ReadTravelOptions(const FURL& URL);
     FString MakeTravelOptions() const;
     void RestoreWadCheckpoint();
+    void ArchiveDeparture();
+    void RestoreVisitedLevel();
 
     TWeakObjectPtr<ANativeWadLevel> NativeLevel;
     int32 LastLevelLink = INDEX_NONE;
@@ -108,6 +111,7 @@ private:
     int32 PoisonLevel = 0;
     double QuakeTime = 0.0;
     bool bRestoreCheckpointOnTick = false;
+    bool bRestoreVisitedOnTick = true;
     bool bCheckpointRestored = false;
     double NeedsTime = 0.0;
     TArray<int32> CarriedItems;

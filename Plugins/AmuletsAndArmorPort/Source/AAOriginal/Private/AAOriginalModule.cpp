@@ -1032,7 +1032,10 @@ public:
             const FString Size = FParse::Token(Cmd, false);
             const FString Output = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), File);
             const int32 ImageSize = Size.IsEmpty() ? 720 : FCString::Atoi(*Size);
-            const bool bStarted = !File.IsEmpty() && (Review == TEXT("sky")
+            const bool bRiver = Review == TEXT("river") || Review == TEXT("riverreload");
+            const bool bStarted = !File.IsEmpty() && (bRiver
+                ? StartNativeWadRiverReview(InWorld, Output, ImageSize, Review == TEXT("riverreload"))
+                : Review == TEXT("sky")
                 ? StartNativeWadLightingReview(InWorld, Output, ImageSize, true)
                 : (Review == TEXT("route") || Review == TEXT("link") || Review == TEXT("slice") || Review == TEXT("secondmap")
                     || Review == TEXT("campaign") || Review == TEXT("checkpoint"))
@@ -1040,7 +1043,7 @@ public:
                         Review == TEXT("secondmap"), Review == TEXT("campaign"), Review == TEXT("checkpoint")));
             if (!bStarted)
             {
-                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link|Slice|SecondMap|Campaign|Checkpoint> <OutputPng> [ImageSize] requires the corresponding native game level."));
+                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link|Slice|SecondMap|Campaign|Checkpoint|River|RiverReload> <OutputPng> [ImageSize] requires the corresponding native game level."));
                 UE_LOG(LogTemp, Display, TEXT("Native WAD port review finished"));
             }
             return true;

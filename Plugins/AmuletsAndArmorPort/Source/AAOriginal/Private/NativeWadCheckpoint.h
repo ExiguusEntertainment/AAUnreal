@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
+#include "Subsystems/GameInstanceSubsystem.h"
 #include "NativeWadCheckpoint.generated.h"
 
 USTRUCT()
@@ -75,4 +76,16 @@ public:
 
     UPROPERTY()
     FWadLevelCheckpoint Level;
+
+    UPROPERTY()
+    TMap<FString, FWadLevelCheckpoint> VisitedLevels;
+};
+
+UCLASS()
+class UNativeWadTravelState : public UGameInstanceSubsystem
+{
+    GENERATED_BODY()
+
+public:
+    TMap<FString, FWadLevelCheckpoint> VisitedLevels;
 };

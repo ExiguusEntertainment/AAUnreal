@@ -2,6 +2,7 @@
 #include "NativeWadReview.h"
 
 #include "Components/SceneCaptureComponent2D.h"
+#include "Components/StaticMeshComponent.h"
 #include "Containers/Ticker.h"
 #include "Engine/Engine.h"
 #include "Engine/SceneCapture2D.h"
@@ -408,6 +409,8 @@ namespace
     struct FWalkReview
     {
         enum class EStage { Spawn, Route, Blocked, Opening, Cross, Reclose, ExitApproach, Arrival };
+        enum class ERiverStage { Spawn, Encounter, RiverBank, Drift, WaterView, Route, Ledge, Jump,
+            Exit, Arrival, Teleport, Save, Return };
 
         FName WorldHandle;
         TWeakObjectPtr<UWorld> SourceWorld;
@@ -449,6 +452,14 @@ namespace
         bool bArrivalCaptured = false;
         bool bCheckpointReview = false;
         bool bCheckpointVerified = false;
+        bool bRiverReview = false;
+        bool bRiverReload = false;
+        ERiverStage RiverStage = ERiverStage::Spawn;
+        FVector DriftStart = FVector::ZeroVector;
+        FVector2D InitialWaterUV = FVector2D::ZeroVector;
+        double DriftStarted = 0.0;
+        double RiverProgressTime = 0.0;
+        bool bJumpStarted = false;
         bool bWalking = false;
         bool bCapturedEncounter = false;
         bool bRequestedInventoryFrame = false;
@@ -507,7 +518,7 @@ namespace
         bool WalkTo(ANativeWadPlayer& Player, const FVector2D& Target)
         {
             const FVector2D Offset = Target - FVector2D(Player.GetActorLocation());
-            const double AcceptanceRadius = bSecondMap || Stage == EStage::Arrival ? 14.0 : 5.0;
+            const double AcceptanceRadius = bRiverReview ? 16.0 : bSecondMap || Stage == EStage::Arrival ? 14.0 : 5.0;
             if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
                 Stop(Player);
@@ -1137,13 +1148,284 @@ namespace
                 || Finish(&Player, bSaved ? nullptr : TEXT("could not save the restored checkpoint frame"));
         }
 
+        bool TickRiver(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            constexpr int32 RiverSector = 37;
+            constexpr double RiverSurface = 32.0;
+            constexpr const TCHAR* RiverSlot = TEXT("NativeWadRiverReview");
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the river review lost its native level or player"));
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            if (RiverProgressTime == 0.0)
+            {
+                RiverProgressTime = FPlatformTime::Seconds();
+            }
+            if (FPlatformTime::Seconds() - RiverProgressTime > 42.0)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("River review stopped at phase %d, waypoint %d, sector %d."),
+                    int32(RiverStage), NextPoint, Level->FindWadSector(FVector2D(Player.GetActorLocation())));
+                return Finish(&Player, TEXT("the river route stopped making progress"));
+            }
+            const auto Advance = [this](ERiverStage Next)
+            {
+                RiverStage = Next;
+                RiverProgressTime = FPlatformTime::Seconds();
+            };
+            const bool bIsL531 = Current.GetMapName().EndsWith(TEXT("L531"));
+            const FVector Position = Player.GetActorLocation();
+            const FVector2D XY(Position);
+            if (&Current != SourceWorld.Get() && RiverStage == ERiverStage::Exit)
+            {
+                if (!bIsL531 || !XY.Equals(FVector2D(-144, -232), 3.0) || Player.GetExperience() != ExperienceBeforeTravel
+                    || Player.GetHealth() != HealthBeforeTravel || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                {
+                    return Finish(&Player, TEXT("the authored L301 link did not bring the same player to the L531 spawn"));
+                }
+                Camera.Reset();
+                bWalking = false;
+                Advance(ERiverStage::Arrival);
+                UE_LOG(LogTemp, Display, TEXT("Verified L301 thing 304 travels to the original L531 spawn, with the same XP, health and ready dagger."));
+            }
+            bool bSaved = false;
+            switch (RiverStage)
+            {
+            case ERiverStage::Spawn:
+                if (bRiverReload)
+                {
+                    if (!Player.HasRestoredWadCheckpoint())
+                    {
+                        return true;
+                    }
+                    if (!bIsL531 || !XY.Equals(FVector2D(1263, 1200), 4.0))
+                    {
+                        return Finish(&Player, TEXT("L531's post-teleport checkpoint did not survive restart"));
+                    }
+                    ExperienceBeforeTravel = Player.GetExperience();
+                    HealthBeforeTravel = Player.GetHealth();
+                    Advance(ERiverStage::Return);
+                    Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                    break;
+                }
+                if (!XY.Equals(FVector2D(3440, 2944), 3.0) || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                {
+                    return Finish(&Player, TEXT("the river run requires the original L301 spawn with a ready dagger"));
+                }
+                Advance(ERiverStage::Encounter);
+                break;
+            case ERiverStage::Encounter:
+            {
+                const TActorIterator<ANativeWadGuardian> Encounter(&Current);
+                if (!Encounter)
+                {
+                    return Finish(&Player, TEXT("L301 did not spawn its authored Guardian"));
+                }
+                if (Encounter->IsDefeated())
+                {
+                    Stop(Player);
+                    Advance(ERiverStage::RiverBank);
+                    break;
+                }
+                if (FVector::Dist2D(Position, Encounter->GetActorLocation()) > 50.0)
+                {
+                    const FVector2D Approach = Encounter->CanSeePlayer(Player)
+                        ? FVector2D(Encounter->GetActorLocation()) : FVector2D(3046, 3218);
+                    WalkTo(Player, Approach);
+                }
+                else
+                {
+                    Stop(Player);
+                    Aim(Player, Encounter->GetActorLocation());
+                    Press(Player, EKeys::LeftControl);
+                }
+                break;
+            }
+            case ERiverStage::RiverBank:
+                if (NextPoint == 0)
+                {
+                    if (WalkTo(Player, FVector2D(2360, 3220)))
+                    {
+                        ++NextPoint;
+                        RiverProgressTime = FPlatformTime::Seconds();
+                    }
+                    break;
+                }
+                if (WalkTo(Player, FVector2D(2256, 3168)))
+                {
+                    NextPoint = 0;
+                    Advance(ERiverStage::Drift);
+                }
+                break;
+            case ERiverStage::Drift:
+            {
+                const FAAWadNativeSector& Water = Level->GetSectors()[RiverSector];
+                const double Feet = Position.Z - ANativeWadPlayer::CapsuleHalfHeight;
+                if (Level->FindWadSector(XY) != RiverSector || !Water.bWater || Water.FloorDepth != 20
+                    || Level->GetWalkingHeight(RiverSector) != RiverSurface - 20 || !Water.Floor
+                    || Water.FloorScrollRate != FVector2D(-87.5, -87.5)
+                    || Level->GetCurrentInput(Position + FVector(0, 0, 30)) != FVector2D::ZeroVector)
+                {
+                    return Finish(&Player, TEXT("water depth, scroll, or above-water current differs from the imported marker"));
+                }
+                if (!FMath::IsNearlyEqual(Feet, RiverSurface - 20, 3.5))
+                {
+                    break;
+                }
+                const TArray<float>& UV = Water.Floor->GetCustomPrimitiveData().Data;
+                if (!UV.IsValidIndex(3))
+                {
+                    return Finish(&Player, TEXT("the water has no runtime texture offset"));
+                }
+                if (DriftStarted == 0.0)
+                {
+                    DriftStarted = Current.GetTimeSeconds();
+                    DriftStart = Position;
+                    InitialWaterUV = FVector2D(UV[2], UV[3]);
+                }
+                if (Current.GetTimeSeconds() - DriftStarted >= 0.85)
+                {
+                    const FVector Offset = Position - DriftStart;
+                    if (Offset.X > -10.0 || Offset.Y > -10.0 || InitialWaterUV.Equals(FVector2D(UV[2], UV[3])))
+                    {
+                        return Finish(&Player, TEXT("the moving water did not move the idle player southwest and scroll the surface"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L301 sector 37's water depth, southwest drift (%s), and moving texture."), *Offset.ToString());
+                    Advance(ERiverStage::WaterView);
+                }
+                break;
+            }
+            case ERiverStage::WaterView:
+                Aim(Player, {1616, 2980, 35});
+                if (CaptureView(Player, TEXT("current"), bSaved))
+                {
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not save the water screenshot"));
+                    }
+                    Advance(ERiverStage::Route);
+                }
+                break;
+            case ERiverStage::Route:
+            {
+                const FVector2D Waypoints[] = {{1560,2920}, {960,2288}, {712,1144}, {696,760},
+                    {688,656}, {672,600}, {384,32}, {320,-40}, {145,-193}};
+                if (WalkTo(Player, Waypoints[NextPoint]))
+                {
+                    RiverProgressTime = FPlatformTime::Seconds();
+                    if (++NextPoint == UE_ARRAY_COUNT(Waypoints))
+                    {
+                        Advance(ERiverStage::Ledge);
+                    }
+                }
+                break;
+            }
+            case ERiverStage::Ledge:
+                if (Level->FindWadSector(XY) == 16 && Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, FVector(135, -300, Player.GetPawnViewLocation().Z));
+                    Walk(Player);
+                    if (Player.GetVelocity().Size2D() > 95.0 || XY.Y < -206.0)
+                    {
+                        Press(Player, EKeys::SpaceBar);
+                        bJumpStarted = false;
+                        Advance(ERiverStage::Jump);
+                    }
+                }
+                break;
+            case ERiverStage::Jump:
+                bJumpStarted |= Player.GetCharacterMovement()->IsFalling();
+                if (WalkTo(Player, {135,-300}) && bJumpStarted && Level->FindWadSector(XY) == 47
+                    && Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    NextPoint = 0;
+                    Advance(ERiverStage::Exit);
+                    UE_LOG(LogTemp, Display, TEXT("Verified a jump from L301 sector 16 to the raised bank in sector 47."));
+                }
+                break;
+            case ERiverStage::Exit:
+                if (NextPoint == 0)
+                {
+                    if (WalkTo(Player, {-184,-940}))
+                    {
+                        ++NextPoint;
+                    }
+                    break;
+                }
+                ExperienceBeforeTravel = Player.GetExperience();
+                HealthBeforeTravel = Player.GetHealth();
+                if (WalkTo(Player, {-184,-1058}))
+                {
+                    return Finish(&Player, TEXT("the L301 exit marker did not travel"));
+                }
+                break;
+            case ERiverStage::Arrival:
+                if (!CaptureView(Player, TEXT("l531-arrival"), bSaved))
+                {
+                    break;
+                }
+                // The L301 route ends at the authored L531 spawn. Start the separate teleport check by its hallway.
+                if (!bSaved || !Player.TeleportTo({1575, 3510, 45}, FRotator::ZeroRotator))
+                {
+                    return Finish(&Player, TEXT("could not stage the L531 teleport check"));
+                }
+                Advance(ERiverStage::Teleport);
+                break;
+            case ERiverStage::Teleport:
+                if (XY.Equals(FVector2D(1263, 1200), 6.0))
+                {
+                    Stop(Player);
+                    Advance(ERiverStage::Save);
+                }
+                else if (WalkTo(Player, {1650,3510}))
+                {
+                    return Finish(&Player, TEXT("walking into L531 sector 21 did not run its teleport activity"));
+                }
+                break;
+            case ERiverStage::Save:
+                if (!CaptureView(Player, TEXT("l531-teleport"), bSaved))
+                {
+                    break;
+                }
+                if (!bSaved || !Player.SaveWadCheckpoint(RiverSlot))
+                {
+                    return Finish(&Player, TEXT("could not save the settled L531 checkpoint"));
+                }
+                ExperienceBeforeTravel = Player.GetExperience();
+                HealthBeforeTravel = Player.GetHealth();
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                Advance(ERiverStage::Return);
+                break;
+            case ERiverStage::Return:
+                if (!bIsL531 && Current.GetTimeSeconds() >= 0.1)
+                {
+                    const TActorIterator<ANativeWadGuardian> Encounter(&Current);
+                    if (!Encounter || !Encounter->IsDefeated() || Player.GetExperience() != ExperienceBeforeTravel
+                        || Player.GetHealth() != HealthBeforeTravel || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                    {
+                        return Finish(&Player, TEXT("revisiting L301 did not recover its defeated Guardian and carried character"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified revisiting L301 %s restores its defeated Guardian and carried character."),
+                        bRiverReload ? TEXT("after process restart") : TEXT("in the same session"));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            return true;
+        }
+
         bool Tick()
         {
             UWorld* Current = World();
             APlayerController* Controller = Current ? Current->GetFirstPlayerController() : nullptr;
             ANativeWadPlayer* Player = Controller ? Cast<ANativeWadPlayer>(Controller->GetPawn()) : nullptr;
             const double Now = FPlatformTime::Seconds();
-            if (Now - StartTime > (bSlice ? 180.0 : 120.0))
+            if (Now - StartTime > (bRiverReview ? 270.0 : bSlice ? 180.0 : 120.0))
             {
                 return Finish(Player, TEXT("the review timed out"));
             }
@@ -1154,6 +1436,10 @@ namespace
             if (bCheckpointReview)
             {
                 return TickCheckpoint(*Current, *Player);
+            }
+            if (bRiverReview)
+            {
+                return TickRiver(*Current, *Player);
             }
             if (Current != SourceWorld.Get())
             {
@@ -1419,6 +1705,26 @@ bool StartNativeWadWalkReview(UWorld* World, const FString& OutputPath, int32 Im
     Review->bSecondMap = bSecondMap;
     Review->bCampaign = bCampaign;
     Review->bCheckpointReview = bCheckpoint;
+    FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
+    return true;
+}
+
+bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bReload)
+{
+    ANativeWadLevel* Level = GetReviewLevel(World, OutputPath, ImageSize);
+    const FWorldContext* Context = Level ? GEngine->GetWorldContextFromWorld(World) : nullptr;
+    if (!Context || !World->GetMapName().EndsWith(bReload ? TEXT("L531") : TEXT("L301")))
+    {
+        return false;
+    }
+    const TSharedRef<FWalkReview> Review = MakeShared<FWalkReview>();
+    Review->WorldHandle = Context->ContextHandle;
+    Review->SourceWorld = World;
+    Review->Output = OutputPath;
+    Review->StartTime = FPlatformTime::Seconds();
+    Review->Size = ImageSize;
+    Review->bRiverReview = true;
+    Review->bRiverReload = bReload;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;
 }

@@ -4,7 +4,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "NativeWadPlayer.h"
 
 namespace
 {
@@ -171,7 +173,9 @@ void ANativeWadLevel::Tick(float DeltaSeconds)
         }
     }
     TickActivitySlides(DeltaSeconds);
-    if (ActiveDoors.IsEmpty() && ActivitySlides.IsEmpty() && !bRunDayClock)
+    TickSurfaceScroll(DeltaSeconds);
+    if (ActiveDoors.IsEmpty() && ActivitySlides.IsEmpty() && !bRunDayClock
+        && ScrollingSectors.IsEmpty() && ScrollingSides.IsEmpty())
     {
         SetActorTickEnabled(false);
     }
@@ -213,6 +217,79 @@ bool ANativeWadLevel::ContainsSectorPoint(int32 Sector, const FVector2D& LocalPo
         }
     }
     return bInside;
+}
+
+int32 ANativeWadLevel::FindWadSector(const FVector2D& Position) const
+{
+    const FVector2D Local(GetActorTransform().InverseTransformPosition(FVector(Position, GetActorLocation().Z)));
+    for (int32 Sector = 0; Sector < Sectors.Num(); ++Sector)
+    {
+        if (ContainsSectorPoint(Sector, Local))
+        {
+            return Sector;
+        }
+    }
+    return INDEX_NONE;
+}
+
+double ANativeWadLevel::GetWalkingHeight(int32 Sector) const
+{
+    if (const FAAWadNativeSector* Entry = Sectors.IsValidIndex(Sector) ? &Sectors[Sector] : nullptr; Entry && Entry->Floor)
+    {
+        return Entry->Floor->GetRelativeLocation().Z - Entry->FloorDepth;
+    }
+    return 0.0;
+}
+
+FVector2D ANativeWadLevel::GetCurrentInput(const FVector& Feet) const
+{
+    const FVector Local = GetActorTransform().InverseTransformPosition(Feet);
+    for (int32 Sector : FlowSectors)
+    {
+        const FAAWadNativeSector& Entry = Sectors[Sector];
+        if ((!Entry.bWater || Local.Z <= Entry.Floor->GetRelativeLocation().Z + 2.5)
+            && ContainsSectorPoint(Sector, FVector2D(Local)))
+        {
+            // Keep current strength relative to the movement speed of the native first-person character.
+            constexpr double InputPerSourceImpulse = 0.0475;
+            return FVector2D(GetActorTransform().TransformVectorNoScale(FVector(Entry.FlowImpulse, 0))) * InputPerSourceImpulse;
+        }
+    }
+    return FVector2D::ZeroVector;
+}
+
+void ANativeWadLevel::TickSurfaceScroll(float DeltaSeconds)
+{
+    SurfaceScrollSeconds += DeltaSeconds;
+    for (int32 Index : ScrollingSectors)
+    {
+        SetSectorTextureScrollTexels(Index, false, SurfaceScrollSeconds * Sectors[Index].FloorScrollRate);
+    }
+    for (int32 Index : ScrollingSides)
+    {
+        for (EWadWallBand Band : {EWadWallBand::Lower, EWadWallBand::Middle, EWadWallBand::Upper})
+        {
+            SetWallTextureScrollTexels(Index, Band, SurfaceScrollSeconds * Sides[Index].ScrollRate);
+        }
+    }
+}
+
+void ANativeWadLevel::TeleportActivityPlayer(ANativeWadPlayer& Player, const FVector2D& Destination)
+{
+    // The original teleport command preserves yaw and places the player on the destination floor.
+    const FVector WorldXY = GetActorTransform().TransformPosition(FVector(Destination, 0));
+    const int32 Sector = FindWadSector(FVector2D(WorldXY));
+    if (Sector == INDEX_NONE)
+    {
+        return;
+    }
+    const FVector Start = GetActorTransform().TransformPosition(FVector(Destination,
+        GetWalkingHeight(Sector) + ANativeWadPlayer::CapsuleHalfHeight + 2.0));
+    if (Player.TeleportTo(Start, Player.GetActorRotation()))
+    {
+        Player.GetCharacterMovement()->StopMovementImmediately();
+        UE_LOG(LogTemp, Display, TEXT("WAD activity teleported the player into sector %d at %s."), Sector, *Start.ToString());
+    }
 }
 
 bool ANativeWadLevel::IsDoorObstructed(int32 Sector, double FromZ, double ToZ) const
@@ -393,6 +470,11 @@ void ANativeWadLevel::SetSectorHeight(int32 Sector, double Z, bool bCeiling)
     FVector Location = Mesh->GetRelativeLocation();
     Location.Z = Height;
     Mesh->SetRelativeLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
+    if (!bCeiling && Sectors[Sector].WalkingFloor)
+    {
+        Location.Z -= Sectors[Sector].FloorDepth;
+        Sectors[Sector].WalkingFloor->SetRelativeLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
+    }
     for (const int32 Line : LinesBySector[Sector])
     {
         UpdateLine(Line, false);
@@ -551,6 +633,27 @@ void ANativeWadLevel::UpdateLine(int32 Index, bool bPersist)
     const FVector2D Edge = Wall.To - Wall.From;
     const FVector2D Middle = (Wall.To + Wall.From) * 0.5;
     const FRotator Rotation = FVector(Edge, 0.0).Rotation();
+    const int32 Front = WallTopology.GetSectorForSide(Line.Sides.X);
+    const int32 Back = WallTopology.GetSectorForSide(Line.Sides.Y);
+    const int32 FrontDepth = Sectors.IsValidIndex(Front) ? Sectors[Front].FloorDepth : 0;
+    const int32 BackDepth = Sectors.IsValidIndex(Back) ? Sectors[Back].FloorDepth : 0;
+    if (FrontDepth || BackDepth)
+    {
+        TArray<FWadSectorHeightRange> CollisionHeights = Heights;
+        if (FrontDepth)
+        {
+            CollisionHeights[Front].Floor -= FrontDepth;
+        }
+        if (BackDepth && Back != Front)
+        {
+            CollisionHeights[Back].Floor -= BackDepth;
+        }
+        FWadWallLine CollisionWall;
+        if (BuildWadWallLine(WallTopology, Index, CollisionWall, CollisionHeights))
+        {
+            Wall.Collision = MoveTemp(CollisionWall.Collision);
+        }
+    }
     for (int32 SpanIndex = 0; SpanIndex < Wall.Collision.Num(); ++SpanIndex)
     {
         if (!Line.Collision.IsValidIndex(SpanIndex))

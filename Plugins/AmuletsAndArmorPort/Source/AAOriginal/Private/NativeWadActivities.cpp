@@ -72,12 +72,12 @@ bool ANativeWadLevel::UseActivityFromView(ANativeWadPlayer& Player)
         && RunWadActivity(Activity, &Player);
 }
 
-void ANativeWadLevel::CheckActivitySector(const FVector2D& Position, int32& PreviousSector)
+void ANativeWadLevel::CheckActivitySector(ANativeWadPlayer& Player, int32& PreviousSector)
 {
-    const int32 Sector = FindActivitySector(Position);
+    const int32 Sector = FindActivitySector(FVector2D(Player.GetActorLocation()));
     if (Sector != INDEX_NONE && PreviousSector != Sector)
     {
-        RunWadActivity(Sectors[Sector].Activity);
+        RunWadActivity(Sectors[Sector].Activity, &Player);
     }
     PreviousSector = Sector;
 }
@@ -203,6 +203,12 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
             break;
         case EWadScriptOperation::LaunchMissile:
             LaunchActivityMissile(Command);
+            break;
+        case EWadScriptOperation::TeleportPlayer:
+            if (ANativeWadPlayer* Pawn = Player.Get())
+            {
+                TeleportActivityPlayer(*Pawn, FVector2D(Command.Position.X, Command.Position.Y));
+            }
             break;
         }
     }

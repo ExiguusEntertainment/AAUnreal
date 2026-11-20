@@ -34,12 +34,30 @@ struct FAAWadNativeSector
 
     UPROPERTY()
     int32 Activity = 0;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> WalkingFloor;
+
+    UPROPERTY()
+    int32 FloorDepth = 0;
+
+    UPROPERTY()
+    bool bWater = false;
+
+    UPROPERTY()
+    FVector2D FlowImpulse = FVector2D::ZeroVector;
+
+    UPROPERTY()
+    FVector2D FloorScrollRate = FVector2D::ZeroVector;
 };
 
 USTRUCT()
 struct FAAWadNativeSide
 {
     GENERATED_BODY()
+
+    UPROPERTY()
+    FVector2D ScrollRate = FVector2D::ZeroVector;
 
     UPROPERTY()
     int32 Sector = INDEX_NONE;
@@ -165,8 +183,11 @@ public:
 
     bool UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, const AActor* UserActor);
     bool UseActivityFromView(ANativeWadPlayer& Player);
-    void CheckActivitySector(const FVector2D& Position, int32& PreviousSector);
+    void CheckActivitySector(ANativeWadPlayer& Player, int32& PreviousSector);
     int32 FindActivitySector(const FVector2D& Position) const;
+    int32 FindWadSector(const FVector2D& Position) const;
+    double GetWalkingHeight(int32 Sector) const;
+    FVector2D GetCurrentInput(const FVector& Feet) const;
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
     int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
     int32 GetScriptMissileCount() const { return ScriptMissileCount; }
@@ -202,6 +223,8 @@ private:
     void SetActivitySwitch(int32 Side, bool bUp);
     void PlayActivitySound(const FWadScriptCommand& Command);
     void LaunchActivityMissile(const FWadScriptCommand& Command);
+    void TickSurfaceScroll(float DeltaSeconds);
+    void TeleportActivityPlayer(ANativeWadPlayer& Player, const FVector2D& Destination);
 
     struct FActivitySlide
     {
@@ -304,4 +327,11 @@ private:
     TArray<int32> AppliedLights;
     TMap<int32, int32> LightOverrides;
     TMap<uint64, FVector2D> WallScroll;
+    double SurfaceScrollSeconds = 0.0;
+    UPROPERTY()
+    TArray<int32> ScrollingSectors;
+    UPROPERTY()
+    TArray<int32> ScrollingSides;
+    UPROPERTY()
+    TArray<int32> FlowSectors;
 };

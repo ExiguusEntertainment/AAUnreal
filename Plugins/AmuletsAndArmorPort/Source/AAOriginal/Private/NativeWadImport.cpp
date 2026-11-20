@@ -394,6 +394,173 @@ struct FAAWadNativeImport
         return true;
     }
 
+    bool InstallSurfaceEnvironment(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        FOutputDevice& Output)
+    {
+        constexpr int32 Water = 1505;
+        constexpr int32 Depth = 1521;
+        constexpr int32 FlowSlow = 1523;
+        constexpr int32 FlowFast = 1525;
+        constexpr int32 WallUpSlow = 1537;
+        constexpr int32 WallDownFast = 1542;
+        constexpr int32 WaterDepth = 20;
+        constexpr double TexelsPerSourceScrollUnit = 70.0 / 64.0;
+        TArray<uint8> Animation;
+        int32 SideStart = 0, SectorStart = 0, SideCount = 0, SectorCount = 0;
+        const auto ReadWord = [&Animation](int32 Offset)
+        {
+            return uint16(Animation[Offset] | (uint16(Animation[Offset + 1]) << 8));
+        };
+        if (Map.Things.ContainsByPredicate([](const FWadThing& Thing)
+            { return (Thing.Type >= FlowSlow && Thing.Type <= FlowFast) || (Thing.Type >= WallUpSlow && Thing.Type <= WallDownFast); }))
+        {
+            FString Anims = FPaths::GetPath(WadPath) / TEXT("MAP.ANI");
+            if (!FPaths::FileExists(Anims))
+            {
+                Anims = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe/MAP.ANI");
+            }
+            if (!FFileHelper::LoadFileToArray(Animation, *Anims) || Animation.Num() < 24)
+            {
+                Output.Log(TEXT("Could not read the source map animation states."));
+                return false;
+            }
+            // The legacy header includes four on-disk pointer slots. The state tables follow it.
+            SideStart = 24 + 16 * ReadWord(0);
+            SideCount = ReadWord(2);
+            SectorCount = ReadWord(4);
+            SectorStart = SideStart + 42 * SideCount;
+            if (SectorStart + 66 * SectorCount > Animation.Num())
+            {
+                return false;
+            }
+        }
+        Actor.ScrollingSides.Reset();
+        Actor.ScrollingSectors.Reset();
+        Actor.FlowSectors.Reset();
+        for (FAAWadNativeSector& Sector : Actor.Sectors)
+        {
+            Sector.FloorDepth = 0;
+            Sector.bWater = false;
+            Sector.FlowImpulse = FVector2D::ZeroVector;
+            Sector.FloorScrollRate = FVector2D::ZeroVector;
+        }
+        for (FAAWadNativeSide& Side : Actor.Sides)
+        {
+            Side.ScrollRate = FVector2D::ZeroVector;
+        }
+        int32 WaterSectors = 0;
+        for (const FWadThing& Thing : Map.Things)
+        {
+            const FVector2D Position(Thing.X, Thing.Y);
+            if (Thing.Type == Water || Thing.Type == Depth || (Thing.Type >= FlowSlow && Thing.Type <= FlowFast))
+            {
+                const int32 Index = Actor.FindWadSector(Position);
+                if (!Actor.Sectors.IsValidIndex(Index))
+                {
+                    Output.Logf(TEXT("Surface marker %d at %s is outside the map."), Thing.Type, *Position.ToString());
+                    return false;
+                }
+                FAAWadNativeSector& Sector = Actor.Sectors[Index];
+                if (Thing.Type == Water)
+                {
+                    Sector.bWater = true;
+                    Sector.FloorDepth = WaterDepth;
+                    ++WaterSectors;
+                }
+                else if (Thing.Type == Depth)
+                {
+                    Sector.FloorDepth = Thing.Flags;
+                }
+                else
+                {
+                    const int32 State = (Thing.Type - FlowSlow) * 8 + Thing.Angle;
+                    if (Thing.Angle >= 8 || State >= SectorCount)
+                    {
+                        return false;
+                    }
+                    const int32 Offset = SectorStart + 66 * State;
+                    Sector.FloorScrollRate = TexelsPerSourceScrollUnit * FVector2D(int16(ReadWord(Offset + 26)), int16(ReadWord(Offset + 28)));
+                    Sector.FlowImpulse = FVector2D(int16(ReadWord(Offset + 30)), int16(ReadWord(Offset + 32)));
+                    Actor.ScrollingSectors.AddUnique(Index);
+                    Actor.FlowSectors.AddUnique(Index);
+                }
+            }
+            else if (Thing.Type >= WallUpSlow && Thing.Type <= WallDownFast)
+            {
+                const int32 State = Thing.Type - WallUpSlow;
+                int32 BestSide = INDEX_NONE;
+                double BestDistance = TNumericLimits<double>::Max();
+                for (const FWadLineDef& Line : Map.Lines)
+                {
+                    const FWadVertex& From = Map.Vertices[Line.From];
+                    const FWadVertex& To = Map.Vertices[Line.To];
+                    const FVector2D A(From.X, From.Y), B(To.X, To.Y);
+                    const FVector2D Edge = B - A;
+                    if (Edge.IsNearlyZero())
+                    {
+                        continue;
+                    }
+                    const double Projection = FMath::Clamp(FVector2D::DotProduct(Position - A, Edge) / Edge.SizeSquared(), 0.0, 1.0);
+                    const double Distance = (Position - (A + Edge * Projection)).SizeSquared();
+                    const int32 Side = Line.Side[FVector2D::CrossProduct(Edge, Position - A) > 0 ? 1 : 0];
+                    if (Distance < BestDistance && Actor.Sides.IsValidIndex(Side))
+                    {
+                        BestSide = Side;
+                        BestDistance = Distance;
+                    }
+                }
+                if (BestSide != INDEX_NONE && State < SideCount)
+                {
+                    const int32 Offset = SideStart + 42 * State;
+                    Actor.Sides[BestSide].ScrollRate = TexelsPerSourceScrollUnit * FVector2D(
+                        int16(ReadWord(Offset + 38)), int16(ReadWord(Offset + 40)));
+                    Actor.ScrollingSides.AddUnique(BestSide);
+                }
+            }
+        }
+        bool bDepthChanged = false;
+        for (int32 Index = 0; Index < Actor.Sectors.Num(); ++Index)
+        {
+            FAAWadNativeSector& Sector = Actor.Sectors[Index];
+            if (!Sector.Floor || (!Sector.WalkingFloor && !Sector.FloorDepth))
+            {
+                continue;
+            }
+            if (Sector.FloorDepth)
+            {
+                if (!Sector.WalkingFloor)
+                {
+                    Sector.WalkingFloor = AddMesh(Actor, Sector.Floor->GetStaticMesh(),
+                        FString::Printf(TEXT("WalkingFloor_%04d"), Index), true, false);
+                    Sector.WalkingFloor->SetVisibility(false);
+                    Sector.WalkingFloor->SetCastShadow(false);
+                    Sector.WalkingFloor->RegisterComponent();
+                }
+                FVector Location = Sector.Floor->GetRelativeLocation();
+                Location.Z -= Sector.FloorDepth;
+                Sector.WalkingFloor->SetRelativeLocation(Location);
+                Sector.Floor->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            }
+            else
+            {
+                Sector.WalkingFloor->DestroyComponent();
+                Sector.WalkingFloor = nullptr;
+                Sector.Floor->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+            }
+            bDepthChanged = true;
+        }
+        if (bDepthChanged)
+        {
+            for (int32 Index = 0; Index < Actor.Lines.Num(); ++Index)
+            {
+                Actor.UpdateLine(Index, true);
+            }
+        }
+        Output.Logf(TEXT("Installed %d water markers, %d current sectors and %d scrolling sides."),
+            WaterSectors, Actor.FlowSectors.Num(), Actor.ScrollingSides.Num());
+        return true;
+    }
+
     bool InstallGameplay(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
     {
         TArray<FAAWadNativeLevelLink> Links;
@@ -403,14 +570,16 @@ struct FAAWadNativeImport
         }
         Actor.Modify();
         SetOutdoorSectors(Actor, Map);
-        if (!InstallDaySky(Actor, WadPath, Output))
+        Actor.InitializeTopology();
+        if (!InstallSurfaceEnvironment(Actor, Map, WadPath, Output) || !InstallDaySky(Actor, WadPath, Output))
         {
             return false;
         }
         const FString MapName = FPaths::GetBaseFilename(WadPath).ToUpper();
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
-            || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output)))
+            || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output)))
         {
             return false;
         }
@@ -419,6 +588,12 @@ struct FAAWadNativeImport
         Settings->Modify();
         Settings->DefaultGameMode = ANativeWadGameMode::StaticClass();
         return true;
+    }
+
+    static bool InstallL531Script(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
+    {
+        constexpr int32 EntryActivities[] = {0, 201};
+        return InstallActivities(Actor, Map, WadPath, TEXT("S531.SRP"), EntryActivities, Output);
     }
 
     static bool UpdateSavedDoors(UWorld& World, const FDoomWadMapData& Map, FOutputDevice& Output)
