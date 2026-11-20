@@ -85,7 +85,7 @@ namespace
         int32 Position = 0;
     };
 
-    bool ReadCommands(FScriptReader& Reader, int32 SectorCount, int32 SideCount, FWadScriptActivity& Activity,
+    bool ReadCommands(FScriptReader& Reader, int32 SectorCount, int32 SideCount, int32 NextActivity, FWadScriptActivity& Activity,
         FOutputDevice& Output)
     {
         uint32 Opcode = 0;
@@ -230,7 +230,15 @@ namespace
             }
             Activity.Commands.Add(MoveTemp(Command));
         }
-        return false;
+        if (NextActivity == INDEX_NONE)
+        {
+            return false;
+        }
+        // Place table entries are labels, not return instructions. Source execution can enter the next label.
+        FWadScriptCommand& Fallthrough = Activity.Commands.AddDefaulted_GetRef();
+        Fallthrough.Operation = EWadScriptOperation::Jump;
+        Fallthrough.Target = NextActivity;
+        return true;
     }
 }
 
@@ -248,6 +256,12 @@ bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& 
             }
         }
     }
+    return ImportWadSoundSamples(Filename, MoveTemp(Required), Sounds, Output);
+}
+
+bool ImportWadSoundSamples(const FString& Filename, TSet<int32> Required,
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output)
+{
     Sounds.Reset();
     if (Required.IsEmpty())
     {
@@ -347,17 +361,20 @@ bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> A
             return false;
         }
         uint32 End = CodeSize;
-        for (const uint32 Offset : Offsets)
+        int32 NextActivity = INDEX_NONE;
+        for (int32 Index = 0; Index < Offsets.Num(); ++Index)
         {
+            const uint32 Offset = Offsets[Index];
             if (Offset != 0xffff && Offset > Start && Offset < End)
             {
                 End = Offset;
+                NextActivity = Index;
             }
         }
         FScriptReader Code(MakeArrayView(Bytes).Slice(int32(HeaderBytes + Start), int32(End - Start)));
         FWadScriptActivity& Activity = Pending.AddDefaulted_GetRef();
         Activity.Id = Id;
-        if (!ReadCommands(Code, SectorCount, SideCount, Activity, Output))
+        if (!ReadCommands(Code, SectorCount, SideCount, NextActivity, Activity, Output))
         {
             Output.Logf(TEXT("Failed to decode WAD script activity %d."), Id);
             return false;

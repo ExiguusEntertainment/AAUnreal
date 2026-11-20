@@ -9,8 +9,8 @@ The goal is a playable Unreal port of Amulets & Armor from a new game through th
 | 1. Native level foundation | Import original geometry, materials, collision, moving sectors, and lighting into saved Unreal levels. | Proven on L30 and L151 at GitHub checkpoint `727f482`. |
 | 2. One complete gameplay slice | Play a continuous route from an original spawn through an authored interaction, an encounter, a pickup, and a level transition. | Verified from L30's original spawn to L301 in Steps 16–18. |
 | 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Steps 19–24 verify a Guardian fight, the ready hand, one spell, and the first priest level-up. |
-| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | L30 covers the timed doors, pressure plate, trap, and exit. L151 covers the lift. L301 covers the river and travel into L531, where activity 201 teleports the player. |
-| 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | Sector lighting runs in the native levels. The L30 disk checkpoint and L301 revisit passed, including a return after a process restart from L531. |
+| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | Verified L30 to L301, L301 to L531, and L531 to L31. L31's first door and pressure plate run in the native map. L151 covers the repeating lift. |
+| 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | The L30 disk checkpoint and L301 revisit passed after a process restart. L301's positional stream and waterfall loops run with the source audio. |
 | 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | Planned |
 
 ## Native Unreal Level Import
@@ -137,16 +137,26 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 
 ### Steps 31–34 river route, L531, and level revisits
 
-31. **Import L301's water and currents.** The importer uses nine water markers, eight current sectors, and twelve scrolling sides. It reads the floor and sidedef scroll rates and current vectors from `MAP.ANI`. The water stays at its original visible height, with collision 20 units below. Current strengths are scaled to the native first-person movement speed. The replay verified southwest drift and texture motion in sector 37. River and waterfall ambient loops remain to be imported.
-32. **Import L531 as a native Unreal level.** The saved level contains 25 sectors and 137 lines, the source player start, a door, and the link to L31. After verifying arrival, the review stages the player in the teleport hallway and walks into sector 21. Activity 201 from `S531.SRP` sends the player to `(1263, 1200)` and preserves the view direction. L31 still needs a native import.
+31. **Import L301's water and currents.** The importer uses nine water markers, eight current sectors, and twelve scrolling sides. It reads the floor and sidedef scroll rates and current vectors from `MAP.ANI`. The water stays at its original visible height, with collision 20 units below. Current strengths are scaled to the native first-person movement speed. The replay verified southwest drift and texture motion in sector 37. Step 35 adds the ambient loops.
+32. **Import L531 as a native Unreal level.** The saved level contains 25 sectors and 137 lines, the source player start, a door, and the link to L31. After verifying arrival, the review stages the player in the teleport hallway and walks into sector 21. Activity 201 from `S531.SRP` sends the player to `(1263, 1200)` and preserves the view direction. See Step 37 for the L31 import.
 33. **Walk L301 to L531.** The replay starts at the original L301 spawn with a ready dagger supplied for the review. It crosses the river, jumps from sector 16 onto sector 47, and enters thing 304's link. L531 spawns the player at `(-144, -232)` with the same XP, health, and ready dagger.
 34. **Preserve settled level state across visits.** The game archives a settled level on departure through a WAD link. Disk checkpoints carry those prior maps along with the current map. A test return from L531 restored L301's defeated Guardian and the carried character, both in the same session and after loading the L531 checkpoint in a fresh Unreal process. The existing single-map L30 checkpoint also loaded successfully.
 
 - From standalone L301 with `?WadItems=200?WadReady=0`, run `AA.ExportNativeWadPortReview River <OutputPng> [ImageSize]`. To repeat the restart check, start standalone L531 with `?WadLoad=NativeWadRiverReview` and use the `RiverReload` mode. The review gallery is `Saved/Wad-River-and-Level-Revisit-Review.html`.
 
+### Steps 35–38 spatial audio and the route from L531 to L31
+
+35. **Restore L301's river audio.** The saved map has 13 stream and two waterfall emitters. They use samples 3003 and 3007 from `SOUNDS.RES` and the authored 500-unit horizontal falloff. Group zero plays independent emitters. Each nonzero group plays its nearest emitter. The audio-enabled replay verified both sounds remained active beyond one full sample and stopped when the listener moved outside their radius.
+36. **Follow L531 from the original start.** The replay jumped into sectors 11, 12, and 14, pressed E to open door sector 24 to Z128, crossed it, and entered thing 103's exit in sector 23. Movement, jumps, doors, and travel ran through the normal first-person inputs and collision.
+37. **Import L31 as a playable native level.** The map saves 174 sector records and 746 lines. It retains the five unused sector IDs, and the 169 sectors with boundaries have meshes. All eight activities come from `S31.SRP`, including the startup activity that continues into activity 1, its moving floors, two teleport triggers, switch texture, and sounds. The original start is `(2544, 2775)`. Thing 235 links to L22, which still needs a native import.
+38. **Walk into L31 and use its authored controls.** The L531 replay began with a ready dagger and 2,105 XP supplied for the test. Arrival preserved the ready dagger, XP, health, mana, and food. The replay opened sector 59 with E, then walked onto sector 107's pressure plate. Imported activity 3 lowered floor 135 from Z192 to Z88.
+
+- Run `AA.ExportNativeWadPortReview Ambient <OutputPng> [ImageSize]` in standalone L301 with audio enabled. For the route, start standalone L531 with `?WadItems=200?WadReady=0?WadXP=2105` and use the `Ravine` mode. See `Saved/Wad-Ravine-and-L31-Review.html` for the four route captures.
+
 ### Asset follow-ups
 
 - [ ] Find the original `MARBGRAY` texture and restore it to the L30 import. The supplied `PICS.RES` lacks it, so the affected lower wall bands use the default material when exposed. Check a raised floor at sector 147 after restoring the art.
+- [ ] Restore `MARBGRAY` and `AASHITTY` in L31 when the source textures are available. The L31 importer uses the default material for those surfaces.
 
 ## 2026-04-11 Review Findings
 

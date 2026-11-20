@@ -406,6 +406,42 @@ namespace
         {EAction::Complete},
     };
 
+    enum class ETrailAction { Walk, Leap, Door, Capture, Link, Plate };
+    struct FTrailStep
+    {
+        ETrailAction Action;
+        FVector Target;
+        int32 Sector = INDEX_NONE;
+        FVector2D Edge = FVector2D::ZeroVector;
+        const TCHAR* Frame = nullptr;
+    };
+
+    const FTrailStep L531Trail[] = {
+        {ETrailAction::Walk, {1136,360,0}}, {ETrailAction::Walk, {1360,360,0}},
+        {ETrailAction::Walk, {2355,579,0}}, {ETrailAction::Leap, {2318,748,0}, 11, {2337,662}},
+        {ETrailAction::Walk, {2827,960,0}}, {ETrailAction::Leap, {2906,1116,0}, 12, {2865,1036}},
+        {ETrailAction::Walk, {2712,1096,0}}, {ETrailAction::Walk, {1432,1016,0}},
+        {ETrailAction::Walk, {1400,1000,0}}, {ETrailAction::Walk, {1138,970,0}},
+        {ETrailAction::Leap, {1260,1094,0}, 14, {1198,1032}},
+        {ETrailAction::Walk, {720,2008,0}}, {ETrailAction::Walk, {720,2288,0}}, {ETrailAction::Walk, {1344,2944,0}},
+        {ETrailAction::Capture, {1365,2973,62}, INDEX_NONE, {}, TEXT("l531-door-closed")},
+        {ETrailAction::Door, {1365,2973,62}, 24},
+        {ETrailAction::Capture, {1376,3025,62}, INDEX_NONE, {}, TEXT("l531-door-open")},
+        {ETrailAction::Walk, {1368,3040,0}}, {ETrailAction::Walk, {1336,3380,0}},
+        {ETrailAction::Walk, {1320,3456,0}}, {ETrailAction::Walk, {1264,3512,0}},
+        {ETrailAction::Link, {1104,3512,0}},
+    };
+
+    const FTrailStep L31Trail[] = {
+        {ETrailAction::Walk, {2536,2630,0}}, {ETrailAction::Door, {2530,2576,230}, 59},
+        {ETrailAction::Capture, {2530,2520,226}, INDEX_NONE, {}, TEXT("l31-door-open")},
+        {ETrailAction::Walk, {2528,2512,0}}, {ETrailAction::Walk, {3384,2448,0}},
+        {ETrailAction::Walk, {3408,2424,0}}, {ETrailAction::Walk, {3392,2296,0}}, {ETrailAction::Walk, {3288,2240,0}},
+        {ETrailAction::Walk, {2728,2192,0}}, {ETrailAction::Walk, {2696,2160,0}}, {ETrailAction::Walk, {2720,1912,0}},
+        {ETrailAction::Walk, {2776,1880,0}}, {ETrailAction::Walk, {2984,1904,0}}, {ETrailAction::Walk, {3088,2040,0}},
+        {ETrailAction::Plate, {}, 135}, {ETrailAction::Capture, {3088,2152,110}, INDEX_NONE, {}, TEXT("l31-pressure-plate")},
+    };
+
     struct FWalkReview
     {
         enum class EStage { Spawn, Route, Blocked, Opening, Cross, Reclose, ExitApproach, Arrival };
@@ -460,6 +496,12 @@ namespace
         double DriftStarted = 0.0;
         double RiverProgressTime = 0.0;
         bool bJumpStarted = false;
+        bool bRavineReview = false;
+        bool bAmbientReview = false;
+        bool bRavineStarted = false;
+        bool bReachedL31 = false;
+        bool bTrailActionPressed = false;
+        double EmitterAudibleSince = 0.0;
         bool bWalking = false;
         bool bCapturedEncounter = false;
         bool bRequestedInventoryFrame = false;
@@ -518,7 +560,8 @@ namespace
         bool WalkTo(ANativeWadPlayer& Player, const FVector2D& Target)
         {
             const FVector2D Offset = Target - FVector2D(Player.GetActorLocation());
-            const double AcceptanceRadius = bRiverReview ? 16.0 : bSecondMap || Stage == EStage::Arrival ? 14.0 : 5.0;
+            const double AcceptanceRadius = bRiverReview ? 16.0 : bRavineReview ? 12.0
+                : bSecondMap || Stage == EStage::Arrival ? 14.0 : 5.0;
             if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
                 Stop(Player);
@@ -1419,13 +1462,209 @@ namespace
             return true;
         }
 
+        bool TickRavine(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the ravine review lost its native level or player"));
+            }
+            const FVector2D Position(Player.GetActorLocation());
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            if (!bRavineStarted)
+            {
+                if (!Position.Equals(FVector2D(-144, -232), 3.0) || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                {
+                    return Finish(&Player, TEXT("the ravine replay requires the original L531 spawn with a ready dagger"));
+                }
+                bRavineStarted = true;
+                RiverProgressTime = FPlatformTime::Seconds();
+            }
+            if (!bReachedL31 && &Current != SourceWorld.Get())
+            {
+                if (!Current.GetMapName().EndsWith(TEXT("L31")) || !Position.Equals(FVector2D(2544, 2775), 3.0)
+                    || Player.GetExperience() != ExperienceBeforeTravel || Player.GetHealth() != HealthBeforeTravel
+                    || Player.GetFood() != FoodBeforeTravel || Player.GetMana() != ManaBeforeTravel
+                    || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                {
+                    return Finish(&Player, TEXT("the L531 exit did not preserve the character at the original L31 spawn"));
+                }
+                Camera.Reset();
+                bWalking = false;
+                bReachedL31 = true;
+                NextPoint = 0;
+                RiverProgressTime = FPlatformTime::Seconds();
+                UE_LOG(LogTemp, Display, TEXT("Verified L531's authored exit travels to the original L31 spawn with character state intact."));
+            }
+            const TConstArrayView<FTrailStep> Steps = bReachedL31 ? MakeArrayView(L31Trail) : MakeArrayView(L531Trail);
+            if (!Steps.IsValidIndex(NextPoint))
+            {
+                UE_LOG(LogTemp, Display, TEXT("Completed the L531 to L31 ravine review, including L31's initial door and pressure plate."));
+                return Finish(&Player);
+            }
+            const FTrailStep& Step = Steps[NextPoint];
+            if (FPlatformTime::Seconds() - RiverProgressTime > 23.0)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Ravine route stalled in %s at waypoint %d, target %s, sector %d, velocity %s."),
+                    *Current.GetMapName(), NextPoint, *Step.Target.ToString(), Level->FindWadSector(Position), *Player.GetVelocity().ToString());
+                return Finish(&Player, TEXT("the ravine route stopped making progress"));
+            }
+            bool bDone = false;
+            switch (Step.Action)
+            {
+            case ETrailAction::Walk:
+                bDone = WalkTo(Player, FVector2D(Step.Target));
+                break;
+            case ETrailAction::Leap:
+            {
+                const FVector2D Direction = (FVector2D(Step.Target) - Step.Edge).GetSafeNormal();
+                if (!bTrailActionPressed && FVector2D::DotProduct(Step.Edge - Position, Direction) <= 72.0
+                    && Player.GetVelocity().Size2D() >= 100.0)
+                {
+                    Press(Player, EKeys::SpaceBar);
+                    bTrailActionPressed = true;
+                }
+                bJumpStarted |= Player.GetCharacterMovement()->IsFalling();
+                bDone = WalkTo(Player, FVector2D(Step.Target)) && bJumpStarted
+                    && Player.GetCharacterMovement()->IsMovingOnGround() && Level->FindWadSector(Position) == Step.Sector;
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified a player-input jump onto L531 sector %d."), Step.Sector);
+                }
+                break;
+            }
+            case ETrailAction::Door:
+            {
+                FVector2D Heights;
+                const FAAWadNativeDoor* TrailDoor = Level->GetDoors().FindByPredicate([&Step](const FAAWadNativeDoor& Entry)
+                    { return Entry.Sector == Step.Sector; });
+                if (!TrailDoor || !Level->GetSectorSurfaceHeights(Step.Sector, Heights))
+                {
+                    return Finish(&Player, TEXT("the authored door is missing from the native level"));
+                }
+                if (!bTrailActionPressed)
+                {
+                    if (Heights.X != Heights.Y)
+                    {
+                        return Finish(&Player, TEXT("the authored door was supposed to start closed"));
+                    }
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    bTrailActionPressed = true;
+                }
+                bDone = Heights.Y == TrailDoor->OpenZ;
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified E opens %s door sector %d to Z%.0f."), *Current.GetMapName(), Step.Sector, Heights.Y);
+                }
+                break;
+            }
+            case ETrailAction::Capture:
+            {
+                Aim(Player, Step.Target);
+                bool bSaved = false;
+                bDone = CaptureView(Player, Step.Frame, bSaved);
+                if (bDone && !bSaved)
+                {
+                    return Finish(&Player, TEXT("could not save the ravine review frame"));
+                }
+                break;
+            }
+            case ETrailAction::Link:
+                ExperienceBeforeTravel = Player.GetExperience();
+                HealthBeforeTravel = Player.GetHealth();
+                FoodBeforeTravel = Player.GetFood();
+                ManaBeforeTravel = Player.GetMana();
+                if (WalkTo(Player, FVector2D(Step.Target)))
+                {
+                    return Finish(&Player, TEXT("the authored L531 link failed to travel"));
+                }
+                break;
+            case ETrailAction::Plate:
+            {
+                FVector2D Heights;
+                bDone = Level->FindWadSector(Position) == 107 && Level->GetSectorSurfaceHeights(Step.Sector, Heights)
+                    && Heights.X == 88.0;
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified stepping onto L31 sector 107 runs activity 3 and lowers floor 135 to Z88."));
+                }
+                break;
+            }
+            }
+            if (bDone)
+            {
+                ++NextPoint;
+                RiverProgressTime = FPlatformTime::Seconds();
+                bTrailActionPressed = false;
+                bJumpStarted = false;
+            }
+            return true;
+        }
+
+        bool TickAmbient(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            constexpr int32 Stream = 3003;
+            constexpr int32 Waterfall = 3007;
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || FPlatformTime::Seconds() - StartTime > 35.0)
+            {
+                return Finish(&Player, TEXT("the ambient audio review could not reach its expected playback states"));
+            }
+            const auto StageListener = [&Level, &Player](const FVector2D& Point)
+            {
+                const int32 Sector = Level->FindWadSector(Point);
+                return Sector != INDEX_NONE && Player.TeleportTo(FVector(Point, Level->GetWalkingHeight(Sector)
+                    + ANativeWadPlayer::CapsuleHalfHeight + 2.0), FRotator::ZeroRotator);
+            };
+            const int32 Streams = Level->CountPlayingAmbientEmitters(Stream);
+            const int32 Waterfalls = Level->CountPlayingAmbientEmitters(Waterfall);
+            if (NextPoint == 2)
+            {
+                if (Streams == 0 && Waterfalls == 0)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified both L301 water loops stop outside their authored 500-unit radius."));
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            const bool bAudible = NextPoint == 0 ? Streams == 1 && Waterfalls == 0 : Streams == 0 && Waterfalls == 1;
+            const double Now = FPlatformTime::Seconds();
+            if (!bAudible)
+            {
+                EmitterAudibleSince = 0.0;
+            }
+            else if (EmitterAudibleSince == 0.0)
+            {
+                EmitterAudibleSince = Now;
+            }
+            // These windows exceed each complete legacy sample at 11 kHz.
+            else if (Now - EmitterAudibleSince > (NextPoint == 0 ? 1.6 : 3.4))
+            {
+                UE_LOG(LogTemp, Display, TEXT("Verified L301's %s loop stays active past one sample duration."),
+                    NextPoint == 0 ? TEXT("stream") : TEXT("waterfall"));
+                const FVector2D Point = NextPoint == 0 ? FVector2D(-460, 2484) : FVector2D(-460, 3200);
+                if (!StageListener(Point))
+                {
+                    return Finish(&Player, TEXT("could not stage the L301 audio listener"));
+                }
+                ++NextPoint;
+                EmitterAudibleSince = 0.0;
+            }
+            return true;
+        }
+
         bool Tick()
         {
             UWorld* Current = World();
             APlayerController* Controller = Current ? Current->GetFirstPlayerController() : nullptr;
             ANativeWadPlayer* Player = Controller ? Cast<ANativeWadPlayer>(Controller->GetPawn()) : nullptr;
             const double Now = FPlatformTime::Seconds();
-            if (Now - StartTime > (bRiverReview ? 270.0 : bSlice ? 180.0 : 120.0))
+            if (Now - StartTime > (bRiverReview || bRavineReview ? 270.0 : bSlice ? 180.0 : 120.0))
             {
                 return Finish(Player, TEXT("the review timed out"));
             }
@@ -1440,6 +1679,14 @@ namespace
             if (bRiverReview)
             {
                 return TickRiver(*Current, *Player);
+            }
+            if (bRavineReview)
+            {
+                return TickRavine(*Current, *Player);
+            }
+            if (bAmbientReview)
+            {
+                return TickAmbient(*Current, *Player);
             }
             if (Current != SourceWorld.Get())
             {
@@ -1725,6 +1972,26 @@ bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 I
     Review->Size = ImageSize;
     Review->bRiverReview = true;
     Review->bRiverReload = bReload;
+    FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
+    return true;
+}
+
+bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bAmbient)
+{
+    ANativeWadLevel* Level = GetReviewLevel(World, OutputPath, ImageSize);
+    const FWorldContext* Context = Level ? GEngine->GetWorldContextFromWorld(World) : nullptr;
+    if (!Context || !World->GetMapName().EndsWith(bAmbient ? TEXT("L301") : TEXT("L531")))
+    {
+        return false;
+    }
+    const TSharedRef<FWalkReview> Review = MakeShared<FWalkReview>();
+    Review->WorldHandle = Context->ContextHandle;
+    Review->SourceWorld = World;
+    Review->Output = OutputPath;
+    Review->StartTime = FPlatformTime::Seconds();
+    Review->Size = ImageSize;
+    Review->bAmbientReview = bAmbient;
+    Review->bRavineReview = !bAmbient;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;
 }

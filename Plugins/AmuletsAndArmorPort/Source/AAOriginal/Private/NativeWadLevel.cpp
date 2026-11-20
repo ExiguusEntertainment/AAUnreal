@@ -174,8 +174,9 @@ void ANativeWadLevel::Tick(float DeltaSeconds)
     }
     TickActivitySlides(DeltaSeconds);
     TickSurfaceScroll(DeltaSeconds);
+    TickAmbientEmitters(DeltaSeconds);
     if (ActiveDoors.IsEmpty() && ActivitySlides.IsEmpty() && !bRunDayClock
-        && ScrollingSectors.IsEmpty() && ScrollingSides.IsEmpty())
+        && ScrollingSectors.IsEmpty() && ScrollingSides.IsEmpty() && AmbientEmitters.IsEmpty())
     {
         SetActorTickEnabled(false);
     }

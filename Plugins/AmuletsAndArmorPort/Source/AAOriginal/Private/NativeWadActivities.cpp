@@ -16,6 +16,36 @@ namespace
     constexpr double UseReach = 64.0;
     constexpr int32 ScriptBudget = 512;
     constexpr int32 PoisonMissileDamage = 250;
+    constexpr double AmbientRadius = 500.0;
+
+    USoundWaveProcedural* MakeWadSound(const FWadSoundSample& Sample, bool bLoop)
+    {
+        constexpr int32 SampleRate = 11000;
+        USoundWaveProcedural* Wave = NewObject<USoundWaveProcedural>();
+        Wave->SetSampleRate(SampleRate);
+        Wave->NumChannels = 1;
+        Wave->Duration = bLoop ? INDEFINITELY_LOOPING_DURATION : float(Sample.UnsignedSamples.Num()) / SampleRate;
+        TArray<int16> PCM;
+        PCM.Reserve(Sample.UnsignedSamples.Num());
+        for (uint8 Byte : Sample.UnsignedSamples)
+        {
+            PCM.Add(int16((int32(Byte) - 128) * 256));
+        }
+        Wave->QueueAudio(reinterpret_cast<const uint8*>(PCM.GetData()), PCM.Num() * sizeof(int16));
+        if (bLoop)
+        {
+            Wave->OnSoundWaveProceduralUnderflow.BindLambda(
+                [Loop = MoveTemp(PCM)](USoundWaveProcedural* Sound, int32 SamplesRequested)
+                {
+                    const int32 BytesRequested = SamplesRequested * sizeof(int16);
+                    while (Sound->GetAvailableAudioByteCount() < BytesRequested)
+                    {
+                        Sound->QueueAudio(reinterpret_cast<const uint8*>(Loop.GetData()), Loop.Num() * sizeof(int16));
+                    }
+                });
+        }
+        return Wave;
+    }
 }
 
 bool ANativeWadLevel::UseActivityFromView(ANativeWadPlayer& Player)
@@ -279,17 +309,7 @@ void ANativeWadLevel::PlayActivitySound(const FWadScriptCommand& Command)
     {
         return;
     }
-    USoundWaveProcedural* Wave = NewObject<USoundWaveProcedural>();
-    Wave->SetSampleRate(11000);
-    Wave->NumChannels = 1;
-    Wave->Duration = Sample->UnsignedSamples.Num() / 11000.0f;
-    TArray<int16> PCM;
-    PCM.Reserve(Sample->UnsignedSamples.Num());
-    for (uint8 Byte : Sample->UnsignedSamples)
-    {
-        PCM.Add(int16((int32(Byte) - 128) * 256));
-    }
-    Wave->QueueAudio(reinterpret_cast<const uint8*>(PCM.GetData()), PCM.Num() * sizeof(int16));
+    USoundWaveProcedural* Wave = MakeWadSound(*Sample, false);
     const float Volume = FMath::Clamp(Command.Value / 255.0f, 0.0f, 1.0f);
     UAudioComponent* Audio = nullptr;
     if (Command.Operation == EWadScriptOperation::PlayAreaSound)
@@ -312,6 +332,101 @@ void ANativeWadLevel::PlayActivitySound(const FWadScriptCommand& Command)
             Wave->Duration + 0.05f, false);
         UE_LOG(LogTemp, Display, TEXT("Played WAD script sound %d."), Command.Target);
     }
+}
+
+void ANativeWadLevel::TickAmbientEmitters(float DeltaSeconds)
+{
+    if (AmbientEmitters.IsEmpty() || !GetWorld()->GetAudioDevice())
+    {
+        return;
+    }
+    AmbientUpdateTime += DeltaSeconds;
+    if (AmbientUpdateTime < 0.1f)
+    {
+        return;
+    }
+    AmbientUpdateTime = 0.0f;
+    const APawn* Listener = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!Listener)
+    {
+        return;
+    }
+    TMap<int32, float> Volumes;
+    TMap<int32, int32> LoudestByGroup;
+    const FVector2D XY(GetActorTransform().InverseTransformPosition(Listener->GetActorLocation()));
+    for (int32 Index = 0; Index < AmbientEmitters.Num(); ++Index)
+    {
+        const FWadAmbientEmitter& Emitter = AmbientEmitters[Index];
+        const double Distance = FVector2D::Distance(XY, FVector2D(Emitter.Position));
+        if (Distance >= AmbientRadius)
+        {
+            continue;
+        }
+        const float Volume = float(1.0 - Distance / AmbientRadius);
+        // Group zero is independent. Other groups play their loudest emitter for this listener.
+        if (Emitter.Group != 0)
+        {
+            if (const int32* Previous = LoudestByGroup.Find(Emitter.Group))
+            {
+                if (Volumes.FindChecked(*Previous) >= Volume)
+                {
+                    continue;
+                }
+                Volumes.Remove(*Previous);
+            }
+            LoudestByGroup.Add(Emitter.Group, Index);
+        }
+        Volumes.Add(Index, Volume);
+    }
+    for (auto It = PlayingEmitters.CreateIterator(); It; ++It)
+    {
+        UAudioComponent* Component = It.Value();
+        if (!IsValid(Component) || !Component->IsPlaying())
+        {
+            It.RemoveCurrent();
+        }
+        else if (!Volumes.Contains(It.Key()))
+        {
+            Component->Stop();
+            It.RemoveCurrent();
+        }
+    }
+    for (const auto& [Index, Volume] : Volumes)
+    {
+        if (UAudioComponent* Component = PlayingEmitters.FindRef(Index))
+        {
+            Component->SetVolumeMultiplier(Volume);
+            continue;
+        }
+        const FWadAmbientEmitter& Emitter = AmbientEmitters[Index];
+        const FWadSoundSample* Sample = AmbientSamples.Find(Emitter.Sound);
+        if (!Sample || Sample->UnsignedSamples.IsEmpty())
+        {
+            continue;
+        }
+        USoundAttenuation* Attenuation = NewObject<USoundAttenuation>();
+        Attenuation->Attenuation.bAttenuate = false; // The source's horizontal linear falloff is applied above.
+        Attenuation->Attenuation.bSpatialize = true;
+        const FVector Position = GetActorTransform().TransformPosition(Emitter.Position);
+        if (UAudioComponent* Component = UGameplayStatics::SpawnSoundAtLocation(this, MakeWadSound(*Sample, true),
+                Position, FRotator::ZeroRotator, Volume, 1.0f, 0.0f, Attenuation))
+        {
+            PlayingEmitters.Add(Index, Component);
+        }
+    }
+}
+
+int32 ANativeWadLevel::CountPlayingAmbientEmitters(int32 Sound) const
+{
+    int32 Count = 0;
+    for (const auto& [Index, Component] : PlayingEmitters)
+    {
+        if (AmbientEmitters[Index].Sound == Sound && IsValid(Component) && Component->IsPlaying())
+        {
+            ++Count;
+        }
+    }
+    return Count;
 }
 
 void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)

@@ -49,7 +49,7 @@ void ANativeWadLevel::BeginPlay()
         SetTimeOfDayHours(ArrivalHour);
     }
     RefreshSectorLights();
-    if (!ScrollingSectors.IsEmpty() || !ScrollingSides.IsEmpty())
+    if (!ScrollingSectors.IsEmpty() || !ScrollingSides.IsEmpty() || !AmbientEmitters.IsEmpty())
     {
         SetActorTickEnabled(true);
     }

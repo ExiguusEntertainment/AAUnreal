@@ -1032,18 +1032,31 @@ public:
             const FString Size = FParse::Token(Cmd, false);
             const FString Output = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), File);
             const int32 ImageSize = Size.IsEmpty() ? 720 : FCString::Atoi(*Size);
-            const bool bRiver = Review == TEXT("river") || Review == TEXT("riverreload");
-            const bool bStarted = !File.IsEmpty() && (bRiver
-                ? StartNativeWadRiverReview(InWorld, Output, ImageSize, Review == TEXT("riverreload"))
-                : Review == TEXT("sky")
-                ? StartNativeWadLightingReview(InWorld, Output, ImageSize, true)
-                : (Review == TEXT("route") || Review == TEXT("link") || Review == TEXT("slice") || Review == TEXT("secondmap")
-                    || Review == TEXT("campaign") || Review == TEXT("checkpoint"))
-                    && StartNativeWadWalkReview(InWorld, Output, ImageSize, Review == TEXT("link"), Review == TEXT("slice"),
-                        Review == TEXT("secondmap"), Review == TEXT("campaign"), Review == TEXT("checkpoint")));
+            bool bStarted = false;
+            if (!File.IsEmpty())
+            {
+                if (Review == TEXT("sky"))
+                {
+                    bStarted = StartNativeWadLightingReview(InWorld, Output, ImageSize, true);
+                }
+                else if (Review == TEXT("river") || Review == TEXT("riverreload"))
+                {
+                    bStarted = StartNativeWadRiverReview(InWorld, Output, ImageSize, Review == TEXT("riverreload"));
+                }
+                else if (Review == TEXT("ravine") || Review == TEXT("ambient"))
+                {
+                    bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review == TEXT("ambient"));
+                }
+                else if (Review == TEXT("route") || Review == TEXT("link") || Review == TEXT("slice")
+                    || Review == TEXT("secondmap") || Review == TEXT("campaign") || Review == TEXT("checkpoint"))
+                {
+                    bStarted = StartNativeWadWalkReview(InWorld, Output, ImageSize, Review == TEXT("link"), Review == TEXT("slice"),
+                        Review == TEXT("secondmap"), Review == TEXT("campaign"), Review == TEXT("checkpoint"));
+                }
+            }
             if (!bStarted)
             {
-                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link|Slice|SecondMap|Campaign|Checkpoint|River|RiverReload> <OutputPng> [ImageSize] requires the corresponding native game level."));
+                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link|Slice|SecondMap|Campaign|Checkpoint|River|RiverReload|Ravine|Ambient> <OutputPng> [ImageSize] requires the corresponding native game level."));
                 UE_LOG(LogTemp, Display, TEXT("Native WAD port review finished"));
             }
             return true;

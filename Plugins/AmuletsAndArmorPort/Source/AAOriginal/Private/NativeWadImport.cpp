@@ -561,6 +561,43 @@ struct FAAWadNativeImport
         return true;
     }
 
+    static bool InstallAmbientEmitters(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        FOutputDevice& Output)
+    {
+        constexpr int32 StreamMarker = 1513;
+        constexpr int32 WaterfallMarker = 1514;
+        constexpr int32 StreamSound = 3003;
+        constexpr int32 WaterfallSound = 3007;
+        TSet<int32> Sounds;
+        Actor.AmbientEmitters.Reset();
+        for (const FWadThing& Thing : Map.Things)
+        {
+            if (Thing.Type == StreamMarker || Thing.Type == WaterfallMarker)
+            {
+                const int32 Sound = Thing.Type == StreamMarker ? StreamSound : WaterfallSound;
+                const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+                FVector2D Heights;
+                const double Z = Actor.GetSectorSurfaceHeights(Sector, Heights) ? Heights.X : 0.0;
+                Actor.AmbientEmitters.Add({FVector(Thing.X, Thing.Y, Z), Sound, Thing.Flags});
+                Sounds.Add(Sound);
+            }
+        }
+        FString Archive = FPaths::GetPath(WadPath) / TEXT("SOUNDS.RES");
+        if (!FPaths::FileExists(Archive))
+        {
+            Archive = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe/SOUNDS.RES");
+        }
+        if (!ImportWadSoundSamples(Archive, MoveTemp(Sounds), Actor.AmbientSamples, Output))
+        {
+            return false;
+        }
+        if (!Actor.AmbientEmitters.IsEmpty())
+        {
+            Output.Logf(TEXT("Installed %d stream and waterfall emitters."), Actor.AmbientEmitters.Num());
+        }
+        return true;
+    }
+
     bool InstallGameplay(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
     {
         TArray<FAAWadNativeLevelLink> Links;
@@ -571,7 +608,8 @@ struct FAAWadNativeImport
         Actor.Modify();
         SetOutdoorSectors(Actor, Map);
         Actor.InitializeTopology();
-        if (!InstallSurfaceEnvironment(Actor, Map, WadPath, Output) || !InstallDaySky(Actor, WadPath, Output))
+        if (!InstallSurfaceEnvironment(Actor, Map, WadPath, Output) || !InstallDaySky(Actor, WadPath, Output)
+            || !InstallAmbientEmitters(Actor, Map, WadPath, Output))
         {
             return false;
         }
@@ -579,7 +617,8 @@ struct FAAWadNativeImport
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
-            || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output)))
+            || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output)))
         {
             return false;
         }
@@ -594,6 +633,28 @@ struct FAAWadNativeImport
     {
         constexpr int32 EntryActivities[] = {0, 201};
         return InstallActivities(Actor, Map, WadPath, TEXT("S531.SRP"), EntryActivities, Output);
+    }
+
+    bool InstallL31Script(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
+    {
+        constexpr int32 SwitchSide = 1159;
+        constexpr int32 EntryActivities[] = {0, 1, 2, 3, 4, 5, 200, 201};
+        if (!Actor.Sides.IsValidIndex(SwitchSide)
+            || !InstallActivities(Actor, Map, WadPath, TEXT("S31.SRP"), EntryActivities, Output))
+        {
+            return false;
+        }
+        const UStaticMeshComponent* Switch = Actor.Sides[SwitchSide].Bands[uint8(EWadWallBand::Lower)];
+        Parents[uint8(EWadWallBlend::Opaque)] = LoadObject<UMaterialInterface>(nullptr,
+            TEXT("/Game/AAReview/M_AANativeOpaque.M_AANativeOpaque"));
+        if (!Switch || !Switch->GetMaterial(0) || !Parents[uint8(EWadWallBlend::Opaque)] || !Texture(TEXT("SWIT1U")))
+        {
+            Output.Log(TEXT("L31's original switch sidedef or raised texture could not be installed."));
+            return false;
+        }
+        Actor.ActivitySwitchDown = Switch->GetMaterial(0);
+        Actor.ActivitySwitchUp = Material(TEXT("SWIT1U"), EWadWallBlend::Opaque);
+        return Actor.ActivitySwitchUp != nullptr && !bAssetError;
     }
 
     static bool UpdateSavedDoors(UWorld& World, const FDoomWadMapData& Map, FOutputDevice& Output)
@@ -1231,9 +1292,26 @@ struct FAAWadNativeImport
         {
             return false;
         }
+        TSet<int32> ReferencedSectors;
+        for (const FWadLineDef& Line : Map.Lines)
+        {
+            for (int32 Side : Line.Side)
+            {
+                ReferencedSectors.Add(Map.GetSectorForSide(Side));
+            }
+        }
         Actor.Sectors.SetNum(Map.Sectors.Num());
         for (int32 Index = 0; Index < Map.Sectors.Num(); ++Index)
         {
+            FAAWadNativeSector& Sector = Actor.Sectors[Index];
+            FWadSector SourceSector = Map.Sectors[Index];
+            Sector.Light = SourceSector.Light;
+            if (!ReferencedSectors.Contains(Index))
+            {
+                // Unused records still occupy their original slot so script and sector indices remain stable.
+                Output.Logf(TEXT("Retained unused WAD sector %d without mesh geometry."), Index);
+                continue;
+            }
             FDoomWadSectorFootprint Footprint;
             if (!UDoomWadLoader::GetLastWadSectorFootprint(Index, Footprint))
             {
@@ -1248,15 +1326,12 @@ struct FAAWadNativeImport
             {
                 Bounds += Point;
             }
-            FAAWadNativeSector& Sector = Actor.Sectors[Index];
-            FWadSector SourceSector = Map.Sectors[Index];
             if (Actor.Doors.ContainsByPredicate([Index](const FAAWadNativeDoor& Door) { return Door.Sector == Index; }))
             {
                 SourceSector.CeilingHeight = SourceSector.FloorHeight;
             }
             Sector.Floor = AddPlane(Actor, Index, Footprint, SourceSector, false, Floor, Bounds.GetCenter());
             Sector.Ceiling = AddPlane(Actor, Index, Footprint, SourceSector, true, Ceiling, Bounds.GetCenter());
-            Sector.Light = SourceSector.Light;
             if (!Sector.Floor || !Sector.Ceiling)
             {
                 return false;

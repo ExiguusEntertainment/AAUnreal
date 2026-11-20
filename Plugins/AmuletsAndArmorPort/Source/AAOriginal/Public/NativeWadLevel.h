@@ -7,6 +7,7 @@
 #include "NativeWadLevel.generated.h"
 
 class UBoxComponent;
+class UAudioComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UStaticMeshComponent;
@@ -14,6 +15,21 @@ class UWorld;
 class ANativeWadPlayer;
 class UStaticMesh;
 struct FWadLevelCheckpoint;
+
+USTRUCT()
+struct FWadAmbientEmitter
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FVector Position = FVector::ZeroVector;
+
+    UPROPERTY()
+    int32 Sound = 0;
+
+    UPROPERTY()
+    int32 Group = 0;
+};
 
 USTRUCT()
 struct FAAWadNativeSector
@@ -188,6 +204,7 @@ public:
     int32 FindWadSector(const FVector2D& Position) const;
     double GetWalkingHeight(int32 Sector) const;
     FVector2D GetCurrentInput(const FVector& Feet) const;
+    int32 CountPlayingAmbientEmitters(int32 Sound) const;
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
     int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
     int32 GetScriptMissileCount() const { return ScriptMissileCount; }
@@ -224,6 +241,7 @@ private:
     void PlayActivitySound(const FWadScriptCommand& Command);
     void LaunchActivityMissile(const FWadScriptCommand& Command);
     void TickSurfaceScroll(float DeltaSeconds);
+    void TickAmbientEmitters(float DeltaSeconds);
     void TeleportActivityPlayer(ANativeWadPlayer& Player, const FVector2D& Destination);
 
     struct FActivitySlide
@@ -248,6 +266,17 @@ private:
 
     UPROPERTY()
     TMap<int32, FWadSoundSample> ActivitySounds;
+
+    UPROPERTY()
+    TArray<FWadAmbientEmitter> AmbientEmitters;
+
+    UPROPERTY()
+    TMap<int32, FWadSoundSample> AmbientSamples;
+
+    UPROPERTY(Transient)
+    TMap<int32, TObjectPtr<UAudioComponent>> PlayingEmitters;
+
+    float AmbientUpdateTime = 0.0f;
 
     UPROPERTY()
     TObjectPtr<UStaticMesh> ScriptMissileMesh;

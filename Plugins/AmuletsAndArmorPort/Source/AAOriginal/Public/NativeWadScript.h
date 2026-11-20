@@ -81,4 +81,6 @@ bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> A
     int32 SideCount, TArray<FWadScriptActivity>& Out, FOutputDevice& Output);
 bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& Activities,
     TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output);
+bool ImportWadSoundSamples(const FString& Filename, TSet<int32> Required,
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output);
 #endif
