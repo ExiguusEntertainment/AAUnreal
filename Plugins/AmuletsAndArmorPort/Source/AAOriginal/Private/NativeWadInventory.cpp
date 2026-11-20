@@ -16,6 +16,7 @@ namespace
         case IronDagger: return TEXT("Iron dagger");
         case Berry: return TEXT("Berry");
         case FeatherfallPotion: return TEXT("Potion of Featherfalling");
+        case JugurthaJournal: return TEXT("Jugurtha's journal");
         default: return Type > 0 ? TEXT("Item") : TEXT("Empty");
         }
     }

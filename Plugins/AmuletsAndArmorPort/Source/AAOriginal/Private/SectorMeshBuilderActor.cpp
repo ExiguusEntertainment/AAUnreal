@@ -277,6 +277,34 @@ bool LoadWadBackdrop(const FString& PictureName, FIntPoint& Size, TArray<FColor>
     return true;
 }
 
+bool LoadWadInterfacePalette(TArray<FColor>& Palette)
+{
+    return LoadGamePalette(Palette);
+}
+
+bool LoadWadInterfacePicture(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels)
+{
+    TArray<FColor> Palette;
+    TArray<uint8> Picture;
+    if (!PicturePath.StartsWith(TEXT("UI/")) || PicturePath.Contains(TEXT(".."))
+        || !LoadGamePalette(Palette) || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(PicturePath))
+        || Picture.Num() < 4)
+    {
+        return false;
+    }
+    Size = FIntPoint(Picture[0] | (Picture[1] << 8), Picture[2] | (Picture[3] << 8));
+    if (Size.X <= 0 || Size.Y <= 0 || int64(Size.X) * Size.Y != Picture.Num() - 4)
+    {
+        return false;
+    }
+    Pixels.SetNumUninitialized(Picture.Num() - 4);
+    for (int32 Index = 0; Index < Pixels.Num(); ++Index)
+    {
+        Pixels[Index] = Palette[Picture[Index + 4]];
+    }
+    return true;
+}
+
 bool LoadWadSprite(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels)
 {
     TArray<FColor> Palette;

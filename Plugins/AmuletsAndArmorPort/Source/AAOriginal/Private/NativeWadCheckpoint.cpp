@@ -8,6 +8,7 @@
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadTown.h"
 #include "TimerManager.h"
 #include "UObject/Package.h"
 
@@ -26,9 +27,9 @@ namespace
     }
 }
 
-bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint) const
+bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDiscardProjectiles) const
 {
-    if (TActorIterator<ANativeWadBolt>(GetWorld()))
+    if (!bDiscardProjectiles && TActorIterator<ANativeWadBolt>(GetWorld()))
     {
         return false;
     }
@@ -207,9 +208,10 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
 bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
 {
     UNativeWadCheckpoint* Save = NewObject<UNativeWadCheckpoint>();
+    Save->bTown = IsInWadTown();
     const ANativeWadLevel* Level = NativeLevel.Get();
-    if (Health <= 0 || QuakeTime > 0.0 || !GetCharacterMovement()->IsMovingOnGround()
-        || !Level || !Level->WriteCheckpoint(Save->Level))
+    if (Health <= 0 || (!Save->bTown && (QuakeTime > 0.0 || !GetCharacterMovement()->IsMovingOnGround()
+        || !Level || !Level->WriteCheckpoint(Save->Level))))
     {
         return false;
     }
@@ -221,6 +223,8 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
     if (const UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
     {
         Save->VisitedLevels = Travel->VisitedLevels;
+        Save->CompletedLevels = Travel->CompletedLevels;
+        Save->Quest = Travel->Quest;
     }
     if (!UGameplayStatics::SaveGameToSlot(Save, Slot.IsEmpty() ? UNativeWadCheckpoint::Slot : Slot, 0))
     {
@@ -251,8 +255,9 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
 {
     const UNativeWadCheckpoint* Save = ReadCheckpoint(GetWorld()->URL.GetOption(TEXT("WadLoad="), TEXT("")));
     ANativeWadLevel* Level = NativeLevel.Get();
-    if (!Save || Save->LevelPackage != CheckpointMap(*GetWorld()) || !Level || Save->Position.ContainsNaN()
-        || Save->View.ContainsNaN() || !Level->RestoreCheckpoint(Save->Level))
+    if (!Save || Save->LevelPackage != CheckpointMap(*GetWorld()) || Save->bTown != IsInWadTown()
+        || Save->Position.ContainsNaN() || Save->View.ContainsNaN()
+        || (!Save->bTown && (!Level || !Level->RestoreCheckpoint(Save->Level))))
     {
         UE_LOG(LogTemp, Error, TEXT("No compatible WAD checkpoint for this map."));
         return;
@@ -266,28 +271,57 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
     GetController()->SetControlRotation(Save->View);
 
     // Arrival establishes the current sector without replaying a script that was already executed.
-    LastActivitySector = Level->FindActivitySector(FVector2D(Save->Position));
-    LastLevelLink = Level->FindLevelLinkAt(FVector2D(Save->Position));
-    bCheckedLevelLink = true;
+    if (Level)
+    {
+        LastActivitySector = Level->FindActivitySector(FVector2D(Save->Position));
+        LastLevelLink = Level->FindLevelLinkAt(FVector2D(Save->Position));
+        bCheckedLevelLink = true;
+    }
     if (UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
     {
         Travel->VisitedLevels = Save->VisitedLevels;
+        Travel->CompletedLevels = Save->CompletedLevels;
+        Travel->Quest = Save->Quest;
+        Travel->ArrivingFromMap = 0;
     }
     bCheckpointRestored = true;
     UE_LOG(LogTemp, Display, TEXT("Restored WAD checkpoint in %s."), *Save->LevelPackage);
 }
 
-void ANativeWadPlayer::ArchiveDeparture()
+bool ANativeWadPlayer::HasCompletedWadLevel(const FString& Name) const
+{
+    const UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    return Travel && Travel->CompletedLevels.Contains(Name);
+}
+
+bool ANativeWadPlayer::OpenWadTown()
+{
+    UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    if (!Travel || !FPackageName::DoesPackageExist(NativeWadTown::Package) || !ArchiveDeparture())
+    {
+        return false;
+    }
+    Travel->CompletedLevels.Add(GetWorld()->RemovePIEPrefix(GetWorld()->GetMapName()));
+    Travel->ArrivingFromMap = NativeWadTown::MapNumber(CheckpointMap(*GetWorld()));
+    UE_LOG(LogTemp, Display, TEXT("Entered WAD campaign form %d."), NativeWadTown::Form);
+    UGameplayStatics::OpenLevelBySoftObjectPtr(this, TSoftObjectPtr<UWorld>(FSoftObjectPath(NativeWadTown::ObjectPath)),
+        true, MakeTravelOptions());
+    return true;
+}
+
+bool ANativeWadPlayer::ArchiveDeparture()
 {
     const ANativeWadLevel* Level = NativeLevel.Get();
     UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
     FWadLevelCheckpoint Snapshot;
-    if (Level && Travel && Level->WriteCheckpoint(Snapshot))
+    if (Level && Travel && Level->WriteCheckpoint(Snapshot, true))
     {
         const FString Package = CheckpointMap(*GetWorld());
         Travel->VisitedLevels.Add(Package, MoveTemp(Snapshot));
         UE_LOG(LogTemp, Display, TEXT("Archived WAD level %s on departure."), *Package);
+        return true;
     }
+    return false;
 }
 
 void ANativeWadPlayer::RestoreVisitedLevel()

@@ -5,6 +5,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Containers/Ticker.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "Engine/SceneCapture2D.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -18,6 +19,7 @@
 #include "UnrealClient.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadTown.h"
 #if WITH_EDITOR
 #include "AssetCompilingManager.h"
 #endif
@@ -460,6 +462,67 @@ namespace
         {ETrailAction::Walk, {-2568,76,0}},
     };
 
+    enum class ETownReview { None, Tour, Failure, Reload, Start };
+    constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
+    enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
+
+    struct FL22RouteStep
+    {
+        FVector Target;
+        EL22RouteAction Action = EL22RouteAction::Walk;
+        int32 Sector = INDEX_NONE;
+        const TCHAR* Frame = nullptr;
+    };
+
+    using EL22Action = EL22RouteAction;
+    const FL22RouteStep L22TownRoute[] = {
+        // From the original start, follow the southwest loop to the trap corridor.
+        {{-2584,-528,0}}, {{-2632,-528,0}}, {{-2672,-448,0}}, {{-2632,-112,0}}, {{-2568,-48,0}},
+        {{-2568,0,137}, EL22Action::Door, 134}, {{-2568,76,0}}, {{-2688,432,0}}, {{-2672,520,0}},
+        {{-2576,568,0}}, {{-2424,552,0}}, {{-2288,456,0}}, {{-2256,392,0}}, {{-2192,252,0}},
+        {{-2149,193,57}, EL22Action::Door, 194}, {{-2140,193,0}}, {{-2048,48,0}}, {{-2000,-520,0}},
+        {{-1904,-568,0}}, {{-920,-528,0}}, {{-872,-432,0}}, {{-832,-205,0}}, {{-832,-168,0}},
+        {{-800,-160,57}, EL22Action::Door, 63}, {{-720,-144,0}}, {{-216,-48,0}}, {{-72,96,0}},
+        {{-104,240,0}}, {{-248,304,0}}, {{-311,304,0}}, {{-353,304,49}, EL22Action::Door, 199},
+        {{-400,304,0}}, {{-755,232,0}}, {{-802,232,57}, EL22Action::Door, 200},
+        {{-832,232,0}}, {{-928,360,0}}, {{-1192,432,0}}, {{-1208,440,0}},
+        {{-1208,464,57}, EL22Action::Door, 64}, {{-1208,492,0}}, {{-1200,520,0}}, {{-1136,552,0}},
+        {{-520,576,0}}, {{-420,768,0}}, {{-392,816,0}}, {{-328,864,0}}, {{-288,960,0}},
+        {{-288,2008,0}}, {{-336,2344,0}}, {{-384,2368,0}}, {{-1140,2360,0}}, {{-1176,2352,0}},
+        {{-1192,2320,0}}, {{-1184,2248,0}}, {{-1184,2208,0}},
+        {{-1168,2208,49}, EL22Action::Door, 21}, {{-1120,2208,0}}, {{-1056,2144,0}},
+        {{-1056,2112,57}, EL22Action::Door, 16}, {{-1056,2088,0}}, {{-1152,2008,0}}, {{-1288,2016,0}},
+        {{-1312,2064,0}}, {{-1328,2344,0}}, {{-1336,2352,0}}, {{-1344,2360,0}}, {{-1392,2384,0}},
+        {{-1608,2400,0}}, {{-1632,2400,0}}, {{-1632,2416,345}, EL22Action::Door, 101},
+        {{-1632,2448,0}}, {{-1688,2480,0}}, {{-1752,2480,0}}, {{-1792,2480,329}, EL22Action::Door, 103},
+        {{-1880,2480,0}}, {{-1928,2448,0}}, {{-1936,2432,0}}, {{-1936,2408,0}}, {{-1904,2384,0}},
+        {{-1872,2384,249}, EL22Action::Door, 107}, {{-1824,2384,0}}, {{-1784,2368,0}},
+        {{-1776,2352,0}}, {{-1776,2112,0}}, {{-1816,2048,0}}, {{-1824,2040,0}},
+        {{-1856,2040,220}, EL22Action::Switch, 15},
+        {{-1856,2040,220}, EL22Action::RepeatSwitch, 15},
+        {{-1856,2040,220}, EL22Action::Capture, INDEX_NONE, TEXT("switch")},
+        {{-1706,2065,0}}, {{-1666,2067,208}, EL22Action::Journal}, {{-1816,2048,0}},
+        // Double back to the new opening in sector 15 and step onto the exit plate.
+        {{-1776,2112,0}}, {{-1776,2352,0}}, {{-1776,2360,0}}, {{-1824,2384,0}},
+        {{-1860,2384,249}, EL22Action::Door, 107}, {{-1912,2384,0}}, {{-1928,2400,0}},
+        {{-1936,2416,0}}, {{-1936,2440,0}}, {{-1856,2480,0}}, {{-1850,2480,289}, EL22Action::Capture, INDEX_NONE, TEXT("late-passage")},
+        {{-1824,2480,289}, EL22Action::Door, 103}, {{-1736,2480,0}}, {{-1656,2448,0}}, {{-1632,2448,0}},
+        {{-1632,2432,329}, EL22Action::Door, 101}, {{-1632,2400,0}}, {{-1592,2384,0}},
+        {{-1352,2368,0}}, {{-1344,2360,0}}, {{-1336,2352,0}}, {{-1312,2304,0}}, {{-1296,2024,0}},
+        {{-1264,2008,0}}, {{-1128,2016,0}}, {{-1056,2080,0}}, {{-1056,2096,57}, EL22Action::Door, 16},
+        {{-1056,2120,0}}, {{-968,2176,0}}, {{-920,2176,0}}, {{-896,2128,0}}, {{-912,1976,0}},
+        {{-1336,1680,0}}, {{-1432,1488,0}, EL22Action::Plate, 193},
+        {{-1376,1584,26}, EL22Action::Capture, INDEX_NONE, TEXT("exit-plate")},
+        // Return up the stair and through the exit gate to the campaign form.
+        {{-1256,1760,0}}, {{-912,1976,0}}, {{-912,2168,0}}, {{-928,2176,0}}, {{-976,2168,0}},
+        {{-1056,2120,0}}, {{-1056,2112,57}, EL22Action::Door, 16}, {{-1056,2088,0}}, {{-1136,2008,0}},
+        {{-1288,2016,0}}, {{-1312,2064,0}}, {{-1328,2344,0}}, {{-1336,2352,0}}, {{-1344,2360,0}},
+        {{-1392,2384,0}}, {{-1608,2400,0}}, {{-1624,2404,0}}, {{-1624,2416,345}, EL22Action::Door, 101},
+        {{-1624,2464,0}}, {{-1620,2710,0}},
+        {{-1620,2800,327}, EL22Action::Capture, INDEX_NONE, TEXT("town-exit")},
+        {{-1620,2832,0}, EL22Action::Exit},
+    };
+
     struct FWalkReview
     {
         enum class EStage { Spawn, Route, Blocked, Opening, Cross, Reclose, ExitApproach, Arrival };
@@ -520,6 +583,10 @@ namespace
         bool bLiftCheckpointReview = false;
         bool bLiftReload = false;
         bool bDoorReload = false;
+        ETownReview TownReview = ETownReview::None;
+        TArray<int32> ItemsBeforeTravel;
+        int32 ReadyBeforeTravel = INDEX_NONE;
+        double HourBeforeTravel = 0.0;
         bool bSavedOpeningDoor = false;
         bool bRavineStarted = false;
         bool bTrailArrived = false;
@@ -640,6 +707,369 @@ namespace
         {
             SendKey(Player, Key, IE_Pressed);
             HeldKey = Key;
+        }
+
+        void RecordTownCharacter(const ANativeWadPlayer& Player)
+        {
+            ExperienceBeforeTravel = Player.GetExperience();
+            HealthBeforeTravel = Player.GetHealth();
+            ManaBeforeTravel = Player.GetMana();
+            FoodBeforeTravel = Player.GetFood();
+            LevelBeforeTravel = Player.GetCharacterLevel();
+            ThresholdBeforeTravel = Player.GetExperienceNeeded();
+            MaxHealthBeforeTravel = Player.GetMaxHealth();
+            MaxManaBeforeTravel = Player.GetMaxMana();
+            ItemsBeforeTravel = Player.GetCarriedItems();
+            ReadyBeforeTravel = Player.GetReadySlot();
+            AttributesBeforeTravel = TArray<int32>(Player.GetAttributes());
+        }
+
+        bool MatchesTownCharacter(const ANativeWadPlayer& Player) const
+        {
+            return ExperienceBeforeTravel == Player.GetExperience() && HealthBeforeTravel == Player.GetHealth()
+                && ManaBeforeTravel == Player.GetMana() && FoodBeforeTravel == Player.GetFood()
+                && LevelBeforeTravel == Player.GetCharacterLevel() && ThresholdBeforeTravel == Player.GetExperienceNeeded()
+                && MaxHealthBeforeTravel == Player.GetMaxHealth() && MaxManaBeforeTravel == Player.GetMaxMana()
+                && ItemsBeforeTravel == Player.GetCarriedItems() && ReadyBeforeTravel == Player.GetReadySlot()
+                && AttributesBeforeTravel == Player.GetAttributes();
+        }
+
+        bool TickL22TownRoute(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            const FVector2D Position(Player.GetActorLocation());
+            if (!Level || Player.GetHealth() <= 0 || NextPoint >= UE_ARRAY_COUNT(L22TownRoute))
+            {
+                return Finish(&Player, TEXT("L22 lost its native level or living player"));
+            }
+            if (RiverProgressTime == 0.0)
+            {
+                if (!Position.Equals({-2432, -228}, 3.0))
+                {
+                    return Finish(&Player, TEXT("the L22 town route requires the original spawn"));
+                }
+                RiverProgressTime = FPlatformTime::Seconds();
+            }
+            const FL22RouteStep& Step = L22TownRoute[NextPoint];
+            if (FPlatformTime::Seconds() - RiverProgressTime > 28.0)
+            {
+                UE_LOG(LogTemp, Error, TEXT("L22 route stalled at %d moving toward %s, sector %d, action %d, health %d."),
+                    NextPoint, *Step.Target.ToString(), Level->FindWadSector(Position), int32(Step.Action), Player.GetHealth());
+                return Finish(&Player, TEXT("the L22 town route stopped making progress"));
+            }
+            bool bDone = false;
+            FVector2D Heights;
+            switch (Step.Action)
+            {
+            case EL22Action::Walk:
+                bDone = WalkTo(Player, FVector2D(Step.Target));
+                break;
+            case EL22Action::Door:
+            {
+                const auto* RouteDoor = Level->GetDoors().FindByPredicate([&Step](const FAAWadNativeDoor& Entry)
+                    { return Entry.Sector == Step.Sector; });
+                if (!RouteDoor || !Level->GetSectorSurfaceHeights(Step.Sector, Heights))
+                {
+                    return Finish(&Player, TEXT("the L22 route lost an authored door"));
+                }
+                if (!bTrailActionPressed)
+                {
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    bTrailActionPressed = true;
+                }
+                bDone = FMath::IsNearlyEqual(Heights.Y, RouteDoor->OpenZ);
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified E opens L22 door %d to Z%.0f."), Step.Sector, Heights.Y);
+                }
+                break;
+            }
+            case EL22Action::Switch:
+                if (!bTrailActionPressed)
+                {
+                    if (!Level->GetSectorSurfaceHeights(Step.Sector, Heights) || Heights.Y != 0.0)
+                    {
+                        return Finish(&Player, TEXT("the switch gate was supposed to start closed"));
+                    }
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    bTrailActionPressed = true;
+                }
+                bDone = Level->GetSectorSurfaceHeights(Step.Sector, Heights) && Heights.Y == 100.0;
+                break;
+            case EL22Action::RepeatSwitch:
+                if (!bTrailActionPressed)
+                {
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    bTrailActionPressed = true;
+                }
+                bDone = Level->GetWadScriptBlockCount(1) == 1;
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L22 activity 1 raised ceiling 15 to Z100 and blocked retriggering."));
+                }
+                break;
+            case EL22Action::Journal:
+                if (TownReview != ETownReview::Failure && !bTrailActionPressed)
+                {
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    bTrailActionPressed = true;
+                }
+                bDone = TownReview == ETownReview::Failure || Player.GetItemCount(NativeWadRules::JugurthaJournal) == 1;
+                break;
+            case EL22Action::Plate:
+                bDone = WalkTo(Player, FVector2D(Step.Target)) && Level->FindWadSector(Position) == 163
+                    && Level->GetSectorSurfaceHeights(Step.Sector, Heights) && Heights.Equals({280.0, 380.0}, 0.01);
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified stepping onto L22 sector 163 runs activity 7 and opens exit gate 193 to Z380."));
+                }
+                break;
+            case EL22Action::Capture:
+            {
+                Aim(Player, Step.Target);
+                bool bSaved = false;
+                bDone = CaptureView(Player, Step.Frame, bSaved);
+                if (bDone && !bSaved)
+                {
+                    return Finish(&Player, TEXT("could not capture the L22 route"));
+                }
+                break;
+            }
+            case EL22Action::Exit:
+                RecordTownCharacter(Player);
+                HourBeforeTravel = Level->GetTimeOfDayHours();
+                if (WalkTo(Player, FVector2D(Step.Target)))
+                {
+                    return Finish(&Player, TEXT("L22's authored exit did not open town"));
+                }
+                break;
+            }
+            if (bDone)
+            {
+                ++NextPoint;
+                bTrailActionPressed = false;
+                RiverProgressTime = FPlatformTime::Seconds();
+            }
+            return true;
+        }
+
+        bool CaptureTownFrame(const TCHAR* Name, bool& bSaved)
+        {
+            const FString Image = FPaths::GetPath(Output) / (FPaths::GetBaseFilename(Output) + TEXT("-") + Name + TEXT(".png"));
+            if (CaptureFrames++ == 0)
+            {
+                FScreenshotRequest::RequestScreenshot(Image, true, false);
+            }
+            if (CaptureFrames < 20)
+            {
+                return false;
+            }
+            CaptureFrames = 0;
+            bSaved = IFileManager::Get().FileExists(*Image);
+            return true;
+        }
+
+        static bool SavedL22Result(const UNativeWadTravelState& Travel)
+        {
+            const FWadLevelCheckpoint* Snapshot = Travel.VisitedLevels.Find(TEXT("/Game/Maps/L22"));
+            return Snapshot && Snapshot->SectorHeights.FindRef(193).Y == 380.0 && Snapshot->SectorHeights.FindRef(15).Y == 100.0
+                && Snapshot->Switches.FindRef(1132) && Snapshot->Variables.IsValidIndex(6)
+                && Snapshot->Variables[1] == 1 && Snapshot->Variables[6] == 1
+                && !Snapshot->RemainingPickups.Contains(FName(TEXT("L22 Jugurtha Journal")));
+        }
+
+        bool TickTownArrival(UWorld& Current, ANativeWadPlayer& Player, const UNativeWadTravelState& Travel)
+        {
+            const bool bSuccess = TownReview == ETownReview::Tour;
+            if (!bArrivalCaptured)
+            {
+                if (bSuccess)
+                {
+                    ItemsBeforeTravel.RemoveSingle(NativeWadRules::JugurthaJournal);
+                }
+                if (!Player.HasCompletedWadLevel(TEXT("L22")) || !MatchesTownCharacter(Player)
+                    || Travel.Quest.ResultQuest != 0 || Travel.Quest.bSucceeded != bSuccess || !Travel.Quest.bShowResult
+                    || Travel.Quest.Gold != (bSuccess ? 10 : 0) || Travel.Quest.ShopTier != (bSuccess ? 1 : 0)
+                    || (bSuccess && !SavedL22Result(Travel)))
+                {
+                    return Finish(&Player, TEXT("L22 returned the wrong quest result, reward, character, or visited level"));
+                }
+                const TCHAR* Hour = Current.URL.GetOption(TEXT("WadHour="), nullptr);
+                if (!Hour || !FMath::IsNearlyEqual(FCString::Atod(Hour), HourBeforeTravel, 0.02))
+                {
+                    return Finish(&Player, TEXT("the town handoff changed the campaign clock"));
+                }
+                Camera.Reset();
+                bWalking = false;
+                if (bSuccess && !Player.SaveWadCheckpoint(TownReviewSlot))
+                {
+                    return Finish(&Player, TEXT("town checkpoint could not be written"));
+                }
+                NextPoint = 0;
+                bArrivalCaptured = true;
+            }
+            bool bSaved = false;
+            if (NextPoint == 0)
+            {
+                if (!CaptureTownFrame(bSuccess ? TEXT("quest-success") : TEXT("quest-failure"), bSaved))
+                {
+                    return true;
+                }
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("the town quest result capture was not written"));
+                }
+                ++NextPoint;
+                if (!bSuccess)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified returning from L22 without the journal shows failure and awards no gold."));
+                    return Finish(&Player);
+                }
+            }
+            if (Travel.Quest.bShowResult)
+            {
+                Press(Player, EKeys::Enter);
+                return true;
+            }
+            if (CaptureTownFrame(TEXT("town"), bSaved))
+            {
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("the town form capture was not written"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Completed the original L22 spawn-to-town route, turned in the journal for ten gold, and saved the original town result."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickTown(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                if (HeldKey.GetValue() == EKeys::Q)
+                {
+                    SendKey(Player, EKeys::LeftAlt, IE_Released);
+                }
+                HeldKey.Reset();
+            }
+            const bool bTown = Current.GetAuthGameMode<ANativeWadTownGameMode>() != nullptr;
+            const UNativeWadTravelState* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel)
+            {
+                return Finish(&Player, TEXT("native town lost its campaign state"));
+            }
+            if (TownReview == ETownReview::Tour || TownReview == ETownReview::Failure)
+            {
+                if (!bTown)
+                {
+                    return TickL22TownRoute(Current, Player);
+                }
+                return Travel->ArrivingFromMap ? true : TickTownArrival(Current, Player, *Travel);
+            }
+            const bool bReload = TownReview == ETownReview::Reload;
+            if (bTown)
+            {
+                if (bReload && !Player.HasRestoredWadCheckpoint())
+                {
+                    return true;
+                }
+                if (NextPoint == 0)
+                {
+                    const UNativeWadTownData* Content = NativeWadTown::FindContent(Current);
+                    if (!Content || Content->Quests.Num() != 7 || Content->Quests[1].Maps[0] != 25
+                        || Player.HasCompletedWadLevel(TEXT("L22")) != bReload
+                        || Travel->Quest.Active != INDEX_NONE || Travel->Quest.Selected != 0
+                        || (bReload && (!Travel->Quest.bShowResult || !Travel->Quest.bSucceeded || Travel->Quest.Gold != 10
+                            || Travel->Quest.ShopTier != 1 || Travel->Quest.ResultQuest != 0 || !SavedL22Result(*Travel))))
+                    {
+                        return Finish(&Player, TEXT("town did not restore the original quest state"));
+                    }
+                    RecordTownCharacter(Player);
+                    const TCHAR* SavedHour = Current.URL.GetOption(TEXT("WadHour="), TEXT("0"));
+                    HourBeforeTravel = FCString::Atod(SavedHour);
+                    if (bReload)
+                    {
+                        const auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(TownReviewSlot, 0));
+                        if (!Save)
+                        {
+                            return Finish(&Player, TEXT("town review checkpoint could not be read"));
+                        }
+                        const FURL SavedURL(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
+                        HourBeforeTravel = FCString::Atod(SavedURL.GetOption(TEXT("WadHour="), TEXT("0")));
+                    }
+                    ++NextPoint;
+                }
+                if (NextPoint == 1)
+                {
+                    if (Travel->Quest.bShowResult)
+                    {
+                        Press(Player, EKeys::Enter);
+                        return true;
+                    }
+                    ++NextPoint;
+                    if (bReload)
+                    {
+                        Press(Player, EKeys::Right);
+                        return true;
+                    }
+                }
+                if (NextPoint == 2)
+                {
+                    if (Travel->Quest.Selected != (bReload ? 1 : 0))
+                    {
+                        return Finish(&Player, TEXT("the native quest selector chose the wrong adventure"));
+                    }
+                    SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                    Press(Player, EKeys::Q);
+                    ++NextPoint;
+                    return true;
+                }
+                if (NextPoint == 3)
+                {
+                    bool bSaved = false;
+                    if (!CaptureTownFrame(TEXT("briefing"), bSaved))
+                    {
+                        return true;
+                    }
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("the authored quest briefing was not captured"));
+                    }
+                    ++NextPoint;
+                    Press(Player, EKeys::Enter);
+                }
+                return true;
+            }
+            const FString Map = Current.RemovePIEPrefix(Current.GetMapName());
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            const FVector2D ExpectedSpawn = bReload ? FVector2D(298, 1636) : FVector2D(1608, 432);
+            if (!Level || Map != (bReload ? TEXT("L25") : TEXT("L30"))
+                || !FVector2D(Player.GetActorLocation()).Equals(ExpectedSpawn, 3.0) || !MatchesTownCharacter(Player)
+                || Travel->Quest.Active != (bReload ? 1 : 0))
+            {
+                return Finish(&Player, TEXT("accepting the original quest lost the authored spawn or character state"));
+            }
+            if (HourBeforeTravel > 0.0 && !FMath::IsNearlyEqual(Level->GetTimeOfDayHours(), HourBeforeTravel, 0.02))
+            {
+                return Finish(&Player, TEXT("the original quest handoff changed the campaign clock"));
+            }
+            bool bSaved = false;
+            if (!CaptureView(Player, TEXT("arrival"), bSaved))
+            {
+                return true;
+            }
+            if (!bSaved)
+            {
+                return Finish(&Player, TEXT("failed to capture the authored quest spawn"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Verified the original town briefing starts %s at its authored spawn with character state intact."), *Map);
+            return Finish(&Player);
         }
 
         bool ReadyInventoryItem(ANativeWadPlayer& Player, int32 Type, bool bReleasedKey)
@@ -2011,13 +2441,18 @@ namespace
             APlayerController* Controller = Current ? Current->GetFirstPlayerController() : nullptr;
             ANativeWadPlayer* Player = Controller ? Cast<ANativeWadPlayer>(Controller->GetPawn()) : nullptr;
             const double Now = FPlatformTime::Seconds();
-            if (Now - StartTime > (bRiverReview || bRavineReview ? 270.0 : bSlice ? 180.0 : 120.0))
+            if (Now - StartTime > (bRiverReview || bRavineReview || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure
+                ? 270.0 : bSlice ? 180.0 : 120.0))
             {
                 return Finish(Player, TEXT("the review timed out"));
             }
             if (!Player)
             {
                 return true;
+            }
+            if (TownReview != ETownReview::None)
+            {
+                return TickTown(*Current, *Player);
             }
             if (bCheckpointReview)
             {
@@ -2337,19 +2772,26 @@ bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 I
 
 bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, const FString& Mode)
 {
-    ANativeWadLevel* Level = GetReviewLevel(World, OutputPath, ImageSize);
-    const FWorldContext* Context = Level ? GEngine->GetWorldContextFromWorld(World) : nullptr;
+    const ETownReview TownReview = Mode == TEXT("towntour") ? ETownReview::Tour : Mode == TEXT("townfailure") ? ETownReview::Failure
+        : Mode == TEXT("townreload") ? ETownReview::Reload : Mode == TEXT("townstart") ? ETownReview::Start : ETownReview::None;
+    const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start;
+    const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
+        : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
+    const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
     const bool bAmbient = Mode == TEXT("ambient");
     const bool bL22Journey = Mode == TEXT("l31tol22");
     const bool bL22Trap = Mode == TEXT("l22trap");
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
     const bool bDoorReload = Mode == TEXT("doorreload");
-    const TCHAR* StartMap = bAmbient ? TEXT("L301") : bL22Journey || bDoorReload ? TEXT("L31") : bL22Trap ? TEXT("L22")
+    const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bAmbient ? TEXT("L301")
+        : bL22Journey || bDoorReload ? TEXT("L31")
+        : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
         : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");
     if (!Context || !World->GetMapName().EndsWith(StartMap))
     {
         return false;
     }
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutputPath), true);
     const TSharedRef<FWalkReview> Review = MakeShared<FWalkReview>();
     Review->WorldHandle = Context->ContextHandle;
     Review->SourceWorld = World;
@@ -2363,6 +2805,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bLiftCheckpointReview = bLiftCheckpoint;
     Review->bLiftReload = Mode == TEXT("liftreload");
     Review->bDoorReload = bDoorReload;
+    Review->TownReview = TownReview;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;
 }

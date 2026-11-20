@@ -925,6 +925,15 @@ public:
             return true;
         }
 #if WITH_EDITOR
+        else if (FParse::Command(&Cmd, TEXT("AA.CREATENATIVEWADTOWN")))
+        {
+            if (!SaveNativeWadTown(Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.CreateNativeWadTown failed."));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD town import finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.IMPORTNATIVEWAD")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
@@ -1045,7 +1054,8 @@ public:
                 }
                 else if (Review == TEXT("ravine") || Review == TEXT("ambient") || Review == TEXT("l31tol22")
                     || Review == TEXT("l22trap") || Review == TEXT("liftsave") || Review == TEXT("liftreload")
-                    || Review == TEXT("doorreload"))
+                    || Review == TEXT("doorreload") || Review == TEXT("towntour") || Review == TEXT("townfailure")
+                    || Review == TEXT("townreload") || Review == TEXT("townstart"))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }

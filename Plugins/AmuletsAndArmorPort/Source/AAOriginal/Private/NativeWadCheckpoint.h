@@ -105,6 +105,36 @@ struct FWadLevelCheckpoint
     double Hour = 12.0;
 };
 
+USTRUCT()
+struct FWadQuestProgress
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    int32 Selected = 0;
+
+    UPROPERTY()
+    int32 Active = INDEX_NONE;
+
+    UPROPERTY()
+    TMap<int32, int32> ResumeMaps;
+
+    UPROPERTY()
+    int32 Gold = 0;
+
+    UPROPERTY()
+    int32 ShopTier = 0;
+
+    UPROPERTY()
+    int32 ResultQuest = INDEX_NONE;
+
+    UPROPERTY()
+    bool bSucceeded = false;
+
+    UPROPERTY()
+    bool bShowResult = false;
+};
+
 UCLASS()
 class UNativeWadCheckpoint : public USaveGame
 {
@@ -137,6 +167,15 @@ public:
 
     UPROPERTY()
     TMap<FString, FWadLevelCheckpoint> VisitedLevels;
+
+    UPROPERTY()
+    TSet<FString> CompletedLevels;
+
+    UPROPERTY()
+    FWadQuestProgress Quest;
+
+    UPROPERTY()
+    bool bTown = false;
 };
 
 UCLASS()
@@ -146,4 +185,7 @@ class UNativeWadTravelState : public UGameInstanceSubsystem
 
 public:
     TMap<FString, FWadLevelCheckpoint> VisitedLevels;
+    TSet<FString> CompletedLevels;
+    FWadQuestProgress Quest;
+    int32 ArrivingFromMap = 0;
 };

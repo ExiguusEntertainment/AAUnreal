@@ -47,6 +47,7 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadTown.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/ConvexElem.h"
 #include "StaticMeshAttributes.h"
@@ -625,7 +626,8 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
-            || (MapName == TEXT("L22") && !InstallL22Script(Actor, Map, WadPath, Output)))
+            || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
+                || !InstallL22Journal(World, Actor, Map, Output))))
         {
             return false;
         }
@@ -668,6 +670,38 @@ struct FAAWadNativeImport
         Actor.ScriptMissileMaterials.Add(4011, Dart);
         Actor.ScriptMissileMaterials.Add(4016, Paralysis);
         return !bAssetError;
+    }
+
+    bool InstallL22Journal(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        constexpr int32 JournalType = NativeWadRules::JugurthaJournal;
+        const int32 Index = Map.Things.IndexOfByPredicate([](const FWadThing& Thing) { return Thing.Type == JournalType; });
+        if (!Map.Things.IsValidIndex(Index))
+        {
+            Output.Log(TEXT("The source L22 journal was not found."));
+            return false;
+        }
+        const FWadThing& Thing = Map.Things[Index];
+        const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+        if (!Map.Sectors.IsValidIndex(Sector))
+        {
+            return false;
+        }
+        auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        auto* Image = SpriteMaterial(TEXT("JugurthasJournal"), TEXT("BOOK/BOOK.CPC"));
+        if (!Plane || !Image)
+        {
+            return false;
+        }
+        auto* Journal = ImportSliceThing<ANativeWadPickup>(World, Map, Index, Map.Sectors[Sector].FloorHeight + 12.0,
+            TEXT("L22 Jugurtha Journal"));
+        if (!Journal)
+        {
+            return false;
+        }
+        Journal->Configure(Plane, Image, JournalType);
+        Output.Logf(TEXT("Imported Jugurtha's journal from L22 thing %d in sector %d."), Index, Sector);
+        return true;
     }
 
     bool InstallPuzzleSwitch(ANativeWadLevel& Actor, int32 SwitchSide, FOutputDevice& Output)
@@ -1470,6 +1504,249 @@ bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice&
     }
     Output.Logf(TEXT("Saved WAD gameplay settings in %s."), *World->GetOutermost()->GetName());
     return true;
+}
+
+namespace
+{
+    bool ReadTownQuest(const FString& Path, FWadTownQuest& Quest)
+    {
+        TArray<FString> Lines;
+        if (!FFileHelper::LoadFileToStringArray(Lines, *Path))
+        {
+            return false;
+        }
+        TMap<FString, FString> Fields;
+        FString Section;
+        for (const FString& Line : Lines)
+        {
+            if (Line.StartsWith(TEXT("[")) && Line.EndsWith(TEXT("]")))
+            {
+                Section = Line.Mid(1, Line.Len() - 2).ToLower();
+                continue;
+            }
+            FString Key, Value;
+            if (!Line.Split(TEXT("="), &Key, &Value) || Key.TrimStart().StartsWith(TEXT("#")))
+            {
+                continue;
+            }
+            // The original INI reader joins repeated keys and uses underscores to preserve spaces.
+            if (Value.StartsWith(TEXT(" ")))
+            {
+                Value.RemoveAt(0);
+            }
+            Value.ReplaceInline(TEXT("_"), TEXT(" "));
+            Value.ReplaceInline(TEXT("\\r"), TEXT("\n"));
+            Value.ReplaceInline(TEXT("\\n"), TEXT("\n"));
+            Value.ReplaceInline(TEXT("\\t"), TEXT("\t"));
+            Fields.FindOrAdd(Section + TEXT(".") + Key.TrimStartAndEnd().ToLower()) += Value;
+        }
+        Quest.Title = Fields.FindRef(TEXT("main.title"));
+        Quest.Goal = Fields.FindRef(TEXT("main.goal"));
+        Quest.Description = Fields.FindRef(TEXT("main.description"));
+        Quest.NotesHeading = Fields.FindRef(TEXT("main.description2"));
+        Quest.Dialogue = Fields.FindRef(TEXT("main.dialogue"));
+        Quest.Success = Fields.FindRef(TEXT("success.description"));
+        Quest.Failure = Fields.FindRef(TEXT("failure.description"));
+        Quest.TurnInMessage = Fields.FindRef(TEXT("main.keepobjtext"));
+        Quest.GoldMessage = Fields.FindRef(TEXT("main.rewardgoldtext"));
+        Quest.QuestItem = FCString::Atoi(*Fields.FindRef(TEXT("main.questobj")));
+        Quest.Gold = FCString::Atoi(*Fields.FindRef(TEXT("main.gold")));
+        Quest.Experience = FCString::Atoi(*Fields.FindRef(TEXT("main.experience")));
+        Quest.bKeepItem = !Fields.FindRef(TEXT("main.keepobj")).Equals(TEXT("FALSE"), ESearchCase::IgnoreCase);
+        const int32 Count = FCString::Atoi(*Fields.FindRef(TEXT("main.nummaps")));
+        for (int32 Index = 1; Index <= Count; ++Index)
+        {
+            const FString Map = FString::Printf(TEXT("map%d."), Index);
+            const int32 Number = FCString::Atoi(*Fields.FindRef(Map + TEXT("mapnumber")));
+            if (Number <= 0)
+            {
+                return false;
+            }
+            Quest.Maps.Add(Number);
+            Quest.MapNotes.Add(Fields.FindRef(Map + TEXT("description")));
+        }
+        return !Quest.Title.IsEmpty() && !Quest.Maps.IsEmpty()
+            && Quest.Maps[0] == FCString::Atoi(*Fields.FindRef(TEXT("main.firstmap")));
+    }
+
+    UTexture2D* SaveTownTexture(FAAWadNativeImport& Import, const FString& Name, FIntPoint Size, const TArray<FColor>& Pixels)
+    {
+        UTexture2D* Texture = Import.FindOrCreateAsset<UTexture2D>(TEXT("Town"), TEXT("T_") + Name);
+        if (Texture)
+        {
+            Texture->Source.Init(Size.X, Size.Y, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
+            Texture->CompressionSettings = TC_EditorIcon;
+            Texture->MipGenSettings = TMGS_NoMipmaps;
+            Texture->Filter = TF_Nearest;
+            Texture->AddressX = TA_Clamp;
+            Texture->AddressY = TA_Clamp;
+            Texture->NeverStream = true;
+            Texture->SRGB = true;
+            Texture->PostEditChange();
+            Import.QueueSave(*Texture);
+        }
+        return Texture;
+    }
+
+    bool ImportTownFont(FAAWadNativeImport& Import, const FString& Source, const TCHAR* Name, FWadTownFont& Out)
+    {
+        constexpr int32 Header = 5;
+        constexpr int32 Glyphs = 256;
+        constexpr int32 Columns = 16;
+        constexpr int32 Width = Columns * 8;
+        TArray<uint8> Bytes;
+        if (!FFileHelper::LoadFileToArray(Bytes, *(Source / Name + TEXT(".FNT"))) || Bytes.Num() < Header + Glyphs
+            || Bytes[0] != 'F' || Bytes[1] != 'o' || Bytes[2] != 'n' || Bytes[3] != 0)
+        {
+            return false;
+        }
+        Out.Height = Bytes[4];
+        if (Out.Height <= 0 || Bytes.Num() != Header + Glyphs * (Out.Height + 1))
+        {
+            return false;
+        }
+        Out.Widths.Reset();
+        Out.Widths.Append(Bytes.GetData() + Header, Glyphs);
+        TArray<FColor> Pixels;
+        Pixels.Init(FColor(255, 255, 255, 0), Width * Columns * Out.Height);
+        for (int32 Glyph = 0; Glyph < Glyphs; ++Glyph)
+        {
+            const int32 Start = (Glyph % Columns) * 8 + (Glyph / Columns) * Out.Height * Width;
+            for (int32 Row = 0; Row < Out.Height; ++Row)
+            {
+                const uint8 Bits = Bytes[Header + Glyphs + Glyph * Out.Height + Row];
+                for (int32 Col = 0; Col < 8; ++Col)
+                {
+                    Pixels[Start + Row * Width + Col].A = (Bits & (0x80 >> Col)) ? 255 : 0;
+                }
+            }
+        }
+        Out.Atlas = SaveTownTexture(Import, Name, FIntPoint(Width, Columns * Out.Height), Pixels);
+        return Out.Atlas != nullptr;
+    }
+
+    UNativeWadTownData* ImportTownContent(FAAWadNativeImport& Import, FOutputDevice& Output)
+    {
+        const FString Original = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor");
+        UNativeWadTownData* Content = Import.FindOrCreateAsset<UNativeWadTownData>(TEXT("Town"), TEXT("TownData"));
+        if (!Content || !LoadWadInterfacePalette(Content->Palette))
+        {
+            return nullptr;
+        }
+        Content->Quests.Reset();
+        for (int32 Index = 0; ; ++Index)
+        {
+            const FString File = Original / FString::Printf(TEXT("Exe/MAPDESC/QUEST%d.INI"), Index);
+            if (!FPaths::FileExists(File))
+            {
+                break;
+            }
+            if (!ReadTownQuest(File, Content->Quests.AddDefaulted_GetRef()))
+            {
+                Output.Logf(TEXT("Could not read the town quest %s."), *File);
+                return nullptr;
+            }
+        }
+        const TCHAR* Pictures[] = {
+            TEXT("UI/3DUI/MAINBACK"), TEXT("UI/TOWN/TWNBACK2"), TEXT("UI/TOWN/QUEST"), TEXT("UI/TOWN/INN"),
+            TEXT("UI/TOWN/STORE"), TEXT("UI/TOWN/BANK"), TEXT("UI/TOWN/LAST"), TEXT("UI/TOWN/NEXT"),
+            TEXT("UI/TOWN/BLOCK"), TEXT("UI/TOWN/SB2"), TEXT("UI/COMMON/UPARROW"), TEXT("UI/COMMON/DNARROW"),
+            TEXT("UI/PROMPT/PMPTBULL"), TEXT("UI/PROMPT/BULLSB"), TEXT("UI/PROMPT/DLGBACK"), TEXT("UI/PROMPT/DLGSB"),
+            TEXT("UI/PROMPT/BULLUP"), TEXT("UI/PROMPT/BULLDN"), TEXT("UI/PROMPT/OK"), TEXT("UI/PROMPT/ACCEPT"), TEXT("UI/PROMPT/CANCEL"),
+        };
+        Content->Pictures.Reset();
+        FIntPoint Size;
+        TArray<FColor> Pixels;
+        const auto AddPicture = [&](const FString& Name)
+        {
+            UTexture2D* Texture = SaveTownTexture(Import, Name, Size, Pixels);
+            if (Texture)
+            {
+                Content->Pictures.Add(FName(*Name), Texture);
+            }
+            return Texture != nullptr;
+        };
+        for (const TCHAR* Picture : Pictures)
+        {
+            if (!LoadWadInterfacePicture(Picture, Size, Pixels) || !AddPicture(FPaths::GetCleanFilename(Picture)))
+            {
+                Output.Logf(TEXT("Could not import the town graphic %s."), Picture);
+                return nullptr;
+            }
+        }
+        const TPair<int32, const TCHAR*> QuestItems[] = {
+            {957, TEXT("BOOK/BOOK.CPC")}, {958, TEXT("NECKLACE/NECKLACE.CPC")}, {954, TEXT("ORB5/ORB5.CPC")},
+            {955, TEXT("ORB6/ORB6.CPC")}, {380, TEXT("SCRL8/SCRL8.CPC")}, {918, TEXT("WAND18/WAND18.CPC")}, {956, TEXT("ORB7/ORB7.CPC")},
+        };
+        for (const auto& [Type, Sprite] : QuestItems)
+        {
+            if (!LoadWadSprite(Sprite, Size, Pixels) || !AddPicture(FString::Printf(TEXT("QuestItem%d"), Type)))
+            {
+                Output.Logf(TEXT("Could not import the town quest item %s."), Sprite);
+                return nullptr;
+            }
+        }
+        const FString Fonts = Original / TEXT("Resources/ArtFinal/FONTS");
+        if (Content->Quests.IsEmpty() || !ImportTownFont(Import, Fonts, TEXT("MEDIUM"), Content->Medium)
+            || !ImportTownFont(Import, Fonts, TEXT("TINY"), Content->Tiny))
+        {
+            Output.Log(TEXT("Town needs the authored quest data and original fonts."));
+            return nullptr;
+        }
+        Import.QueueSave(*Content);
+        Output.Logf(TEXT("Imported %d quests, %d original town graphics and both bitmap fonts."),
+            Content->Quests.Num(), Content->Pictures.Num());
+        return Content;
+    }
+}
+
+bool SaveNativeWadTown(FOutputDevice& Output)
+{
+    const FString MapPackage = NativeWadTown::Package;
+    const bool bNew = !FPackageName::DoesPackageExist(MapPackage);
+    if (FindPackage(nullptr, *MapPackage))
+    {
+        Output.Logf(TEXT("Unload the town package before creating %s."), *MapPackage);
+        return false;
+    }
+    UWorld* World = bNew
+        ? UWorld::CreateWorld(EWorldType::Editor, false, FName(*FPackageName::GetShortName(MapPackage)), CreatePackage(*MapPackage))
+        : LoadObject<UWorld>(nullptr, NativeWadTown::ObjectPath);
+    if (!World)
+    {
+        return false;
+    }
+    World->SetFlags(RF_Public | RF_Standalone);
+    World->GetWorldSettings()->DefaultGameMode = ANativeWadTownGameMode::StaticClass();
+    FAAWadNativeImport Import;
+    Import.AssetRoot = MapPackage + TEXT("_Assets");
+    UNativeWadTownData* Data = ImportTownContent(Import, Output);
+    const TActorIterator<ANativeWadTownContent> Existing(World);
+    ANativeWadTownContent* Content = Existing ? *Existing : World->SpawnActor<ANativeWadTownContent>();
+    bool bSaved = Data && Content && (!bNew || World->SpawnActor<APlayerStart>());
+    if (bSaved)
+    {
+        Content->Data = Data;
+        FAssetCompilingManager::Get().FinishAllCompilation();
+        for (UObject* Asset : Import.AssetsToSave)
+        {
+            bSaved &= SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension());
+        }
+        bSaved = bSaved && SaveAsset(*World, *FPackageName::GetMapPackageExtension());
+    }
+    if (bSaved)
+    {
+        if (bNew)
+        {
+            FAssetRegistryModule::AssetCreated(World);
+        }
+        Output.Logf(TEXT("Saved native WAD town at %s."), *MapPackage);
+    }
+    if (bNew)
+    {
+        World->DestroyWorld(false);
+    }
+    return bSaved;
 }
 
 bool SaveNativeWadLevel(const FString& MapPackage, const FString& WadPath, FOutputDevice& Output)

@@ -55,6 +55,7 @@ public:
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
     bool SaveWadCheckpoint(const FString& Slot = FString()) const;
     bool HasRestoredWadCheckpoint() const { return bCheckpointRestored; }
+    bool HasCompletedWadLevel(const FString& Name) const;
     void TravelToWadLevel(const TSoftObjectPtr<UWorld>& Destination);
     UFUNCTION(Exec)
     void WadSave();
@@ -77,6 +78,20 @@ private:
     void ToggleInventory();
     void ToggleMouseLook();
     void SetMouseLook(bool bEnabled);
+    bool IsInWadTown() const;
+    bool OpenWadTown();
+    void TownSelectPrevious();
+    void TownSelectNext();
+    void TownQuest();
+    void TownConfirm();
+    void TownCancel();
+    void TownScrollUp();
+    void TownScrollDown();
+    void TownInn();
+    void TownStore();
+    void TownBank();
+    void TownClick();
+    void CompleteTownArrival();
     void LookYaw(float Axis);
     void LookPitch(float Axis);
     void EnterRuneFour();
@@ -88,7 +103,7 @@ private:
     void ReadTravelOptions(const FURL& URL);
     FString MakeTravelOptions() const;
     void RestoreWadCheckpoint();
-    void ArchiveDeparture();
+    bool ArchiveDeparture();
     void RestoreVisitedLevel();
 
     TWeakObjectPtr<ANativeWadLevel> NativeLevel;
@@ -117,6 +132,7 @@ private:
     bool bRestoreCheckpointOnTick = false;
     bool bRestoreVisitedOnTick = true;
     bool bCheckpointRestored = false;
+    TOptional<double> TravelHour;
     double NeedsTime = 0.0;
     TArray<int32> CarriedItems;
     FString InteractionMessage;

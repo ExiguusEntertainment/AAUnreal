@@ -215,7 +215,7 @@ public:
     int32 GetScriptMissileCount(int32 Type) const { return ScriptMissilesByType.FindRef(Type); }
     int32 GetScriptMissilesBlocked() const { return ScriptMissilesBlocked; }
     void CountBlockedScriptMissile() { ++ScriptMissilesBlocked; }
-    bool WriteCheckpoint(FWadLevelCheckpoint& Checkpoint) const;
+    bool WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDiscardProjectiles = false) const;
     bool RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint);
 
     bool GetSectorSurfaceHeights(int32 Sector, FVector2D& Heights) const;

@@ -159,7 +159,7 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 40. **Verify L31's startup lift.** Activity 0 continues into activity 1. The walkthrough verified floor 136 rose from Z88 to Z188 in three seconds and returned to Z88 at nine seconds.
 41. **Verify the L31 pressure-plate reset.** Walking onto sector 107 ran activity 3. The walkthrough observed floor 135 lower from Z192 to Z88 and return to Z192.
 42. **Run the L22 trap projectiles.** Imported magic dart type 4011 and paralyze missile type 4016 with their source sprites and speeds. The dart deals 100 damage. The other missile halts player locomotion for ten seconds.
-43. **Save L22 as a native level.** Preserve 201 sectors, 812 lines, the original start, authored doors, and eight activities from `S22.SRP`. Thing 113 points to the original town screen, campaign form 20004. The import stores that destination as a form ID. The native town screen remains to be implemented.
+43. **Save L22 as a native level.** Preserve 201 sectors, 812 lines, the original start, authored doors, and eight activities from `S22.SRP`. Thing 113 points to the original town screen, campaign form 20004. The import stores that destination as a form ID.
 44. **Walk from L31 to L22.** The replay began at the original L31 spawn with a supplied dagger and 2,105 XP at level 2. It used both authored doors, walked through sector 26's link, and confirmed that the ready dagger, XP, health, mana, and food carried into L22.
 45. **Use the first L22 door.** From the source spawn at `(-2432, -228)`, the replay used E on door sector 134. It measured the opening at Z176 and walked through.
 46. **Save ongoing sector motion and delays.** The checkpoint records scripted slides, ordinary door phases, and remaining waits by activity and command. A new Unreal process resumed L31 door 59 from a partially open state, held it, and closed it on schedule. The older L30 checkpoint also loaded successfully. Save from the ground once projectiles and screen effects have cleared.
@@ -168,11 +168,29 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 
 - Start standalone L31 with `?WadItems=200?WadReady=0?WadXP=2105?WadLevel=2?WadNextXP=36000` and run `AA.ExportNativeWadPortReview L31ToL22 <OutputPng> [ImageSize]`. Run `L22Trap` from L22 and `LiftSave` from L151. For fresh-process checks, use `LiftReload` in L151 with `?WadLoad=NativeWadMotionReview`, or `DoorReload` in L31 with `?WadLoad=NativeWadDoorReview`. The four captures are in `Saved/Wad-L22-and-Motion-Review.html`.
 
+### L22 exit and town
+
+49. **Trace the authored L22 ending.** Follow the level geometry and the imported `S22.SRP` activities from the original start to Thing 113 in sector 184. Thing 113 selects campaign form 20004.
+50. **Exercise L22's ordinary doors along the route.** The standalone replay opened eleven distinct doors with E and walked through while their ceilings were raised.
+51. **Use the L22 switch.** Activate line 762 with E to run activity 1. It changes the switch texture, raises ceiling 15 from Z0 to Z100, and blocks another run.
+52. **Open the exit with the L22 pressure plate.** Walk into sector 163 to run activity 7. It raises ceiling 193 from Z280 to Z380 and prints the source message.
+53. **Trace original town form 20004.** Use `HARDFORM.C`, `TOWNUI.C`, `CLIENT.C`, and `MAPDESC/QUEST*.INI` for the single-player form, quest selection, and completion rules. L22 closes *Visions of Jugurtha*. The next quest in the selector is *The Knights of Andrew*, which starts at L25.
+54. **Import the original single-player form resources.** Use the original town and prompt art, bitmap fonts, palette, and the seven quest descriptions. Build the town map and its content assets with `AA.CreateNativeWadTown`.
+55. **Finish the source quest through L22's exit.** Import the journal at L22 thing 123. Returning to form 20004 with the journal turns it in and grants ten gold. Returning empty-handed displays the source failure bulletin.
+56. **Use the original quest selector.** Previous and Next browse the authored list. Quest opens the original Accept and Cancel dialogue for a new adventure. A quest in progress uses its saved map. Map-by-map diagnostic access is available through the standalone review commands.
+57. **Save the original town result and continue to L25.** A fresh process loaded the town checkpoint with ten gold, the successful quest result, and the archived L22 switches and gate heights. After selecting *The Knights of Andrew* and accepting Lady Marg's briefing, the replay arrived at the authored L25 spawn at `(298, 1636)`.
+58. **Replay the standalone town loop.** Both journal outcomes were verified from the original L22 spawn using regular movement and use controls. The first-quest briefing also launched L30 with the character and clock intact. The old L30 checkpoint loaded successfully and all nine WAD regression tests passed.
+
+- Run `AA.ExportNativeWadPortReview TownTour <OutputPng> [ImageSize]` in standalone L22 with `?WadItems=200?WadReady=0?WadXP=2105?WadLevel=2?WadNextXP=36000`. Use `TownFailure` with the same start for the empty-handed case. Start `/Game/Maps/WadTown?WadLoad=NativeWadTownReview` in a fresh process and run `TownReload`. Use `TownStart` in a fresh town for the original first-quest launch.
+- The screenshots are in `Saved/Wad-L22-Town-Review.html`.
+- The Inn, Store, and Bank each have a separate original form. The town displays their original buttons. Those forms, the shared banner controls, and L25's encounter and script gameplay are follow-up work.
+
 ### Asset follow-ups
 
 - [ ] Find the original `MARBGRAY` texture and restore it to the L30 import. The supplied `PICS.RES` lacks it, so the affected lower wall bands use the default material when exposed. Check a raised floor at sector 147 after restoring the art.
 - [ ] Restore `MARBGRAY` and `AASHITTY` in L31 when the source textures are available. The L31 importer uses the default material for those surfaces.
 - [ ] Restore `MARBGRAY` in L22. The import uses the default material for the affected surfaces.
+- [ ] Restore `AASHITTY` in L25 when the source texture is available. The native import uses the default material for that surface.
 
 ## 2026-04-11 Review Findings
 

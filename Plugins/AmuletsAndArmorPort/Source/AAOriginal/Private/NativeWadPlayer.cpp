@@ -6,14 +6,17 @@
 #include "Components/InputComponent.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/PackageName.h"
+#include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
+#include "NativeWadTown.h"
 #include "TimerManager.h"
 
 using namespace NativeWadRules;
@@ -41,10 +44,21 @@ void ANativeWadPlayer::BeginPlay()
     }
     ReadTravelOptions(GetWorld()->URL);
     bRestoreCheckpointOnTick = GetWorld()->URL.HasOption(TEXT("WadLoad"));
+    if (IsInWadTown())
+    {
+        GetCharacterMovement()->DisableMovement();
+    }
 }
 
 void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
 {
+    TravelHour.Reset();
+    double Hour;
+    if (const TCHAR* Option = URL.GetOption(TEXT("WadHour="), nullptr);
+        Option && LexTryParseString(Hour, Option) && FMath::IsFinite(Hour))
+    {
+        TravelHour = Hour;
+    }
     const auto ReadStat = [&URL](const TCHAR* Key, int32& Stat, int32 Low, int32 High)
     {
         int32 Value = 0;
@@ -117,6 +131,24 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
 void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
 {
     Super::SetupPlayerInputComponent(Input);
+    if (IsInWadTown())
+    {
+        SetMouseLook(false);
+        Input->BindKey(EKeys::Left, IE_Pressed, this, &ANativeWadPlayer::TownSelectPrevious);
+        Input->BindKey(EKeys::Right, IE_Pressed, this, &ANativeWadPlayer::TownSelectNext);
+        Input->BindKey(EKeys::Up, IE_Pressed, this, &ANativeWadPlayer::TownScrollUp);
+        Input->BindKey(EKeys::Down, IE_Pressed, this, &ANativeWadPlayer::TownScrollDown);
+        Input->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &ANativeWadPlayer::TownScrollUp);
+        Input->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &ANativeWadPlayer::TownScrollDown);
+        Input->BindKey(FInputChord(EKeys::Q, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownQuest);
+        Input->BindKey(FInputChord(EKeys::I, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownInn);
+        Input->BindKey(FInputChord(EKeys::S, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownStore);
+        Input->BindKey(FInputChord(EKeys::B, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownBank);
+        Input->BindKey(EKeys::Enter, IE_Pressed, this, &ANativeWadPlayer::TownConfirm);
+        Input->BindKey(EKeys::Escape, IE_Pressed, this, &ANativeWadPlayer::TownCancel);
+        Input->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ANativeWadPlayer::TownClick);
+        return;
+    }
     Input->BindKey(EKeys::E, IE_Pressed, this, &ANativeWadPlayer::UsePressed);
     Input->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ANativeWadPlayer::ClickPressed);
     Input->BindKey(EKeys::LeftControl, IE_Pressed, this, &ANativeWadPlayer::UseReadyHand);
@@ -147,6 +179,11 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         {
             RestoreVisitedLevel();
         }
+    }
+    if (IsInWadTown())
+    {
+        CompleteTownArrival();
+        return;
     }
     if (QuakeTime > 0.0)
     {
@@ -202,6 +239,14 @@ void ANativeWadPlayer::CheckLevelLink()
         return;
     }
     const FAAWadNativeLevelLink& Link = Level->GetLevelLinks()[LinkIndex];
+    if (Link.CampaignForm == NativeWadTown::Form)
+    {
+        if (!OpenWadTown())
+        {
+            ShowInteractionMessage(TEXT("Town is unavailable."));
+        }
+        return;
+    }
     if (Link.CampaignForm != 0)
     {
         ShowInteractionMessage(FString::Printf(TEXT("The exit leads to campaign form %d."), Link.CampaignForm));
@@ -222,6 +267,15 @@ void ANativeWadPlayer::CheckLevelLink()
 
 void ANativeWadPlayer::TravelToWadLevel(const TSoftObjectPtr<UWorld>& Destination)
 {
+    if (UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+        Travel && Travel->Quest.Active != INDEX_NONE)
+    {
+        const int32 Map = NativeWadTown::MapNumber(Destination.ToSoftObjectPath().GetLongPackageName());
+        if (Map > 0)
+        {
+            Travel->Quest.ResumeMaps.Add(Travel->Quest.Active, Map);
+        }
+    }
     ArchiveDeparture();
     UGameplayStatics::OpenLevelBySoftObjectPtr(this, Destination, true, MakeTravelOptions());
 }
@@ -235,6 +289,10 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
         Options += FString::Printf(TEXT("?WadHour=%.9f"), Level->GetTimeOfDayHours());
+    }
+    else if (TravelHour.IsSet())
+    {
+        Options += FString::Printf(TEXT("?WadHour=%.9f"), TravelHour.GetValue());
     }
     if (!CarriedItems.IsEmpty())
     {
@@ -393,7 +451,8 @@ void ANativeWadPlayer::CollectItem(int32 Type)
 {
     CarriedItems.Add(Type);
     ShowInteractionMessage(Type == Berry ? TEXT("Picked up a berry")
-        : Type == IronDagger ? TEXT("Picked up an iron dagger") : TEXT("Picked up an item"));
+        : Type == IronDagger ? TEXT("Picked up an iron dagger")
+        : Type == JugurthaJournal ? TEXT("Picked up Jugurtha's journal") : TEXT("Picked up an item"));
     UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
 }
 
