@@ -128,6 +128,8 @@ public:
     ANativeWadPickup();
     virtual void Tick(float DeltaSeconds) override;
     void Configure(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType);
+    void SetAvailable(bool bAvailable);
+    bool IsAvailable() const { return !IsHidden(); }
     bool Collect(ANativeWadPlayer& Player);
     int32 GetItemType() const { return ItemType; }
 

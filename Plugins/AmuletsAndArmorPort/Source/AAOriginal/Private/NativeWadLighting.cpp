@@ -3,6 +3,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "NativeWadEncounter.h"
 
 namespace
 {
@@ -37,6 +38,13 @@ namespace
 void ANativeWadLevel::BeginPlay()
 {
     Super::BeginPlay();
+    for (const auto& Entry : PickupGenerators)
+    {
+        if (IsValid(Entry.Value.Pickup))
+        {
+            Entry.Value.Pickup->SetAvailable(false);
+        }
+    }
     if (DaySky)
     {
         DaySkyMaterial = DaySky->CreateDynamicMaterialInstance(0);

@@ -183,7 +183,20 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 
 - Run `AA.ExportNativeWadPortReview TownTour <OutputPng> [ImageSize]` in standalone L22 with `?WadItems=200?WadReady=0?WadXP=2105?WadLevel=2?WadNextXP=36000`. Use `TownFailure` with the same start for the empty-handed case. Start `/Game/Maps/WadTown?WadLoad=NativeWadTownReview` in a fresh process and run `TownReload`. Use `TownStart` in a fresh town for the original first-quest launch.
 - The screenshots are in `Saved/Wad-L22-Town-Review.html`.
-- The Inn, Store, and Bank each have a separate original form. The town displays their original buttons. Those forms, the shared banner controls, and L25's encounter and script gameplay are follow-up work.
+- The Inn, Store, and Bank each have a separate original form. The town displays their original buttons. Those forms and the shared banner controls are follow-up work.
+
+### Town scrolling and the Church of Andrew
+
+59. **Verify original Town Hall scrolling.** The first quest briefing moved one line for the Down key and one for the mouse wheel. The up-arrow hit target and Up key reversed those moves. The final screenshot matched the initial one pixel for pixel.
+60. **Run L25's timed passages.** Imported all eleven activities from `S25.SRP`. E on line 852 lowered bridge floor 158 from Z−72 to Z−208. Sector 105's pressure plate opened gate 100 from Z−44 to Z72. The player crossed both while they were open, and each returned to its initial height after the authored nine-second cycle.
+61. **Run L25's paired pressure plates.** Verified the startup heights, the ignored repeat entry into sector 15, and the reset from sector 17. Entering both valid plates in sectors 15 and 18 raised ceiling 130 from Z136 to Z240 and activated generator 0.
+62. **Generate and use L25's authored key.** A fresh process restored the pending generator and released item 258 once. The test confirmed door 148 refused E without the key, then consumed the collected key on use. A second restart checked the permanent unlock.
+
+- The L25 walkthrough starts at the authored spawn, then stages the player at the original approaches for the timed passages, plates, and key door. Each crossing, plate entry, and use action runs through normal player controls.
+- Run `AA.ExportNativeWadPortReview TownScroll <OutputPng> [ImageSize]` in standalone Town Hall and `ChurchPassages` in standalone L25. Start L25 with `?WadLoad=NativeWadChurchKeyReview` for `ChurchKeyReload` and `?WadLoad=NativeWadChurchDoorReview` for `ChurchDoorReload`. The older L30 checkpoint, the original Town Hall checkpoint, and all nine WAD regression tests passed.
+- The screenshots are in `Saved/Wad-Town-Scroll-and-L25-Review.html`.
+
+- L25's authored knight encounters and the playable L20 continuation are follow-up work.
 
 ### Asset follow-ups
 

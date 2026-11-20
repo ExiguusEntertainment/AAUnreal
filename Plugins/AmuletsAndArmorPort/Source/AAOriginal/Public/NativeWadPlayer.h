@@ -62,6 +62,7 @@ public:
     UFUNCTION(Exec)
     void WadLoad();
     void CollectItem(int32 Type);
+    bool ConsumeItem(int32 Type);
     void AwardExperience(int32 Amount);
 
     static constexpr float CapsuleRadius = 10.0f;

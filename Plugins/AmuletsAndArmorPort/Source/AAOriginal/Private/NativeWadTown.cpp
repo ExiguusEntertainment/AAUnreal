@@ -312,25 +312,16 @@ void ANativeWadPlayer::CompleteTownArrival()
         return;
     }
     const FWadTownQuest& Quest = Content->Quests[Index];
-    const int32 ItemSlot = CarriedItems.Find(Quest.QuestItem);
     Progress.Selected = Index;
     Progress.ResumeMaps.Remove(Index);
     Progress.ResultQuest = Index;
-    Progress.bSucceeded = Quest.QuestItem == 0 || ItemSlot != INDEX_NONE;
+    Progress.bSucceeded = Quest.QuestItem == 0 || GetItemCount(Quest.QuestItem) > 0;
     Progress.bShowResult = true;
     if (Progress.bSucceeded)
     {
-        if (!Quest.bKeepItem && ItemSlot != INDEX_NONE)
+        if (!Quest.bKeepItem && Quest.QuestItem != 0)
         {
-            CarriedItems.RemoveAt(ItemSlot);
-            if (ReadySlot == ItemSlot)
-            {
-                ReadySlot = INDEX_NONE;
-            }
-            else if (ReadySlot > ItemSlot)
-            {
-                --ReadySlot;
-            }
+            ConsumeItem(Quest.QuestItem);
         }
         Progress.Gold = int32(FMath::Min(int64(Progress.Gold) + Quest.Gold, int64(MAX_int32)));
         Progress.ShopTier = FMath::Max(Progress.ShopTier, Index + 1);

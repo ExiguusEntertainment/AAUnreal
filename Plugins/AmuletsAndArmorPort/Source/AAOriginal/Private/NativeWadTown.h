@@ -115,6 +115,7 @@ public:
     void ConfirmAction();
     void CancelAction();
     void Scroll(int32 Direction);
+    int32 GetScrollLine() const { return ScrollLine; }
     void OpenService(FName Name);
     void ClickAction(const FVector2D& Position);
 

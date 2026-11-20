@@ -102,6 +102,15 @@ struct FWadLevelCheckpoint
     TArray<FWadSavedScriptDelay> Delays;
 
     UPROPERTY()
+    TMap<int32, float> PendingPickupGenerators;
+
+    UPROPERTY()
+    TSet<int32> FiredPickupGenerators;
+
+    UPROPERTY()
+    TSet<int32> UnlockedItemDoors;
+
+    UPROPERTY()
     double Hour = 12.0;
 };
 

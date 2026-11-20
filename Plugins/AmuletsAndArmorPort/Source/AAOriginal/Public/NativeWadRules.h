@@ -31,6 +31,7 @@ namespace NativeWadRules
     inline constexpr int32 PriestAdvancement[AttributeCount] = {2, 1, 3, 2, 2, 2};
     inline constexpr int32 FeatherfallPotion = 817;
     inline constexpr int32 JugurthaJournal = 957;
+    inline constexpr int32 ChurchKey = 258;
 
     enum class ERejuvenateResult : uint8 { Success, Fizzle, InsufficientMana };
 

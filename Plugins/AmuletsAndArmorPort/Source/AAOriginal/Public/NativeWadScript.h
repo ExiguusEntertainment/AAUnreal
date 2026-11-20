@@ -22,7 +22,9 @@ enum class EWadScriptOperation : uint8
     PlayAreaSound,
     Earthquake,
     LaunchMissile,
-    TeleportPlayer
+    TeleportPlayer,
+    IncrementVariable,
+    ActivateGenerator
 };
 
 USTRUCT()

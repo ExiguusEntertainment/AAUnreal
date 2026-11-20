@@ -14,6 +14,7 @@ class UMaterialInterface;
 class UStaticMeshComponent;
 class UWorld;
 class ANativeWadPlayer;
+class ANativeWadPickup;
 class UStaticMesh;
 struct FWadLevelCheckpoint;
 
@@ -135,6 +136,21 @@ struct FAAWadNativeDoor
 
     UPROPERTY(VisibleAnywhere, Category="WAD")
     bool bRequiresUnlock = false;
+
+    UPROPERTY(VisibleAnywhere, Category="WAD")
+    int32 RequiredItem = 0;
+};
+
+USTRUCT()
+struct FWadPickupGenerator
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TObjectPtr<ANativeWadPickup> Pickup;
+
+    UPROPERTY()
+    float Delay = 0.0f;
 };
 
 USTRUCT()
@@ -201,7 +217,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
     bool UseDoor(int32 Sector);
 
-    bool UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, const AActor* UserActor);
+    bool UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, ANativeWadPlayer* Player);
     bool UseActivityFromView(ANativeWadPlayer& Player);
     void CheckActivitySector(ANativeWadPlayer& Player, int32& PreviousSector);
     int32 FindActivitySector(const FVector2D& Position) const;
@@ -230,6 +246,9 @@ private:
     friend struct FAAWadNativeImport;
 
     void InitializeTopology();
+    bool UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player);
+    void ActivatePickupGenerator(int32 Id);
+    void TickPickupGenerators(float DeltaSeconds);
     void SetSectorHeight(int32 Sector, double Z, bool bCeiling);
     void UpdateLine(int32 Line, bool bPersist);
     void ApplyLight(UStaticMeshComponent& Mesh, int32 Light, bool bPersist) const;
@@ -294,6 +313,13 @@ private:
 
     UPROPERTY()
     TObjectPtr<UStaticMesh> ScriptMissileMesh;
+
+    UPROPERTY()
+    TMap<int32, FWadPickupGenerator> PickupGenerators;
+
+    TMap<int32, float> PendingPickupGenerators;
+    TSet<int32> FiredPickupGenerators;
+    TSet<int32> UnlockedItemDoors;
 
     UPROPERTY()
     TObjectPtr<UMaterialInterface> ScriptMissileArt;

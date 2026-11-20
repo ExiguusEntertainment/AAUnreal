@@ -207,11 +207,16 @@ struct FAAWadNativeImport
             }
         }
         TSet<int32> RestrictedSectors;
+        TMap<int32, int32> RequiredItems;
         for (const int32 Marker : Markers)
         {
             if (const int32* Sector = MarkerSectors.Find(Marker); Sector && Map.Things[Marker].Type != DoorMarker)
             {
                 RestrictedSectors.Add(*Sector);
+                if (Map.Things[Marker].Type == DoorRequiredItemMarker)
+                {
+                    RequiredItems.Add(*Sector, Map.Things[Marker].Flags);
+                }
             }
         }
         for (const int32 Marker : Markers)
@@ -249,7 +254,8 @@ struct FAAWadNativeImport
             }
             // The original loader leaves a 16-unit lip and uses a 70 Hz game clock.
             Doors.Add({ *Sector, Marker, float(Floor), float(LowestCeiling - 16),
-                105.0f / TicksPerSecond, 140.0f / TicksPerSecond, RestrictedSectors.Contains(*Sector) });
+                105.0f / TicksPerSecond, 140.0f / TicksPerSecond,
+                RestrictedSectors.Contains(*Sector), RequiredItems.FindRef(*Sector) });
             Ceilings[*Sector] = Floor;
         }
         return true;
@@ -626,6 +632,7 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L25") && !InstallL25Script(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output))))
         {
@@ -669,6 +676,82 @@ struct FAAWadNativeImport
         }
         Actor.ScriptMissileMaterials.Add(4011, Dart);
         Actor.ScriptMissileMaterials.Add(4016, Paralysis);
+        return !bAssetError;
+    }
+
+    bool InstallL25Script(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
+        const FString& WadPath, FOutputDevice& Output)
+    {
+        constexpr int32 EntryActivities[] = {0, 1, 2, 10, 11, 12, 13};
+        TArray<FAAWadNativeDoor> Doors;
+        if (!InstallActivities(Actor, Map, WadPath, TEXT("S25.SRP"), EntryActivities, Output)
+            || !BuildDoors(Map, Doors, Output))
+        {
+            return false;
+        }
+        const FString GeneratorPath = FPaths::ChangeExtension(WadPath, TEXT("GEN"));
+        TArray<FString> GeneratorLines;
+        if (!FFileHelper::LoadFileToStringArray(GeneratorLines, *GeneratorPath))
+        {
+            return false;
+        }
+        GeneratorLines.RemoveAll([](const FString& Line) { return !Line.StartsWith(TEXT("G ")); });
+        TArray<FString> Fields;
+        if (GeneratorLines.Num() == 1)
+        {
+            GeneratorLines[0].ParseIntoArrayWS(Fields);
+        }
+        if (Fields.Num() != 11 || FCString::Atoi(*Fields[1]) != NativeWadRules::ChurchKey
+            || FCString::Atoi(*Fields[6]) != 0 || FCString::Atoi(*Fields[9]) != 0 || FCString::Atoi(*Fields[10]) != 1)
+        {
+            Output.Log(TEXT("L25 needs its original inactive, one-shot key generator."));
+            return false;
+        }
+        const FVector2D XY(FCString::Atoi(*Fields[2]), FCString::Atoi(*Fields[3]));
+        const int32 Sector = Actor.FindWadSector(XY);
+        const float Delay = float(FCString::Atoi(*Fields[5]));
+        if (!Map.Sectors.IsValidIndex(Sector) || Delay <= 0 || !Doors.ContainsByPredicate(
+            [](const FAAWadNativeDoor& Door) { return Door.RequiredItem == NativeWadRules::ChurchKey; }))
+        {
+            return false;
+        }
+        auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        auto* Image = SpriteMaterial(TEXT("ChurchKey"), TEXT("KEY2/KEY2.CPC"));
+        if (!Plane || !Image)
+        {
+            return false;
+        }
+        const FName Tag(TEXT("L25 Key Generator 0"));
+        ANativeWadPickup* Key = nullptr;
+        for (TActorIterator<ANativeWadPickup> Item(&World); Item; ++Item)
+        {
+            if (Item->ActorHasTag(Tag))
+            {
+                Key = *Item;
+                Key->Modify();
+                break;
+            }
+        }
+        if (!Key)
+        {
+            FActorSpawnParameters Params;
+            Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+            const double Yaw = FCString::Atoi(*Fields[4]) * (360.0 / 65536.0);
+            Key = World.SpawnActor<ANativeWadPickup>(FVector(XY, Map.Sectors[Sector].FloorHeight + 12.0),
+                FRotator(0, Yaw, 0), Params);
+            if (!Key)
+            {
+                return false;
+            }
+            Key->Tags.Add(Tag);
+            Key->SetActorLabel(Tag.ToString());
+        }
+        Key->Configure(Plane, Image, NativeWadRules::ChurchKey);
+        Key->SetAvailable(false);
+        Actor.PickupGenerators.Reset();
+        Actor.PickupGenerators.Add(0, {Key, Delay});
+        Actor.Doors = MoveTemp(Doors);
+        Output.Logf(TEXT("Imported L25 generator 0 and its required-item door. Key at %s, delay %.0fs."), *XY.ToString(), Delay);
         return !bAssetError;
     }
 

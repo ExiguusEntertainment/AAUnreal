@@ -72,13 +72,33 @@ ANativeWadLevel::ANativeWadLevel()
 
 bool ANativeWadLevel::UseDoor(int32 Sector)
 {
+    return UseDoorForPlayer(Sector, nullptr);
+}
+
+bool ANativeWadLevel::UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player)
+{
     InitializeTopology();
     const int32* Index = DoorBySector.Find(Sector);
     FVector2D DoorHeights;
-    if (!Index || Doors[*Index].bRequiresUnlock || !GetSectorSurfaceHeights(Sector, DoorHeights)
+    if (!Index || !GetSectorSurfaceHeights(Sector, DoorHeights)
         || !GetWorld() || !GetWorld()->IsGameWorld() || DoorHeights.X >= Doors[*Index].OpenZ)
     {
         return false;
+    }
+    const FAAWadNativeDoor& Door = Doors[*Index];
+    if (Door.bRequiresUnlock && !UnlockedItemDoors.Contains(Sector))
+    {
+        if (!Player)
+        {
+            return false;
+        }
+        if (Door.RequiredItem == 0 || !Player->ConsumeItem(Door.RequiredItem))
+        {
+            Player->ShowInteractionMessage(Door.RequiredItem > 0 ? TEXT("Door requires key to be opened.") : TEXT("Door is locked."));
+            return false;
+        }
+        UnlockedItemDoors.Add(Sector);
+        Player->ShowInteractionMessage(TEXT("Door took item."));
     }
 
     FActiveDoor& State = ActiveDoors.FindOrAdd(*Index);
@@ -94,7 +114,7 @@ bool ANativeWadLevel::UseDoor(int32 Sector)
     return true;
 }
 
-bool ANativeWadLevel::UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, const AActor* UserActor)
+bool ANativeWadLevel::UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, ANativeWadPlayer* Player)
 {
     if (!GetWorld() || !GetWorld()->IsGameWorld() || !FMath::IsFinite(Reach) || Reach <= 0.0)
     {
@@ -151,9 +171,9 @@ bool ANativeWadLevel::UseDoorFromView(const FVector& Position, const FVector& Di
     // Test the path up to the door boundary, allowing for its thin collision box.
     const FVector BeforeDoor = FMath::Lerp(Position, End, FMath::Max(0.0, Closest - 0.5 / Reach));
     FHitResult Hit;
-    FCollisionQueryParams Query(SCENE_QUERY_STAT(UseNativeWadDoor), true, UserActor);
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(UseNativeWadDoor), true, Player);
     Query.bFindInitialOverlaps = false;
-    return !GetWorld()->LineTraceSingleByChannel(Hit, Position, BeforeDoor, ECC_Visibility, Query) && UseDoor(ClosestDoor);
+    return !GetWorld()->LineTraceSingleByChannel(Hit, Position, BeforeDoor, ECC_Visibility, Query) && UseDoorForPlayer(ClosestDoor, Player);
 }
 
 void ANativeWadLevel::Tick(float DeltaSeconds)
@@ -173,9 +193,10 @@ void ANativeWadLevel::Tick(float DeltaSeconds)
         }
     }
     TickActivitySlides(DeltaSeconds);
+    TickPickupGenerators(DeltaSeconds);
     TickSurfaceScroll(DeltaSeconds);
     TickAmbientEmitters(DeltaSeconds);
-    if (ActiveDoors.IsEmpty() && ActivitySlides.IsEmpty() && !bRunDayClock
+    if (ActiveDoors.IsEmpty() && ActivitySlides.IsEmpty() && PendingPickupGenerators.IsEmpty() && !bRunDayClock
         && ScrollingSectors.IsEmpty() && ScrollingSides.IsEmpty() && AmbientEmitters.IsEmpty())
     {
         SetActorTickEnabled(false);

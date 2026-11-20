@@ -299,9 +299,16 @@ void ANativeWadPickup::Tick(float DeltaSeconds)
     }
 }
 
+void ANativeWadPickup::SetAvailable(bool bAvailable)
+{
+    SetActorHiddenInGame(!bAvailable);
+    SetActorEnableCollision(bAvailable);
+    SetActorTickEnabled(bAvailable);
+}
+
 bool ANativeWadPickup::Collect(ANativeWadPlayer& Player)
 {
-    if (ItemType <= 0 || IsActorBeingDestroyed())
+    if (ItemType <= 0 || IsActorBeingDestroyed() || !IsAvailable())
     {
         return false;
     }

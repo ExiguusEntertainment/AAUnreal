@@ -114,6 +114,20 @@ namespace
                     return false;
                 }
                 break;
+            case 9:
+                Command.Operation = EWadScriptOperation::IncrementVariable;
+                if (!Reader.TaggedByte(4, Command.Target))
+                {
+                    return false;
+                }
+                break;
+            case 57:
+                Command.Operation = EWadScriptOperation::ActivateGenerator;
+                if (!Reader.Literal(Command.Target) || Command.Target < 0)
+                {
+                    return false;
+                }
+                break;
             case 3:
                 Command.Operation = EWadScriptOperation::IfFlag;
                 if (!Reader.TaggedByte(6, Command.Value) || Command.Value > 7 || !Reader.Literal(Command.Target))

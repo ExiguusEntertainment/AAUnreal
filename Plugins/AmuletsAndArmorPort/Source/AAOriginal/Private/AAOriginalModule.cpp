@@ -1055,7 +1055,8 @@ public:
                 else if (Review == TEXT("ravine") || Review == TEXT("ambient") || Review == TEXT("l31tol22")
                     || Review == TEXT("l22trap") || Review == TEXT("liftsave") || Review == TEXT("liftreload")
                     || Review == TEXT("doorreload") || Review == TEXT("towntour") || Review == TEXT("townfailure")
-                    || Review == TEXT("townreload") || Review == TEXT("townstart"))
+                    || Review == TEXT("townreload") || Review == TEXT("townstart") || Review == TEXT("townscroll")
+                    || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload"))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }

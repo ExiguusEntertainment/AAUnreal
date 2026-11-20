@@ -182,6 +182,12 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
         case EWadScriptOperation::SetVariable:
             ScriptVariables[Command.Target] = Command.Value;
             break;
+        case EWadScriptOperation::IncrementVariable:
+            ScriptVariables[Command.Target] = int32(uint32(ScriptVariables[Command.Target]) + 1u);
+            break;
+        case EWadScriptOperation::ActivateGenerator:
+            ActivatePickupGenerator(Command.Target);
+            break;
         case EWadScriptOperation::CompareVariable:
         {
             const int32 A = ScriptVariables[Command.Target];
@@ -235,6 +241,35 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
     if (Budget == -1)
     {
         UE_LOG(LogTemp, Warning, TEXT("WAD script instruction budget exhausted in activity %d."), Activity);
+    }
+}
+
+void ANativeWadLevel::ActivatePickupGenerator(int32 Id)
+{
+    const FWadPickupGenerator* Generator = PickupGenerators.Find(Id);
+    if (Generator && IsValid(Generator->Pickup) && !FiredPickupGenerators.Contains(Id) && !PendingPickupGenerators.Contains(Id))
+    {
+        PendingPickupGenerators.Add(Id, Generator->Delay);
+        SetActorTickEnabled(true);
+    }
+}
+
+void ANativeWadLevel::TickPickupGenerators(float DeltaSeconds)
+{
+    for (auto It = PendingPickupGenerators.CreateIterator(); It; ++It)
+    {
+        It.Value() -= DeltaSeconds;
+        if (It.Value() <= 0.0f)
+        {
+            const int32 Id = It.Key();
+            if (const FWadPickupGenerator* Generator = PickupGenerators.Find(Id); Generator && IsValid(Generator->Pickup))
+            {
+                Generator->Pickup->SetAvailable(true);
+                UE_LOG(LogTemp, Display, TEXT("WAD generator %d released item %d."), Id, Generator->Pickup->GetItemType());
+            }
+            FiredPickupGenerators.Add(Id);
+            It.RemoveCurrent();
+        }
     }
 }
 

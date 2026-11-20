@@ -17,6 +17,7 @@ namespace
         case Berry: return TEXT("Berry");
         case FeatherfallPotion: return TEXT("Potion of Featherfalling");
         case JugurthaJournal: return TEXT("Jugurtha's journal");
+        case ChurchKey: return TEXT("Church key");
         default: return Type > 0 ? TEXT("Item") : TEXT("Empty");
         }
     }
@@ -40,6 +41,33 @@ namespace
 int32 ANativeWadPlayer::GetReadyItem() const
 {
     return CarriedItems.IsValidIndex(ReadySlot) ? CarriedItems[ReadySlot] : 0;
+}
+
+bool ANativeWadPlayer::ConsumeItem(int32 Type)
+{
+    const int32 Slot = CarriedItems.Find(Type);
+    if (Slot == INDEX_NONE)
+    {
+        return false;
+    }
+    CarriedItems.RemoveAt(Slot);
+    if (ReadySlot == Slot)
+    {
+        ReadySlot = INDEX_NONE;
+    }
+    else if (ReadySlot > Slot)
+    {
+        --ReadySlot;
+    }
+    if (SelectedInventorySlot == Slot)
+    {
+        SelectedInventorySlot = INDEX_NONE;
+    }
+    else if (SelectedInventorySlot > Slot)
+    {
+        --SelectedInventorySlot;
+    }
+    return true;
 }
 
 int32 ANativeWadPlayer::GetEquippedWeapon() const

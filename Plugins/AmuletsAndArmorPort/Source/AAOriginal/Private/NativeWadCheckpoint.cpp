@@ -48,6 +48,9 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     }
     Checkpoint.Switches = ActivitySwitchStates;
     Checkpoint.LightLevels = LightOverrides;
+    Checkpoint.PendingPickupGenerators = PendingPickupGenerators;
+    Checkpoint.FiredPickupGenerators = FiredPickupGenerators;
+    Checkpoint.UnlockedItemDoors = UnlockedItemDoors;
     Checkpoint.Hour = GetTimeOfDayHours();
     for (const FActivitySlide& Slide : ActivitySlides)
     {
@@ -91,6 +94,30 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
         return false;
     }
     InitializeTopology();
+    for (const auto& [Id, Remaining] : Checkpoint.PendingPickupGenerators)
+    {
+        const FWadPickupGenerator* Generator = PickupGenerators.Find(Id);
+        if (!Generator || !FMath::IsFinite(Remaining) || Remaining <= 0.0f || Remaining > Generator->Delay
+            || Checkpoint.FiredPickupGenerators.Contains(Id))
+        {
+            return false;
+        }
+    }
+    for (const int32 Id : Checkpoint.FiredPickupGenerators)
+    {
+        if (!PickupGenerators.Contains(Id))
+        {
+            return false;
+        }
+    }
+    for (const int32 Sector : Checkpoint.UnlockedItemDoors)
+    {
+        const int32* Door = DoorBySector.Find(Sector);
+        if (!Door || Doors[*Door].RequiredItem <= 0)
+        {
+            return false;
+        }
+    }
     for (const FWadSavedSlide& Slide : Checkpoint.Slides)
     {
         FVector2D HeightsAtSave;
@@ -165,7 +192,10 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
         ScheduleScriptContinuation(Waiting.Activity, Waiting.NextCommand, Waiting.bHasPlayer ? Player : nullptr,
             Waiting.SecondsRemaining);
     }
-    if (!ActivitySlides.IsEmpty() || !ActiveDoors.IsEmpty())
+    PendingPickupGenerators = Checkpoint.PendingPickupGenerators;
+    FiredPickupGenerators = Checkpoint.FiredPickupGenerators;
+    UnlockedItemDoors = Checkpoint.UnlockedItemDoors;
+    if (!ActivitySlides.IsEmpty() || !ActiveDoors.IsEmpty() || !PendingPickupGenerators.IsEmpty())
     {
         SetActorTickEnabled(true);
     }
@@ -184,9 +214,22 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     }
     LightOverrides = Checkpoint.LightLevels;
     RefreshSectorLights();
+    TSet<const ANativeWadPickup*> DormantPickups;
+    for (const auto& [Id, Generator] : PickupGenerators)
+    {
+        if (IsValid(Generator.Pickup))
+        {
+            const bool bFired = FiredPickupGenerators.Contains(Id);
+            Generator.Pickup->SetAvailable(bFired);
+            if (!bFired)
+            {
+                DormantPickups.Add(Generator.Pickup);
+            }
+        }
+    }
     for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item; ++Item)
     {
-        if (!Item->Tags.IsEmpty() && !Checkpoint.RemainingPickups.Contains(Item->Tags[0]))
+        if (!Item->Tags.IsEmpty() && !DormantPickups.Contains(*Item) && !Checkpoint.RemainingPickups.Contains(Item->Tags[0]))
         {
             Item->Destroy();
         }
