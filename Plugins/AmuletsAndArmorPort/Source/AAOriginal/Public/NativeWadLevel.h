@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "DoomWadWalls.h"
+#include "Engine/TimerHandle.h"
 #include "NativeWadScript.h"
 #include "GameFramework/Actor.h"
 #include "NativeWadLevel.generated.h"
@@ -149,6 +150,9 @@ struct FAAWadNativeLevelLink
 
     UPROPERTY(VisibleAnywhere, Category="WAD")
     TSoftObjectPtr<UWorld> Destination;
+
+    UPROPERTY()
+    int32 CampaignForm = 0;
 };
 
 // Owns the saved Lumen geometry and the small amount of topology needed to move it.
@@ -208,6 +212,7 @@ public:
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
     int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
     int32 GetScriptMissileCount() const { return ScriptMissileCount; }
+    int32 GetScriptMissileCount(int32 Type) const { return ScriptMissilesByType.FindRef(Type); }
     int32 GetScriptMissilesBlocked() const { return ScriptMissilesBlocked; }
     void CountBlockedScriptMissile() { ++ScriptMissilesBlocked; }
     bool WriteCheckpoint(FWadLevelCheckpoint& Checkpoint) const;
@@ -235,6 +240,7 @@ private:
     const FWadScriptActivity* FindWadActivity(int32 Activity) const;
     bool RunWadActivity(int32 Activity, ANativeWadPlayer* Player = nullptr);
     void RunWadScriptCommands(int32 Activity, int32 StartCommand, TWeakObjectPtr<ANativeWadPlayer> Player, int32& Budget);
+    void ScheduleScriptContinuation(int32 Activity, int32 NextCommand, TWeakObjectPtr<ANativeWadPlayer> Player, float Delay);
     void StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush);
     void TickActivitySlides(float DeltaSeconds);
     void SetActivitySwitch(int32 Side, bool bUp);
@@ -253,6 +259,14 @@ private:
         double Elapsed;
         bool bCeiling;
         bool bPauseOnCrush;
+    };
+
+    struct FPendingScriptDelay
+    {
+        FTimerHandle Handle;
+        int32 Activity;
+        int32 NextCommand;
+        TWeakObjectPtr<ANativeWadPlayer> Player;
     };
 
     UPROPERTY()
@@ -284,10 +298,15 @@ private:
     UPROPERTY()
     TObjectPtr<UMaterialInterface> ScriptMissileArt;
 
+    UPROPERTY()
+    TMap<int32, TObjectPtr<UMaterialInterface>> ScriptMissileMaterials;
+
     TMap<int32, bool> ActivitySwitchStates;
     TArray<FActivitySlide> ActivitySlides;
-    int32 PendingScriptDelays = 0;
+    TMap<uint64, FPendingScriptDelay> PendingScriptDelays;
+    uint64 NextScriptDelay = 0;
     int32 ScriptMissileCount = 0;
+    TMap<int32, int32> ScriptMissilesByType;
     int32 ScriptMissilesBlocked = 0;
     int32 ScriptVariables[256] = {};
     bool ScriptFlags[8] = {};

@@ -18,6 +18,55 @@ struct FWadSavedEncounter
 };
 
 USTRUCT()
+struct FWadSavedSlide
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    int32 Sector = INDEX_NONE;
+    UPROPERTY()
+    double From = 0.0;
+    UPROPERTY()
+    double To = 0.0;
+    UPROPERTY()
+    double Duration = 0.0;
+    UPROPERTY()
+    double Elapsed = 0.0;
+    UPROPERTY()
+    bool bCeiling = false;
+    UPROPERTY()
+    bool bPauseOnCrush = false;
+};
+
+USTRUCT()
+struct FWadSavedDoor
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    uint8 Phase = 0;
+    UPROPERTY()
+    double StartZ = 0.0;
+    UPROPERTY()
+    double Elapsed = 0.0;
+};
+
+USTRUCT()
+struct FWadSavedScriptDelay
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    int32 Activity = 0;
+    UPROPERTY()
+    int32 NextCommand = 0;
+    UPROPERTY()
+    float SecondsRemaining = 0.0f;
+    UPROPERTY()
+    bool bHasPlayer = false;
+};
+
+USTRUCT()
 struct FWadLevelCheckpoint
 {
     GENERATED_BODY()
@@ -42,6 +91,15 @@ struct FWadLevelCheckpoint
 
     UPROPERTY()
     TMap<FName, FWadSavedEncounter> Encounters;
+
+    UPROPERTY()
+    TArray<FWadSavedSlide> Slides;
+
+    UPROPERTY()
+    TMap<int32, FWadSavedDoor> Doors;
+
+    UPROPERTY()
+    TArray<FWadSavedScriptDelay> Delays;
 
     UPROPERTY()
     double Hour = 12.0;

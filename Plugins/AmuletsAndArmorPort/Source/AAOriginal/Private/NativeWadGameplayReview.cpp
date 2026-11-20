@@ -406,7 +406,7 @@ namespace
         {EAction::Complete},
     };
 
-    enum class ETrailAction { Walk, Leap, Door, Capture, Link, Plate };
+    enum class ETrailAction { Walk, Leap, Door, Capture, Link, Plate, FloorReset };
     struct FTrailStep
     {
         ETrailAction Action;
@@ -440,6 +440,24 @@ namespace
         {ETrailAction::Walk, {2728,2192,0}}, {ETrailAction::Walk, {2696,2160,0}}, {ETrailAction::Walk, {2720,1912,0}},
         {ETrailAction::Walk, {2776,1880,0}}, {ETrailAction::Walk, {2984,1904,0}}, {ETrailAction::Walk, {3088,2040,0}},
         {ETrailAction::Plate, {}, 135}, {ETrailAction::Capture, {3088,2152,110}, INDEX_NONE, {}, TEXT("l31-pressure-plate")},
+    };
+
+    const FTrailStep L31ExitTrail[] = {
+        {ETrailAction::FloorReset, {0,0,192}, 135},
+        {ETrailAction::Walk, {3008,896,0}}, {ETrailAction::Walk, {2448,344,0}}, {ETrailAction::Walk, {2520,-360,0}},
+        {ETrailAction::Walk, {2736,-528,0}}, {ETrailAction::Walk, {3880,-488,0}}, {ETrailAction::Walk, {4024,-360,0}},
+        {ETrailAction::Door, {4049,-360,65}, 168},
+        {ETrailAction::Capture, {4112,-360,65}, INDEX_NONE, {}, TEXT("l31-exit-door")},
+        {ETrailAction::Walk, {4080,-360,0}}, {ETrailAction::Walk, {4200,-416,0}},
+        {ETrailAction::Link, {4296,-868,0}},
+    };
+
+    const FTrailStep L22Trail[] = {
+        {ETrailAction::Walk, {-2584,-528,0}}, {ETrailAction::Walk, {-2632,-528,0}},
+        {ETrailAction::Walk, {-2672,-448,0}}, {ETrailAction::Walk, {-2632,-112,0}}, {ETrailAction::Walk, {-2568,-48,0}},
+        {ETrailAction::Door, {-2568,0,137}, 134},
+        {ETrailAction::Capture, {-2568,50,137}, INDEX_NONE, {}, TEXT("l22-door-open")},
+        {ETrailAction::Walk, {-2568,76,0}},
     };
 
     struct FWalkReview
@@ -498,10 +516,25 @@ namespace
         bool bJumpStarted = false;
         bool bRavineReview = false;
         bool bAmbientReview = false;
+        bool bL22TrapReview = false;
+        bool bLiftCheckpointReview = false;
+        bool bLiftReload = false;
+        bool bDoorReload = false;
+        bool bSavedOpeningDoor = false;
         bool bRavineStarted = false;
-        bool bReachedL31 = false;
+        bool bTrailArrived = false;
+        bool bL22Journey = false;
+        bool bObservedStartupLiftTop = false;
+        bool bObservedStartupLiftReturn = false;
         bool bTrailActionPressed = false;
+        TArray<FTrailStep> Trail;
         double EmitterAudibleSince = 0.0;
+        double SavedLiftDelay = 0.0;
+        double SavedDoorOpenTime = 0.0;
+        double TrapParalysisStart = 0.0;
+        bool bVerifiedTrapDamage = false;
+        int32 TrapHealth = 0;
+        FVector2D TrapHitPosition = FVector2D::ZeroVector;
         bool bWalking = false;
         bool bCapturedEncounter = false;
         bool bRequestedInventoryFrame = false;
@@ -560,7 +593,7 @@ namespace
         bool WalkTo(ANativeWadPlayer& Player, const FVector2D& Target)
         {
             const FVector2D Offset = Target - FVector2D(Player.GetActorLocation());
-            const double AcceptanceRadius = bRiverReview ? 16.0 : bRavineReview ? 12.0
+            const double AcceptanceRadius = bRiverReview ? 16.0 : bRavineReview || bLiftCheckpointReview ? 12.0
                 : bSecondMap || Stage == EStage::Arrival ? 14.0 : 5.0;
             if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
@@ -1477,36 +1510,83 @@ namespace
             }
             if (!bRavineStarted)
             {
-                if (!Position.Equals(FVector2D(-144, -232), 3.0) || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                const FVector2D Start = bL22Journey ? FVector2D(2544, 2775) : FVector2D(-144, -232);
+                if (!Position.Equals(Start, 3.0) || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
                 {
-                    return Finish(&Player, TEXT("the ravine replay requires the original L531 spawn with a ready dagger"));
+                    return Finish(&Player, TEXT("the route requires the original player spawn with a ready dagger"));
+                }
+                if (bL22Journey)
+                {
+                    Trail.Append(L31Trail, UE_ARRAY_COUNT(L31Trail));
+                    Trail.Append(L31ExitTrail, UE_ARRAY_COUNT(L31ExitTrail));
+                }
+                else
+                {
+                    Trail.Append(L531Trail, UE_ARRAY_COUNT(L531Trail));
                 }
                 bRavineStarted = true;
                 RiverProgressTime = FPlatformTime::Seconds();
             }
-            if (!bReachedL31 && &Current != SourceWorld.Get())
+            if (!bTrailArrived && &Current != SourceWorld.Get())
             {
-                if (!Current.GetMapName().EndsWith(TEXT("L31")) || !Position.Equals(FVector2D(2544, 2775), 3.0)
+                const TCHAR* Destination = bL22Journey ? TEXT("L22") : TEXT("L31");
+                const FVector2D Spawn = bL22Journey ? FVector2D(-2432, -228) : FVector2D(2544, 2775);
+                if (!Current.GetMapName().EndsWith(Destination) || !Position.Equals(Spawn, 3.0)
                     || Player.GetExperience() != ExperienceBeforeTravel || Player.GetHealth() != HealthBeforeTravel
                     || Player.GetFood() != FoodBeforeTravel || Player.GetMana() != ManaBeforeTravel
                     || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
                 {
-                    return Finish(&Player, TEXT("the L531 exit did not preserve the character at the original L31 spawn"));
+                    return Finish(&Player, TEXT("the exit did not preserve the character at the original destination spawn"));
                 }
                 Camera.Reset();
                 bWalking = false;
-                bReachedL31 = true;
+                bTrailArrived = true;
+                Trail.Reset();
+                if (bL22Journey)
+                {
+                    Trail.Append(L22Trail, UE_ARRAY_COUNT(L22Trail));
+                }
+                else
+                {
+                    Trail.Append(L31Trail, UE_ARRAY_COUNT(L31Trail));
+                }
                 NextPoint = 0;
                 RiverProgressTime = FPlatformTime::Seconds();
-                UE_LOG(LogTemp, Display, TEXT("Verified L531's authored exit travels to the original L31 spawn with character state intact."));
+                UE_LOG(LogTemp, Display, TEXT("Verified the authored exit travels to the original %s spawn with character state intact."), Destination);
             }
-            const TConstArrayView<FTrailStep> Steps = bReachedL31 ? MakeArrayView(L31Trail) : MakeArrayView(L531Trail);
-            if (!Steps.IsValidIndex(NextPoint))
+            if (bL22Journey && !bTrailArrived && !bObservedStartupLiftReturn)
             {
-                UE_LOG(LogTemp, Display, TEXT("Completed the L531 to L31 ravine review, including L31's initial door and pressure plate."));
+                FVector2D Heights;
+                if (!Level->GetSectorSurfaceHeights(136, Heights))
+                {
+                    return Finish(&Player, TEXT("the original startup lift is missing"));
+                }
+                if (!bObservedStartupLiftTop && Heights.X == 188.0)
+                {
+                    if (!FMath::IsNearlyEqual(Current.GetTimeSeconds(), 3.0, 0.15))
+                    {
+                        return Finish(&Player, TEXT("the L31 startup lift reached its top at the wrong time"));
+                    }
+                    bObservedStartupLiftTop = true;
+                }
+                else if (bObservedStartupLiftTop && Heights.X == 88.0)
+                {
+                    if (!FMath::IsNearlyEqual(Current.GetTimeSeconds(), 9.0, 0.15))
+                    {
+                        return Finish(&Player, TEXT("the L31 startup lift returned at the wrong time"));
+                    }
+                    bObservedStartupLiftReturn = true;
+                    UE_LOG(LogTemp, Display, TEXT("Verified L31 startup lift 136 reached Z188 after 3s and returned to Z88 after 9s."));
+                }
+            }
+            if (!Trail.IsValidIndex(NextPoint))
+            {
+                UE_LOG(LogTemp, Display, TEXT("%s"), bL22Journey
+                    ? TEXT("Completed the continuous L31 to L22 review, including the first L22 door.")
+                    : TEXT("Completed the L531 to L31 ravine review, including L31's initial door and pressure plate."));
                 return Finish(&Player);
             }
-            const FTrailStep& Step = Steps[NextPoint];
+            const FTrailStep& Step = Trail[NextPoint];
             if (FPlatformTime::Seconds() - RiverProgressTime > 23.0)
             {
                 UE_LOG(LogTemp, Warning, TEXT("Ravine route stalled in %s at waypoint %d, target %s, sector %d, velocity %s."),
@@ -1556,9 +1636,18 @@ namespace
                     Press(Player, EKeys::E);
                     bTrailActionPressed = true;
                 }
+                if (bL22Journey && !bTrailArrived && Step.Sector == 59 && !bSavedOpeningDoor
+                    && Heights.Y > Heights.X + 12.0 && Heights.Y < TrailDoor->OpenZ - 12.0)
+                {
+                    bSavedOpeningDoor = Player.SaveWadCheckpoint(TEXT("NativeWadDoorReview"));
+                }
                 bDone = Heights.Y == TrailDoor->OpenZ;
                 if (bDone)
                 {
+                    if (bL22Journey && !bTrailArrived && Step.Sector == 59 && !bSavedOpeningDoor)
+                    {
+                        return Finish(&Player, TEXT("the L31 opening door checkpoint could not be saved"));
+                    }
                     UE_LOG(LogTemp, Display, TEXT("Verified E opens %s door sector %d to Z%.0f."), *Current.GetMapName(), Step.Sector, Heights.Y);
                 }
                 break;
@@ -1581,7 +1670,7 @@ namespace
                 ManaBeforeTravel = Player.GetMana();
                 if (WalkTo(Player, FVector2D(Step.Target)))
                 {
-                    return Finish(&Player, TEXT("the authored L531 link failed to travel"));
+                    return Finish(&Player, TEXT("the authored link failed to travel"));
                 }
                 break;
             case ETrailAction::Plate:
@@ -1592,6 +1681,20 @@ namespace
                 if (bDone)
                 {
                     UE_LOG(LogTemp, Display, TEXT("Verified stepping onto L31 sector 107 runs activity 3 and lowers floor 135 to Z88."));
+                }
+                break;
+            }
+            case ETrailAction::FloorReset:
+            {
+                FVector2D Heights;
+                bDone = Level->GetSectorSurfaceHeights(Step.Sector, Heights) && Heights.X == Step.Target.Z;
+                if (bDone && !bObservedStartupLiftReturn)
+                {
+                    return Finish(&Player, TEXT("the L31 startup lift did not complete a full cycle"));
+                }
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L31's pressure-plate floor returned to Z%.0f after the source delay."), Heights.X);
                 }
                 break;
             }
@@ -1658,6 +1761,250 @@ namespace
             return true;
         }
 
+        bool TickL22Trap(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || FPlatformTime::Seconds() - StartTime > 45.0)
+            {
+                return Finish(&Player, TEXT("the L22 projectile check timed out"));
+            }
+            const FVector2D Position(Player.GetActorLocation());
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                const bool bHasSourceExit = Level->GetLevelLinks().ContainsByPredicate([](const FAAWadNativeLevelLink& Link)
+                    { return Link.SourceThing == 113 && Link.Sector == 184 && Link.CampaignForm == 20004 && Link.Destination.IsNull(); });
+                if (!bHasSourceExit || !Player.TeleportTo({-500,950,37}, FRotator::ZeroRotator))
+                {
+                    return Finish(&Player, TEXT("could not stage the L22 trap corridor"));
+                }
+                TrapHealth = Player.GetHealth();
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                NextPoint += WalkTo(Player, {-500,1020}) ? 1 : 0;
+                break;
+            case 2:
+                if (Level->GetScriptMissileCount(4011) >= 1 && Level->GetScriptMissilesBlocked() >= 2)
+                {
+                    if (Player.IsParalyzed() || Player.GetHealth() != TrapHealth || Level->GetScriptMissileCount(4016) != 1)
+                    {
+                        return Finish(&Player, TEXT("the off-axis trap pass should hit the corridor geometry"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L22's paralyze missile and magic dart hit geometry with the player off-axis."));
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                NextPoint += WalkTo(Player, {-500,950}) ? 1 : 0;
+                break;
+            case 4:
+                NextPoint += WalkTo(Player, {-450,950}) ? 1 : 0;
+                break;
+            case 5:
+                if (Player.IsParalyzed())
+                {
+                    TrapParalysisStart = Current.GetTimeSeconds();
+                    TrapHitPosition = Position;
+                    TrapHealth = Player.GetHealth();
+                    ++NextPoint;
+                }
+                else if (WalkTo(Player, {-450,1130}))
+                {
+                    return Finish(&Player, TEXT("the repeated L22 trap did not paralyze the player in the lane"));
+                }
+                break;
+            case 6:
+            {
+                const double Elapsed = Current.GetTimeSeconds() - TrapParalysisStart;
+                if (Player.IsParalyzed())
+                {
+                    if (FVector2D::Distance(Position, TrapHitPosition) > 2.0)
+                    {
+                        return Finish(&Player, TEXT("the player moved while paralyzed with movement input held"));
+                    }
+                    if (Player.GetHealth() < TrapHealth)
+                    {
+                        if (!bVerifiedTrapDamage && (TrapHealth - Player.GetHealth() != 100 || Level->GetScriptMissileCount(4011) != 2))
+                        {
+                            return Finish(&Player, TEXT("the following magic dart did not use its source damage"));
+                        }
+                        bVerifiedTrapDamage = true;
+                    }
+                }
+                else
+                {
+                    if (!bVerifiedTrapDamage || !FMath::IsNearlyEqual(Elapsed, 10.0, 0.15))
+                    {
+                        return Finish(&Player, TEXT("the dart impact or ten-second paralysis differed from the source"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            }
+            case 7:
+                if (Position.Y > TrapHitPosition.Y + 20.0)
+                {
+                    Stop(Player);
+                    UE_LOG(LogTemp, Display, TEXT("Verified the L22 trap retriggers, stops movement for ten seconds, deals 100 dart damage, and releases the player."));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickLiftCheckpoint(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            constexpr const TCHAR* Slot = TEXT("NativeWadMotionReview");
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            FVector2D Lift;
+            if (!Level || !Level->GetSectorSurfaceHeights(31, Lift) || FPlatformTime::Seconds() - StartTime > 38.0)
+            {
+                return Finish(&Player, TEXT("the lift checkpoint review timed out or lost sector 31"));
+            }
+            const double Feet = Player.GetActorLocation().Z - ANativeWadPlayer::CapsuleHalfHeight;
+            const bool bRiding = FMath::IsNearlyEqual(Feet, Lift.X, 5.0);
+            if (!bLiftReload)
+            {
+                if (NextPoint == 0)
+                {
+                    if (Lift.X != -250.0 || !Player.TeleportTo({3028,3700,-196}, FRotator::ZeroRotator))
+                    {
+                        return Finish(&Player, TEXT("the L151 lift is missing or starts at the wrong height"));
+                    }
+                    ++NextPoint;
+                }
+                else if (NextPoint == 1 && WalkTo(Player, {3100,3708}))
+                {
+                    ++NextPoint;
+                }
+                else if (NextPoint == 2 && Lift.X > -190.0 && Lift.X < -65.0 && bRiding
+                    && Player.SaveWadCheckpoint(Slot))
+                {
+                    const auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(Slot, 0));
+                    if (!Save || Save->Level.Slides.Num() != 1 || Save->Level.Slides[0].Sector != 31
+                        || Save->Level.Delays.Num() != 1 || Save->Level.Delays[0].Activity != 1)
+                    {
+                        return Finish(&Player, TEXT("the disk checkpoint is missing the active lift or script delay"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Saved an active L151 lift at Z%.2f with %.3fs left on its script delay."),
+                        Lift.X, Save->Level.Delays[0].SecondsRemaining);
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (Player.HasRestoredWadCheckpoint())
+                {
+                    const auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(Slot, 0));
+                    if (!Save || Save->Level.Delays.Num() != 1 || !bRiding
+                        || !Lift.Equals(Save->Level.SectorHeights.FindRef(31), 5.0))
+                    {
+                        return Finish(&Player, TEXT("the L151 lift did not restore to the height in its checkpoint"));
+                    }
+                    SavedLiftDelay = Save->Level.Delays[0].SecondsRemaining;
+                    StageTime = Current.GetTimeSeconds();
+                    ++NextPoint;
+                }
+                break;
+            case 1:
+                NextPoint += Lift.X == 0.0 && bRiding ? 1 : 0;
+                break;
+            case 2:
+            {
+                bool bSaved = false;
+                Aim(Player, {3400,3620,0});
+                if (CaptureView(Player, TEXT("lift-after-restart"), bSaved))
+                {
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture the resumed L151 lift"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            }
+            case 3:
+                if (Lift.X == -250.0 && bRiding)
+                {
+                    if (!FMath::IsNearlyEqual(Current.GetTimeSeconds() - StageTime, SavedLiftDelay + 1.0, 0.18))
+                    {
+                        return Finish(&Player, TEXT("the restored lift returned at the wrong time"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the saved L151 lift carried the player up and down and resumed its pending timer."));
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Current.GetTimeSeconds() - StageTime >= SavedLiftDelay + 2.15)
+                {
+                    // Start the repeat check from the same dry approach used before saving.
+                    if (!Player.TeleportTo({3028,3700,-196}, FRotator::ZeroRotator))
+                    {
+                        return Finish(&Player, TEXT("could not reset to the authored lift approach for the repeat check"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 5:
+                if (WalkTo(Player, {3100,3708}) && Lift.X > -250.0 && Level->GetWadScriptBlockCount(1) == 0)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified the restored L151 lift unlocks and starts a second cycle after re-entry."));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickDoorCheckpoint(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            FVector2D Heights;
+            const FAAWadNativeDoor* CheckpointDoor = Level ? Level->GetDoors().FindByPredicate(
+                [](const FAAWadNativeDoor& Entry) { return Entry.Sector == 59; }) : nullptr;
+            if (!CheckpointDoor || !Level->GetSectorSurfaceHeights(59, Heights) || FPlatformTime::Seconds() - StartTime > 20.0)
+            {
+                return Finish(&Player, TEXT("the L31 door checkpoint review timed out or lost sector 59"));
+            }
+            if (NextPoint == 0 && Player.HasRestoredWadCheckpoint())
+            {
+                const auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(TEXT("NativeWadDoorReview"), 0));
+                const FWadSavedDoor* DoorState = Save ? Save->Level.Doors.Find(59) : nullptr;
+                if (!DoorState || DoorState->Phase != 0 || Heights.Y <= Heights.X || Heights.Y >= CheckpointDoor->OpenZ)
+                {
+                    return Finish(&Player, TEXT("the L31 checkpoint did not restore its partially opened door"));
+                }
+                StageTime = Current.GetTimeSeconds();
+                SavedDoorOpenTime = CheckpointDoor->TravelSeconds - DoorState->Elapsed;
+                ++NextPoint;
+            }
+            else if (NextPoint == 1 && Heights.Y == CheckpointDoor->OpenZ)
+            {
+                if (!FMath::IsNearlyEqual(Current.GetTimeSeconds() - StageTime, SavedDoorOpenTime, 0.15))
+                {
+                    return Finish(&Player, TEXT("the restored door finished opening at the wrong time"));
+                }
+                ++NextPoint;
+            }
+            else if (NextPoint == 2 && Heights.X == Heights.Y)
+            {
+                const double Expected = SavedDoorOpenTime + CheckpointDoor->HoldSeconds + CheckpointDoor->TravelSeconds;
+                if (!FMath::IsNearlyEqual(Current.GetTimeSeconds() - StageTime, Expected, 0.15))
+                {
+                    return Finish(&Player, TEXT("the restored door finished closing at the wrong time"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified L31 door 59 resumed its saved opening phase, held, and closed on schedule."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool Tick()
         {
             UWorld* Current = World();
@@ -1687,6 +2034,18 @@ namespace
             if (bAmbientReview)
             {
                 return TickAmbient(*Current, *Player);
+            }
+            if (bL22TrapReview)
+            {
+                return TickL22Trap(*Current, *Player);
+            }
+            if (bLiftCheckpointReview)
+            {
+                return TickLiftCheckpoint(*Current, *Player);
+            }
+            if (bDoorReload)
+            {
+                return TickDoorCheckpoint(*Current, *Player);
             }
             if (Current != SourceWorld.Get())
             {
@@ -1976,11 +2335,18 @@ bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 I
     return true;
 }
 
-bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bAmbient)
+bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, const FString& Mode)
 {
     ANativeWadLevel* Level = GetReviewLevel(World, OutputPath, ImageSize);
     const FWorldContext* Context = Level ? GEngine->GetWorldContextFromWorld(World) : nullptr;
-    if (!Context || !World->GetMapName().EndsWith(bAmbient ? TEXT("L301") : TEXT("L531")))
+    const bool bAmbient = Mode == TEXT("ambient");
+    const bool bL22Journey = Mode == TEXT("l31tol22");
+    const bool bL22Trap = Mode == TEXT("l22trap");
+    const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
+    const bool bDoorReload = Mode == TEXT("doorreload");
+    const TCHAR* StartMap = bAmbient ? TEXT("L301") : bL22Journey || bDoorReload ? TEXT("L31") : bL22Trap ? TEXT("L22")
+        : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");
+    if (!Context || !World->GetMapName().EndsWith(StartMap))
     {
         return false;
     }
@@ -1991,7 +2357,12 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->StartTime = FPlatformTime::Seconds();
     Review->Size = ImageSize;
     Review->bAmbientReview = bAmbient;
-    Review->bRavineReview = !bAmbient;
+    Review->bRavineReview = Mode == TEXT("ravine") || bL22Journey;
+    Review->bL22Journey = bL22Journey;
+    Review->bL22TrapReview = bL22Trap;
+    Review->bLiftCheckpointReview = bLiftCheckpoint;
+    Review->bLiftReload = Mode == TEXT("liftreload");
+    Review->bDoorReload = bDoorReload;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;
 }

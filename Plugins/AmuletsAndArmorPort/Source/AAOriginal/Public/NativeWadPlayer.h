@@ -20,6 +20,7 @@ public:
     virtual void SetupPlayerInputComponent(UInputComponent* Input) override;
     virtual void Tick(float DeltaSeconds) override;
     virtual FVector GetPawnViewLocation() const override;
+    virtual void Jump() override;
 
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
     bool Use();
@@ -48,6 +49,8 @@ public:
     void ShowInteractionMessage(FString Message);
     void ReceiveEncounterHit(int32 Damage);
     void ReceiveTrapPoison(int32 Damage);
+    void ReceiveTrapParalysis();
+    bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
     void StartWadEarthquake(double Duration);
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
     bool SaveWadCheckpoint(const FString& Slot = FString()) const;
@@ -109,6 +112,7 @@ private:
     int32 Experience = 0;
     int32 SuccessfulCasts = 0;
     int32 PoisonLevel = 0;
+    double ParalysisSeconds = 0.0;
     double QuakeTime = 0.0;
     bool bRestoreCheckpointOnTick = false;
     bool bRestoreVisitedOnTick = true;

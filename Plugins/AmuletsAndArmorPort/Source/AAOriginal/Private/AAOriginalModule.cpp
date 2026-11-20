@@ -1043,9 +1043,11 @@ public:
                 {
                     bStarted = StartNativeWadRiverReview(InWorld, Output, ImageSize, Review == TEXT("riverreload"));
                 }
-                else if (Review == TEXT("ravine") || Review == TEXT("ambient"))
+                else if (Review == TEXT("ravine") || Review == TEXT("ambient") || Review == TEXT("l31tol22")
+                    || Review == TEXT("l22trap") || Review == TEXT("liftsave") || Review == TEXT("liftreload")
+                    || Review == TEXT("doorreload"))
                 {
-                    bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review == TEXT("ambient"));
+                    bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }
                 else if (Review == TEXT("route") || Review == TEXT("link") || Review == TEXT("slice")
                     || Review == TEXT("secondmap") || Review == TEXT("campaign") || Review == TEXT("checkpoint"))
@@ -1056,7 +1058,7 @@ public:
             }
             if (!bStarted)
             {
-                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link|Slice|SecondMap|Campaign|Checkpoint|River|RiverReload|Ravine|Ambient> <OutputPng> [ImageSize] requires the corresponding native game level."));
+                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <ReviewMode> <OutputPng> [ImageSize] requires a supported mode and its native level. See PLAN.md for review commands."));
                 UE_LOG(LogTemp, Display, TEXT("Native WAD port review finished"));
             }
             return true;

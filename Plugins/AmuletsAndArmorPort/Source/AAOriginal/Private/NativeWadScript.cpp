@@ -210,7 +210,7 @@ namespace
                     Command.Operation = EWadScriptOperation::Earthquake;
                     Command.Ticks = Args[1];
                 }
-                else if (Opcode == 54 && Args[0] == 4015 && Args[7] > 0)
+                else if (Opcode == 54 && (Args[0] == 4011 || Args[0] == 4015 || Args[0] == 4016) && Args[7] > 0)
                 {
                     Command.Operation = EWadScriptOperation::LaunchMissile;
                     Command.Position = FIntVector(Args[1], Args[2], Args[3]);

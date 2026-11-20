@@ -9,8 +9,8 @@ The goal is a playable Unreal port of Amulets & Armor from a new game through th
 | 1. Native level foundation | Import original geometry, materials, collision, moving sectors, and lighting into saved Unreal levels. | Proven on L30 and L151 at GitHub checkpoint `727f482`. |
 | 2. One complete gameplay slice | Play a continuous route from an original spawn through an authored interaction, an encounter, a pickup, and a level transition. | Verified from L30's original spawn to L301 in Steps 16–18. |
 | 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Steps 19–24 verify a Guardian fight, the ready hand, one spell, and the first priest level-up. |
-| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | Verified L30 to L301, L301 to L531, and L531 to L31. L31's first door and pressure plate run in the native map. L151 covers the repeating lift. |
-| 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | The L30 disk checkpoint and L301 revisit passed after a process restart. L301's positional stream and waterfall loops run with the source audio. |
+| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | Verified travel from L30 through L301, L531, and L31 to L22. L22's door and corridor trap work in the native map. Its town-screen destination is recorded. |
+| 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | Disk checkpoints restore settled levels, ordinary door phases, scripted lifts, and pending waits. L301's positional stream and waterfall loops run with the source audio. |
 | 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | Planned |
 
 ## Native Unreal Level Import
@@ -153,10 +153,26 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 
 - Run `AA.ExportNativeWadPortReview Ambient <OutputPng> [ImageSize]` in standalone L301 with audio enabled. For the route, start standalone L531 with `?WadItems=200?WadReady=0?WadXP=2105` and use the `Ravine` mode. See `Saved/Wad-Ravine-and-L31-Review.html` for the four route captures.
 
+### Steps 39–48 L22, trap effects, and checkpoints during motion
+
+39. **Trace L31's exit route.** The route from the first pressure plate follows sectors 106 and 68 to the south, then approaches door 168 from sector 96. Thing 235 in sector 26 links to L22. The source route uses the existing stairs and door. The lift and teleporter puzzles can run on separate branches.
+40. **Verify L31's startup lift.** Activity 0 continues into activity 1. The walkthrough verified floor 136 rose from Z88 to Z188 in three seconds and returned to Z88 at nine seconds.
+41. **Verify the L31 pressure-plate reset.** Walking onto sector 107 ran activity 3. The walkthrough observed floor 135 lower from Z192 to Z88 and return to Z192.
+42. **Run the L22 trap projectiles.** Imported magic dart type 4011 and paralyze missile type 4016 with their source sprites and speeds. The dart deals 100 damage. The other missile halts player locomotion for ten seconds.
+43. **Save L22 as a native level.** Preserve 201 sectors, 812 lines, the original start, authored doors, and eight activities from `S22.SRP`. Thing 113 points to the original town screen, campaign form 20004. The import stores that destination as a form ID. The native town screen remains to be implemented.
+44. **Walk from L31 to L22.** The replay began at the original L31 spawn with a supplied dagger and 2,105 XP at level 2. It used both authored doors, walked through sector 26's link, and confirmed that the ready dagger, XP, health, mana, and food carried into L22.
+45. **Use the first L22 door.** From the source spawn at `(-2432, -228)`, the replay used E on door sector 134. It measured the opening at Z176 and walked through.
+46. **Save ongoing sector motion and delays.** The checkpoint records scripted slides, ordinary door phases, and remaining waits by activity and command. A new Unreal process resumed L31 door 59 from a partially open state, held it, and closed it on schedule. The older L30 checkpoint also loaded successfully. Save from the ground once projectiles and screen effects have cleared.
+47. **Resume an active lift after restart.** The L151 checkpoint saved floor 31 at Z−187.5 with 1.75 seconds remaining on its script wait. The restart replay checked the saved height and carried the player up and back down. After the recorded wait, the replay staged the player on the original approach, walked back onto the lift, and verified a second cycle started.
+48. **Test L22's corridor trap.** The replay staged the player near sector 188 and entered off-axis. Both shots hit map geometry. On the second entry the paralyze missile held the player still with W down for ten seconds. The following dart dealt 100 damage and the player moved again when paralysis ended. All nine WAD regression tests passed.
+
+- Start standalone L31 with `?WadItems=200?WadReady=0?WadXP=2105?WadLevel=2?WadNextXP=36000` and run `AA.ExportNativeWadPortReview L31ToL22 <OutputPng> [ImageSize]`. Run `L22Trap` from L22 and `LiftSave` from L151. For fresh-process checks, use `LiftReload` in L151 with `?WadLoad=NativeWadMotionReview`, or `DoorReload` in L31 with `?WadLoad=NativeWadDoorReview`. The four captures are in `Saved/Wad-L22-and-Motion-Review.html`.
+
 ### Asset follow-ups
 
 - [ ] Find the original `MARBGRAY` texture and restore it to the L30 import. The supplied `PICS.RES` lacks it, so the affected lower wall bands use the default material when exposed. Check a raised floor at sector 147 after restoring the art.
 - [ ] Restore `MARBGRAY` and `AASHITTY` in L31 when the source textures are available. The L31 importer uses the default material for those surfaces.
+- [ ] Restore `MARBGRAY` in L22. The import uses the default material for the affected surfaces.
 
 ## 2026-04-11 Review Findings
 

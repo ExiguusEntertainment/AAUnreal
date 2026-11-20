@@ -8,6 +8,7 @@
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "TimerManager.h"
 #include "UObject/Package.h"
 
 namespace
@@ -27,8 +28,7 @@ namespace
 
 bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint) const
 {
-    if (!ActivitySlides.IsEmpty() || PendingScriptDelays != 0 || !ActiveDoors.IsEmpty()
-        || TActorIterator<ANativeWadBolt>(GetWorld()))
+    if (TActorIterator<ANativeWadBolt>(GetWorld()))
     {
         return false;
     }
@@ -48,6 +48,24 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint) const
     Checkpoint.Switches = ActivitySwitchStates;
     Checkpoint.LightLevels = LightOverrides;
     Checkpoint.Hour = GetTimeOfDayHours();
+    for (const FActivitySlide& Slide : ActivitySlides)
+    {
+        Checkpoint.Slides.Add({Slide.Sector, Slide.From, Slide.To, Slide.Duration, Slide.Elapsed,
+            Slide.bCeiling, Slide.bPauseOnCrush});
+    }
+    for (const auto& [DoorIndex, State] : ActiveDoors)
+    {
+        Checkpoint.Doors.Add(Doors[DoorIndex].Sector, {uint8(State.Phase), State.StartZ, State.Elapsed});
+    }
+    TArray<uint64> DelayIds;
+    PendingScriptDelays.GetKeys(DelayIds);
+    DelayIds.Sort();
+    for (uint64 Id : DelayIds)
+    {
+        const FPendingScriptDelay& Waiting = PendingScriptDelays.FindChecked(Id);
+        const float Remaining = GetWorldTimerManager().GetTimerRemaining(Waiting.Handle);
+        Checkpoint.Delays.Add({Waiting.Activity, Waiting.NextCommand, FMath::Max(0.001f, Remaining), Waiting.Player.IsValid()});
+    }
     for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item; ++Item)
     {
         if (!Item->Tags.IsEmpty())
@@ -71,6 +89,40 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     {
         return false;
     }
+    InitializeTopology();
+    for (const FWadSavedSlide& Slide : Checkpoint.Slides)
+    {
+        FVector2D HeightsAtSave;
+        if (!GetSectorSurfaceHeights(Slide.Sector, HeightsAtSave) || !FMath::IsFinite(Slide.From) || !FMath::IsFinite(Slide.To)
+            || !FMath::IsFinite(Slide.Duration) || !FMath::IsFinite(Slide.Elapsed)
+            || Slide.Duration <= 0.0 || Slide.Elapsed < 0.0 || Slide.Elapsed > Slide.Duration)
+        {
+            return false;
+        }
+    }
+    for (const auto& [Sector, State] : Checkpoint.Doors)
+    {
+        if (!DoorBySector.Contains(Sector) || State.Phase > uint8(EDoorPhase::Closing)
+            || !FMath::IsFinite(State.StartZ) || !FMath::IsFinite(State.Elapsed) || State.Elapsed < 0.0)
+        {
+            return false;
+        }
+        const FAAWadNativeDoor& Door = Doors[DoorBySector.FindChecked(Sector)];
+        const float Duration = EDoorPhase(State.Phase) == EDoorPhase::Holding ? Door.HoldSeconds : Door.TravelSeconds;
+        if (State.Elapsed > Duration)
+        {
+            return false;
+        }
+    }
+    for (const FWadSavedScriptDelay& Waiting : Checkpoint.Delays)
+    {
+        const FWadScriptActivity* Activity = FindWadActivity(Waiting.Activity);
+        if (!Activity || Waiting.NextCommand < 0 || Waiting.NextCommand > Activity->Commands.Num()
+            || !FMath::IsFinite(Waiting.SecondsRemaining) || Waiting.SecondsRemaining <= 0.0f)
+        {
+            return false;
+        }
+    }
     for (const auto& [Sector, Values] : Checkpoint.SectorHeights)
     {
         FVector2D Before;
@@ -89,6 +141,32 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
         }
         SetSectorHeight(Sector, Values.X, false);
         SetSectorHeight(Sector, Values.Y, true);
+    }
+    ActivitySlides.Reset();
+    for (const FWadSavedSlide& Slide : Checkpoint.Slides)
+    {
+        ActivitySlides.Add({Slide.Sector, Slide.From, Slide.To, Slide.Duration, Slide.Elapsed, Slide.bCeiling, Slide.bPauseOnCrush});
+    }
+    ActiveDoors.Reset();
+    for (const auto& [Sector, State] : Checkpoint.Doors)
+    {
+        ActiveDoors.Add(DoorBySector.FindChecked(Sector), {EDoorPhase(State.Phase), State.StartZ, State.Elapsed});
+    }
+    // A freshly opened level also runs activity zero. Replace those initial motions and waits with the checkpoint's state.
+    for (auto& [Id, Waiting] : PendingScriptDelays)
+    {
+        GetWorldTimerManager().ClearTimer(Waiting.Handle);
+    }
+    PendingScriptDelays.Reset();
+    ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerPawn(this, 0));
+    for (const FWadSavedScriptDelay& Waiting : Checkpoint.Delays)
+    {
+        ScheduleScriptContinuation(Waiting.Activity, Waiting.NextCommand, Waiting.bHasPlayer ? Player : nullptr,
+            Waiting.SecondsRemaining);
+    }
+    if (!ActivitySlides.IsEmpty() || !ActiveDoors.IsEmpty())
+    {
+        SetActorTickEnabled(true);
     }
     for (const auto& [Side, bUp] : Checkpoint.Switches)
     {
@@ -155,7 +233,7 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
 void ANativeWadPlayer::WadSave()
 {
     ShowInteractionMessage(SaveWadCheckpoint() ? TEXT("Checkpoint saved")
-        : TEXT("Could not save. Try again when the area is settled."));
+        : TEXT("Could not save. Try again on solid ground when projectiles and screen effects have cleared."));
 }
 
 void ANativeWadPlayer::WadLoad()

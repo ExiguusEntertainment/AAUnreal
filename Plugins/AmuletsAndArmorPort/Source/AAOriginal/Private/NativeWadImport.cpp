@@ -385,9 +385,15 @@ struct FAAWadNativeImport
                 Output.Logf(TEXT("WAD level link marker %d falls outside the sector footprints."), Index);
                 return false;
             }
-            // The original client sends the map number on sector entry and arrives at start zero.
-            const FString Destination = FString::Printf(TEXT("/Game/Maps/L%d.L%d"), Thing.Flags, Thing.Flags);
             Links.RemoveAll([Sector](const FAAWadNativeLevelLink& Link) { return Link.Sector == Sector; });
+            // The source uses place IDs from 20000 up for hardcoded campaign screens.
+            if (Thing.Flags >= 20000)
+            {
+                Links.Add({Sector, Index, {}, Thing.Flags});
+                Output.Logf(TEXT("Imported WAD level link thing %d in sector %d to campaign form %d."), Index, Sector, Thing.Flags);
+                continue;
+            }
+            const FString Destination = FString::Printf(TEXT("/Game/Maps/L%d.L%d"), Thing.Flags, Thing.Flags);
             Links.Add({Sector, Index, TSoftObjectPtr<UWorld>(FSoftObjectPath(Destination))});
             Output.Logf(TEXT("Imported WAD level link thing %d in sector %d to %s."), Index, Sector, *Destination);
         }
@@ -618,7 +624,8 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output))
-            || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output)))
+            || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L22") && !InstallL22Script(Actor, Map, WadPath, Output)))
         {
             return false;
         }
@@ -637,10 +644,35 @@ struct FAAWadNativeImport
 
     bool InstallL31Script(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
     {
-        constexpr int32 SwitchSide = 1159;
         constexpr int32 EntryActivities[] = {0, 1, 2, 3, 4, 5, 200, 201};
-        if (!Actor.Sides.IsValidIndex(SwitchSide)
-            || !InstallActivities(Actor, Map, WadPath, TEXT("S31.SRP"), EntryActivities, Output))
+        return InstallActivities(Actor, Map, WadPath, TEXT("S31.SRP"), EntryActivities, Output)
+            && InstallPuzzleSwitch(Actor, 1159, Output);
+    }
+
+    bool InstallL22Script(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
+    {
+        constexpr int32 EntryActivities[] = {0, 1, 2, 3, 4, 5, 6, 7};
+        if (!InstallActivities(Actor, Map, WadPath, TEXT("S22.SRP"), EntryActivities, Output)
+            || !InstallPuzzleSwitch(Actor, 1132, Output))
+        {
+            return false;
+        }
+        Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        UMaterial* Dart = SpriteMaterial(TEXT("MagicDart"), TEXT("MISSIL12/1.CPC"));
+        UMaterial* Paralysis = SpriteMaterial(TEXT("ParalyzeMissile"), TEXT("EARTHBND/1.CPC"));
+        if (!Actor.ScriptMissileMesh || !Dart || !Paralysis)
+        {
+            Output.Log(TEXT("Could not install the L22 trap projectile art."));
+            return false;
+        }
+        Actor.ScriptMissileMaterials.Add(4011, Dart);
+        Actor.ScriptMissileMaterials.Add(4016, Paralysis);
+        return !bAssetError;
+    }
+
+    bool InstallPuzzleSwitch(ANativeWadLevel& Actor, int32 SwitchSide, FOutputDevice& Output)
+    {
+        if (!Actor.Sides.IsValidIndex(SwitchSide))
         {
             return false;
         }
@@ -649,7 +681,7 @@ struct FAAWadNativeImport
             TEXT("/Game/AAReview/M_AANativeOpaque.M_AANativeOpaque"));
         if (!Switch || !Switch->GetMaterial(0) || !Parents[uint8(EWadWallBlend::Opaque)] || !Texture(TEXT("SWIT1U")))
         {
-            Output.Log(TEXT("L31's original switch sidedef or raised texture could not be installed."));
+            Output.Logf(TEXT("The switch at source sidedef %d could not be installed."), SwitchSide);
             return false;
         }
         Actor.ActivitySwitchDown = Switch->GetMaterial(0);

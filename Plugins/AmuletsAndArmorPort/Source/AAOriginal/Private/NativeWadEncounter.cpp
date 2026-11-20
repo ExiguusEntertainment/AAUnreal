@@ -216,11 +216,12 @@ ANativeWadBolt::ANativeWadBolt()
 }
 
 void ANativeWadBolt::Launch(UStaticMesh* Plane, UMaterialInterface* Image, const FVector& InVelocity, int32 InDamage,
-    ANativeWadLevel* PoisonTrap)
+    EWadBoltEffect InEffect, ANativeWadLevel* ScriptLevel)
 {
     Velocity = InVelocity;
     Damage = InDamage;
-    ScriptTrap = PoisonTrap;
+    Effect = InEffect;
+    ScriptTrap = ScriptLevel;
     if (Plane && Image)
     {
         SetSprite(*Sprite, Plane, Image, 0.16);
@@ -241,13 +242,17 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
     {
         if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(Hit.GetActor()))
         {
-            if (ScriptTrap.IsValid())
+            switch (Effect)
             {
+            case EWadBoltEffect::Poison:
                 Player->ReceiveTrapPoison(Damage);
-            }
-            else
-            {
+                break;
+            case EWadBoltEffect::Paralyze:
+                Player->ReceiveTrapParalysis();
+                break;
+            case EWadBoltEffect::Damage:
                 Player->ReceiveEncounterHit(Damage);
+                break;
             }
         }
         else if (ANativeWadLevel* Level = ScriptTrap.Get())

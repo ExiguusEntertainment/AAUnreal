@@ -64,6 +64,14 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
     ReadStat(TEXT("WadXP="), Experience, 0, MAX_int32);
     ReadStat(TEXT("WadCasts="), SuccessfulCasts, 0, MAX_int32);
     ReadStat(TEXT("WadPoison="), PoisonLevel, 0, MAX_int16);
+    if (const TCHAR* Option = URL.GetOption(TEXT("WadParalysis="), nullptr))
+    {
+        double Seconds = 0.0;
+        if (LexTryParseString(Seconds, Option) && FMath::IsFinite(Seconds))
+        {
+            ParalysisSeconds = FMath::Clamp(Seconds, 0.0, 10.0);
+        }
+    }
     if (const TCHAR* Value = URL.GetOption(TEXT("WadAttributes="), nullptr))
     {
         TArray<FString> Values;
@@ -153,9 +161,10 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
     }
     if (const APlayerController* Player = Cast<APlayerController>(GetController()); Player && Player->IsLocalController() && Health > 0)
     {
+        ParalysisSeconds = FMath::Max(0.0, ParalysisSeconds - DeltaSeconds);
         const float Forward = float(Player->IsInputKeyDown(EKeys::W)) - float(Player->IsInputKeyDown(EKeys::S));
         const float Right = float(Player->IsInputKeyDown(EKeys::D)) - float(Player->IsInputKeyDown(EKeys::A));
-        if (!bInventoryOpen)
+        if (!bInventoryOpen && !IsParalyzed())
         {
             MoveInViewDirection(Forward, Right);
         }
@@ -193,6 +202,13 @@ void ANativeWadPlayer::CheckLevelLink()
         return;
     }
     const FAAWadNativeLevelLink& Link = Level->GetLevelLinks()[LinkIndex];
+    if (Link.CampaignForm != 0)
+    {
+        ShowInteractionMessage(FString::Printf(TEXT("The exit leads to campaign form %d."), Link.CampaignForm));
+        UE_LOG(LogTemp, Display, TEXT("Entered sector %d for WAD campaign form %d. Native form handling is pending."),
+            Link.Sector, Link.CampaignForm);
+        return;
+    }
     const FString Package = Link.Destination.ToSoftObjectPath().GetLongPackageName();
     if (!FPackageName::DoesPackageExist(Package))
     {
@@ -213,9 +229,9 @@ void ANativeWadPlayer::TravelToWadLevel(const TSoftObjectPtr<UWorld>& Destinatio
 FString ANativeWadPlayer::MakeTravelOptions() const
 {
     FString Options = FString::Printf(TEXT("WadHealth=%d?WadMana=%d?WadFood=%d?WadWater=%d?WadXP=%d?WadReady=%d?WadCasts=%d")
-        TEXT("?WadLevel=%d?WadNextXP=%d?WadMaxHealth=%d?WadMaxMana=%d?WadPoison=%d?WadAttributes=%s"),
+        TEXT("?WadLevel=%d?WadNextXP=%d?WadMaxHealth=%d?WadMaxMana=%d?WadPoison=%d?WadParalysis=%.6f?WadAttributes=%s"),
         Health, Mana, Food, Water, Experience, ReadySlot, SuccessfulCasts, CharacterLevel, ExperienceNeeded, MaxHealth, MaxMana,
-        PoisonLevel, *FString::JoinBy(GetAttributes(), TEXT(","), [](int32 Value) { return LexToString(Value); }));
+        PoisonLevel, ParalysisSeconds, *FString::JoinBy(GetAttributes(), TEXT(","), [](int32 Value) { return LexToString(Value); }));
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
         Options += FString::Printf(TEXT("?WadHour=%.9f"), Level->GetTimeOfDayHours());
@@ -349,6 +365,22 @@ void ANativeWadPlayer::ReceiveTrapPoison(int32 Damage)
     PoisonLevel = FMath::Min(MAX_int16, PoisonLevel + Damage / 10);
     ShowInteractionMessage(TEXT("Poisoned"));
     ReceiveEncounterHit(Damage);
+}
+
+void ANativeWadPlayer::ReceiveTrapParalysis()
+{
+    ParalysisSeconds = 10.0;
+    GetCharacterMovement()->StopMovementImmediately();
+    ConsumeMovementInputVector();
+    ShowInteractionMessage(TEXT("Paralyzed"));
+}
+
+void ANativeWadPlayer::Jump()
+{
+    if (!IsParalyzed())
+    {
+        Super::Jump();
+    }
 }
 
 void ANativeWadPlayer::StartWadEarthquake(double Duration)

@@ -155,18 +155,8 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
             SetActivitySwitch(Command.Target, Command.Value != 0);
             break;
         case EWadScriptOperation::Wait:
-        {
-            FTimerHandle Handle;
-            ++PendingScriptDelays;
-            GetWorldTimerManager().SetTimer(Handle,
-                FTimerDelegate::CreateWeakLambda(this, [this, Activity, Index, Player]
-                {
-                    --PendingScriptDelays;
-                    int32 ResumeBudget = ScriptBudget;
-                    RunWadScriptCommands(Activity, Index + 1, Player, ResumeBudget);
-                }), Command.Ticks / TicksPerSecond, false);
+            ScheduleScriptContinuation(Activity, Index + 1, Player, Command.Ticks / TicksPerSecond);
             return;
-        }
         case EWadScriptOperation::Message:
             if (ANativeWadPlayer* Pawn = Player.Get())
             {
@@ -246,6 +236,20 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
     {
         UE_LOG(LogTemp, Warning, TEXT("WAD script instruction budget exhausted in activity %d."), Activity);
     }
+}
+
+void ANativeWadLevel::ScheduleScriptContinuation(int32 Activity, int32 NextCommand,
+    TWeakObjectPtr<ANativeWadPlayer> Player, float Delay)
+{
+    const uint64 Id = ++NextScriptDelay;
+    FPendingScriptDelay& Waiting = PendingScriptDelays.Add(Id, {FTimerHandle(), Activity, NextCommand, Player});
+    GetWorldTimerManager().SetTimer(Waiting.Handle, FTimerDelegate::CreateWeakLambda(this, [this, Id]
+    {
+        const FPendingScriptDelay Resume = PendingScriptDelays.FindChecked(Id);
+        PendingScriptDelays.Remove(Id);
+        int32 Budget = ScriptBudget;
+        RunWadScriptCommands(Resume.Activity, Resume.NextCommand, Resume.Player, Budget);
+    }), Delay, false);
 }
 
 void ANativeWadLevel::StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush)
@@ -431,6 +435,10 @@ int32 ANativeWadLevel::CountPlayingAmbientEmitters(int32 Sound) const
 
 void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
 {
+    const EWadBoltEffect Effect = Command.Target == 4015 ? EWadBoltEffect::Poison
+        : Command.Target == 4016 ? EWadBoltEffect::Paralyze : EWadBoltEffect::Damage;
+    const int32 Damage = Effect == EWadBoltEffect::Poison ? PoisonMissileDamage : 100;
+    UMaterialInterface* Art = Command.Target == 4015 ? ScriptMissileArt.Get() : ScriptMissileMaterials.FindRef(Command.Target).Get();
     const FVector Start = GetActorTransform().TransformPosition(FVector(Command.Position));
     const FVector Destination = GetActorTransform().TransformPosition(FVector(Command.Aim));
     const FVector Direction = (Destination - Start).GetSafeNormal();
@@ -438,9 +446,9 @@ void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
     Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     if (ANativeWadBolt* Missile = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Direction.Rotation(), Spawn))
     {
-        Missile->Launch(ScriptMissileMesh, ScriptMissileArt, Direction * (Command.Value * TicksPerSecond),
-            PoisonMissileDamage, this);
+        Missile->Launch(ScriptMissileMesh, Art, Direction * (Command.Value * TicksPerSecond), Damage, Effect, this);
         ++ScriptMissileCount;
+        ++ScriptMissilesByType.FindOrAdd(Command.Target);
         UE_LOG(LogTemp, Display, TEXT("Launched WAD script missile %d from %s."), Command.Target, *Start.ToString());
     }
 }

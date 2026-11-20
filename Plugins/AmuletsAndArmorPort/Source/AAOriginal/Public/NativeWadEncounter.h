@@ -11,6 +11,13 @@ class USphereComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 
+enum class EWadBoltEffect : uint8
+{
+    Damage,
+    Poison,
+    Paralyze
+};
+
 USTRUCT()
 struct FWadEncounterProfile
 {
@@ -99,7 +106,7 @@ class ANativeWadBolt : public AActor
 public:
     ANativeWadBolt();
     void Launch(UStaticMesh* Plane, UMaterialInterface* Image, const FVector& Velocity, int32 Damage,
-        ANativeWadLevel* PoisonTrap = nullptr);
+        EWadBoltEffect Effect = EWadBoltEffect::Damage, ANativeWadLevel* ScriptLevel = nullptr);
     virtual void Tick(float DeltaSeconds) override;
 
 private:
@@ -108,6 +115,7 @@ private:
 
     FVector Velocity = FVector::ZeroVector;
     int32 Damage = 0;
+    EWadBoltEffect Effect = EWadBoltEffect::Damage;
     TWeakObjectPtr<ANativeWadLevel> ScriptTrap;
 };
 
