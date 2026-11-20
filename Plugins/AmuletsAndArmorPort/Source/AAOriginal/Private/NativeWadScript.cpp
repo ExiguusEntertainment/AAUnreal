@@ -181,8 +181,37 @@ namespace
                 {
                     return false;
                 }
-                Output.Logf(TEXT("WAD script activity %d defers opcode %u (%d)."), Activity.Id, Opcode, Args[0]);
-                continue;
+                Command.Target = Args[0];
+                if (Opcode == 12)
+                {
+                    Command.Operation = EWadScriptOperation::PlaySound;
+                    Command.Value = 255;
+                }
+                else if (Opcode == 19)
+                {
+                    Command.Operation = EWadScriptOperation::PlayAreaSound;
+                    Command.Position = FIntVector(Args[1], Args[2], 0);
+                    Command.Ticks = Args[3];
+                    Command.Value = Args[4];
+                }
+                else if (Opcode == 52 && Args[0] == 29 && Args[1] > 0)
+                {
+                    Command.Operation = EWadScriptOperation::Earthquake;
+                    Command.Ticks = Args[1];
+                }
+                else if (Opcode == 54 && Args[0] == 4015 && Args[7] > 0)
+                {
+                    Command.Operation = EWadScriptOperation::LaunchMissile;
+                    Command.Position = FIntVector(Args[1], Args[2], Args[3]);
+                    Command.Aim = FIntVector(Args[4], Args[5], Args[6]);
+                    Command.Value = Args[7];
+                }
+                else
+                {
+                    Output.Logf(TEXT("WAD script activity %d defers opcode %u (%d)."), Activity.Id, Opcode, Args[0]);
+                    continue;
+                }
+                break;
             }
             default:
                 Output.Logf(TEXT("Unsupported WAD script opcode %u in activity %d."), Opcode, Activity.Id);
@@ -192,6 +221,69 @@ namespace
         }
         return false;
     }
+}
+
+bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& Activities,
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output)
+{
+    TSet<int32> Required;
+    for (const FWadScriptActivity& Activity : Activities)
+    {
+        for (const FWadScriptCommand& Command : Activity.Commands)
+        {
+            if (Command.Operation == EWadScriptOperation::PlaySound || Command.Operation == EWadScriptOperation::PlayAreaSound)
+            {
+                Required.Add(Command.Target);
+            }
+        }
+    }
+    Sounds.Reset();
+    if (Required.IsEmpty())
+    {
+        return true;
+    }
+
+    TArray<uint8> Bytes;
+    constexpr int32 EntrySize = 39;
+    if (!FFileHelper::LoadFileToArray(Bytes, *Filename) || Bytes.Num() < 14 || FMemory::Memcmp(Bytes.GetData(), "Res!", 4) != 0)
+    {
+        return false;
+    }
+    const auto Read = [&Bytes](int32 Offset, int32 Width)
+    {
+        uint32 Number = 0;
+        for (int32 Index = 0; Index < Width; ++Index)
+        {
+            Number |= uint32(Bytes[Offset + Index]) << (Index * 8);
+        }
+        return Number;
+    };
+    const uint32 Start = Read(4, 4), Size = Read(8, 4), Entries = Read(12, 2);
+    if (Size != Entries * EntrySize || uint64(Start) + Size > uint64(Bytes.Num()))
+    {
+        return false;
+    }
+    for (uint32 Index = 0; Index < Entries; ++Index)
+    {
+        const int32 Entry = int32(Start + EntrySize * Index);
+        ANSICHAR Name[15] = {};
+        FMemory::Memcpy(Name, Bytes.GetData() + Entry + 4, 14);
+        const FString Key(ANSI_TO_TCHAR(Name));
+        int32 Id;
+        if (!Key.StartsWith(TEXT("snd#")) || !LexTryParseString(Id, *Key.Mid(4)) || !Required.Contains(Id))
+        {
+            continue;
+        }
+        const uint32 Offset = Read(Entry + 18, 4), Length = Read(Entry + 22, 4);
+        if (Length == 0 || uint64(Offset) + Length > Start)
+        {
+            return false;
+        }
+        Sounds.FindOrAdd(Id).UnsignedSamples.Append(Bytes.GetData() + Offset, int32(Length));
+        Required.Remove(Id);
+    }
+    Output.Logf(TEXT("Imported %d authored sound samples from %s."), Sounds.Num(), *Filename);
+    return Required.IsEmpty();
 }
 
 bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> ActivityIds, int32 SectorCount,

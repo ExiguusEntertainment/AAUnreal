@@ -1,8 +1,13 @@
 #include "NativeWadLevel.h"
 
+#include "Components/AudioComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "NativeWadEncounter.h"
 #include "NativeWadPlayer.h"
+#include "Sound/SoundAttenuation.h"
+#include "Sound/SoundWaveProcedural.h"
 #include "TimerManager.h"
 
 namespace
@@ -10,6 +15,7 @@ namespace
     constexpr float TicksPerSecond = 70.0f;
     constexpr double UseReach = 64.0;
     constexpr int32 ScriptBudget = 512;
+    constexpr int32 PoisonMissileDamage = 250;
 }
 
 bool ANativeWadLevel::UseActivityFromView(ANativeWadPlayer& Player)
@@ -68,24 +74,25 @@ bool ANativeWadLevel::UseActivityFromView(ANativeWadPlayer& Player)
 
 void ANativeWadLevel::CheckActivitySector(const FVector2D& Position, int32& PreviousSector)
 {
-    if (!HasWadActivities())
+    const int32 Sector = FindActivitySector(Position);
+    if (Sector != INDEX_NONE && PreviousSector != Sector)
     {
-        return;
+        RunWadActivity(Sectors[Sector].Activity);
     }
+    PreviousSector = Sector;
+}
+
+int32 ANativeWadLevel::FindActivitySector(const FVector2D& Position) const
+{
     const FVector2D Local(GetActorTransform().InverseTransformPosition(FVector(Position, GetActorLocation().Z)));
     for (const int32 Sector : ActivitySectors)
     {
         if (ContainsSectorPoint(Sector, Local))
         {
-            if (PreviousSector != Sector)
-            {
-                PreviousSector = Sector;
-                RunWadActivity(Sectors[Sector].Activity);
-            }
-            return;
+            return Sector;
         }
     }
-    PreviousSector = INDEX_NONE;
+    return INDEX_NONE;
 }
 
 const FWadScriptActivity* ANativeWadLevel::FindWadActivity(int32 Activity) const
@@ -120,9 +127,11 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
         case EWadScriptOperation::Wait:
         {
             FTimerHandle Handle;
+            ++PendingScriptDelays;
             GetWorldTimerManager().SetTimer(Handle,
                 FTimerDelegate::CreateWeakLambda(this, [this, Activity, Index, Player]
                 {
+                    --PendingScriptDelays;
                     int32 ResumeBudget = ScriptBudget;
                     RunWadScriptCommands(Activity, Index + 1, Player, ResumeBudget);
                 }), Command.Ticks / TicksPerSecond, false);
@@ -182,6 +191,19 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
             // A delay in a source subroutine schedules its continuation and returns to the caller immediately.
             RunWadScriptCommands(Command.Target, 0, Player, Budget);
             break;
+        case EWadScriptOperation::PlaySound:
+        case EWadScriptOperation::PlayAreaSound:
+            PlayActivitySound(Command);
+            break;
+        case EWadScriptOperation::Earthquake:
+            if (ANativeWadPlayer* LocalPlayer = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerPawn(this, 0)))
+            {
+                LocalPlayer->StartWadEarthquake(Command.Ticks / TicksPerSecond);
+            }
+            break;
+        case EWadScriptOperation::LaunchMissile:
+            LaunchActivityMissile(Command);
+            break;
         }
     }
     if (Budget == -1)
@@ -237,8 +259,67 @@ void ANativeWadLevel::SetActivitySwitch(int32 SideIndex, bool bUp)
         UStaticMeshComponent* Mesh = Sides[SideIndex].Bands[uint8(Band)];
         if (Mesh)
         {
+            ActivitySwitchStates.Add(SideIndex, bUp);
             Mesh->SetMaterial(0, bUp ? ActivitySwitchUp : ActivitySwitchDown);
             return;
         }
+    }
+}
+
+void ANativeWadLevel::PlayActivitySound(const FWadScriptCommand& Command)
+{
+    const FWadSoundSample* Sample = ActivitySounds.Find(Command.Target);
+    if (!Sample || Sample->UnsignedSamples.IsEmpty())
+    {
+        return;
+    }
+    USoundWaveProcedural* Wave = NewObject<USoundWaveProcedural>();
+    Wave->SetSampleRate(11000);
+    Wave->NumChannels = 1;
+    Wave->Duration = Sample->UnsignedSamples.Num() / 11000.0f;
+    TArray<int16> PCM;
+    PCM.Reserve(Sample->UnsignedSamples.Num());
+    for (uint8 Byte : Sample->UnsignedSamples)
+    {
+        PCM.Add(int16((int32(Byte) - 128) * 256));
+    }
+    Wave->QueueAudio(reinterpret_cast<const uint8*>(PCM.GetData()), PCM.Num() * sizeof(int16));
+    const float Volume = FMath::Clamp(Command.Value / 255.0f, 0.0f, 1.0f);
+    UAudioComponent* Audio = nullptr;
+    if (Command.Operation == EWadScriptOperation::PlayAreaSound)
+    {
+        USoundAttenuation* Attenuation = NewObject<USoundAttenuation>();
+        Attenuation->Attenuation.AttenuationShapeExtents = FVector::ZeroVector;
+        Attenuation->Attenuation.FalloffDistance = float(Command.Ticks);
+        const FVector Position = GetActorTransform().TransformPosition(FVector(Command.Position));
+        Audio = UGameplayStatics::SpawnSoundAtLocation(this, Wave, Position, FRotator::ZeroRotator,
+            Volume, 1.0f, 0.0f, Attenuation);
+    }
+    else
+    {
+        Audio = UGameplayStatics::SpawnSound2D(this, Wave, Volume);
+    }
+    if (Audio)
+    {
+        FTimerHandle Handle;
+        GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateUObject(Audio, &UAudioComponent::Stop),
+            Wave->Duration + 0.05f, false);
+        UE_LOG(LogTemp, Display, TEXT("Played WAD script sound %d."), Command.Target);
+    }
+}
+
+void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
+{
+    const FVector Start = GetActorTransform().TransformPosition(FVector(Command.Position));
+    const FVector Destination = GetActorTransform().TransformPosition(FVector(Command.Aim));
+    const FVector Direction = (Destination - Start).GetSafeNormal();
+    FActorSpawnParameters Spawn;
+    Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    if (ANativeWadBolt* Missile = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Direction.Rotation(), Spawn))
+    {
+        Missile->Launch(ScriptMissileMesh, ScriptMissileArt, Direction * (Command.Value * TicksPerSecond),
+            PoisonMissileDamage, this);
+        ++ScriptMissileCount;
+        UE_LOG(LogTemp, Display, TEXT("Launched WAD script missile %d from %s."), Command.Target, *Start.ToString());
     }
 }

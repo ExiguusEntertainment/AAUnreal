@@ -1034,12 +1034,13 @@ public:
             const int32 ImageSize = Size.IsEmpty() ? 720 : FCString::Atoi(*Size);
             const bool bStarted = !File.IsEmpty() && (Review == TEXT("sky")
                 ? StartNativeWadLightingReview(InWorld, Output, ImageSize, true)
-                : (Review == TEXT("route") || Review == TEXT("link") || Review == TEXT("slice") || Review == TEXT("secondmap"))
+                : (Review == TEXT("route") || Review == TEXT("link") || Review == TEXT("slice") || Review == TEXT("secondmap")
+                    || Review == TEXT("campaign") || Review == TEXT("checkpoint"))
                     && StartNativeWadWalkReview(InWorld, Output, ImageSize, Review == TEXT("link"), Review == TEXT("slice"),
-                        Review == TEXT("secondmap")));
+                        Review == TEXT("secondmap"), Review == TEXT("campaign"), Review == TEXT("checkpoint")));
             if (!bStarted)
             {
-                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link|Slice|SecondMap> <OutputPng> [ImageSize] requires the corresponding native game level."));
+                UE_LOG(LogTemp, Error, TEXT("AA.ExportNativeWadPortReview <Route|Sky|Link|Slice|SecondMap|Campaign|Checkpoint> <OutputPng> [ImageSize] requires the corresponding native game level."));
                 UE_LOG(LogTemp, Display, TEXT("Native WAD port review finished"));
             }
             return true;

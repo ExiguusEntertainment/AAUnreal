@@ -47,6 +47,15 @@ public:
     FString GetInteractionMessage() const;
     void ShowInteractionMessage(FString Message);
     void ReceiveEncounterHit(int32 Damage);
+    void ReceiveTrapPoison(int32 Damage);
+    void StartWadEarthquake(double Duration);
+    bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
+    bool SaveWadCheckpoint(const FString& Slot = FString()) const;
+    bool HasRestoredWadCheckpoint() const { return bCheckpointRestored; }
+    UFUNCTION(Exec)
+    void WadSave();
+    UFUNCTION(Exec)
+    void WadLoad();
     void CollectItem(int32 Type);
     void AwardExperience(int32 Amount);
 
@@ -72,6 +81,9 @@ private:
     void CastRejuvenate();
     void TickNeeds(float DeltaSeconds);
     void CheckLevelLink();
+    void ReadTravelOptions(const FURL& URL);
+    FString MakeTravelOptions() const;
+    void RestoreWadCheckpoint();
 
     TWeakObjectPtr<ANativeWadLevel> NativeLevel;
     int32 LastLevelLink = INDEX_NONE;
@@ -93,6 +105,10 @@ private:
     bool bRestoreLookAfterInventory = true;
     int32 Experience = 0;
     int32 SuccessfulCasts = 0;
+    int32 PoisonLevel = 0;
+    double QuakeTime = 0.0;
+    bool bRestoreCheckpointOnTick = false;
+    bool bCheckpointRestored = false;
     double NeedsTime = 0.0;
     TArray<int32> CarriedItems;
     FString InteractionMessage;

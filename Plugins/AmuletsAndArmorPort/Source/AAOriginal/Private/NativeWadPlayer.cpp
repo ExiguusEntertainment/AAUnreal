@@ -39,7 +39,12 @@ void ANativeWadPlayer::BeginPlay()
     {
         NativeLevel = *Level;
     }
-    const FURL& URL = GetWorld()->URL;
+    ReadTravelOptions(GetWorld()->URL);
+    bRestoreCheckpointOnTick = GetWorld()->URL.HasOption(TEXT("WadLoad"));
+}
+
+void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
+{
     const auto ReadStat = [&URL](const TCHAR* Key, int32& Stat, int32 Low, int32 High)
     {
         int32 Value = 0;
@@ -58,6 +63,7 @@ void ANativeWadPlayer::BeginPlay()
     ReadStat(TEXT("WadWater="), Water, 0, MaxFood);
     ReadStat(TEXT("WadXP="), Experience, 0, MAX_int32);
     ReadStat(TEXT("WadCasts="), SuccessfulCasts, 0, MAX_int32);
+    ReadStat(TEXT("WadPoison="), PoisonLevel, 0, MAX_int16);
     if (const TCHAR* Value = URL.GetOption(TEXT("WadAttributes="), nullptr))
     {
         TArray<FString> Values;
@@ -76,6 +82,7 @@ void ANativeWadPlayer::BeginPlay()
     }
     if (const TCHAR* Value = URL.GetOption(TEXT("WadItems="), nullptr))
     {
+        CarriedItems.Reset();
         TArray<FString> Items;
         FString(Value).ParseIntoArray(Items, TEXT(","));
         for (const FString& Entry : Items)
@@ -121,6 +128,22 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
 void ANativeWadPlayer::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    if (bRestoreCheckpointOnTick && GetController())
+    {
+        bRestoreCheckpointOnTick = false;
+        RestoreWadCheckpoint();
+    }
+    if (QuakeTime > 0.0)
+    {
+        QuakeTime = FMath::Max(0.0, QuakeTime - DeltaSeconds);
+        const double Phase = GetWorld()->GetTimeSeconds() * 22.0;
+        ViewCamera->ClearAdditiveOffset();
+        if (QuakeTime > 0.0)
+        {
+            ViewCamera->AddAdditiveOffset(FTransform(FVector(5 * FMath::Sin(Phase), 5 * FMath::Sin(1.3 * Phase),
+                5 * FMath::Cos(0.8 * Phase))), 0.0f);
+        }
+    }
     if (const APlayerController* Player = Cast<APlayerController>(GetController()); Player && Player->IsLocalController() && Health > 0)
     {
         const float Forward = float(Player->IsInputKeyDown(EKeys::W)) - float(Player->IsInputKeyDown(EKeys::S));
@@ -165,11 +188,16 @@ void ANativeWadPlayer::CheckLevelLink()
     }
     UE_LOG(LogTemp, Display, TEXT("Entered WAD level link sector %d (thing %d), loading %s."),
         Link.Sector, Link.SourceThing, *Package);
+    UGameplayStatics::OpenLevelBySoftObjectPtr(this, Link.Destination, true, MakeTravelOptions());
+}
+
+FString ANativeWadPlayer::MakeTravelOptions() const
+{
     FString Options = FString::Printf(TEXT("WadHealth=%d?WadMana=%d?WadFood=%d?WadWater=%d?WadXP=%d?WadReady=%d?WadCasts=%d")
-        TEXT("?WadLevel=%d?WadNextXP=%d?WadMaxHealth=%d?WadMaxMana=%d?WadAttributes=%s"),
+        TEXT("?WadLevel=%d?WadNextXP=%d?WadMaxHealth=%d?WadMaxMana=%d?WadPoison=%d?WadAttributes=%s"),
         Health, Mana, Food, Water, Experience, ReadySlot, SuccessfulCasts, CharacterLevel, ExperienceNeeded, MaxHealth, MaxMana,
-        *FString::JoinBy(GetAttributes(), TEXT(","), [](int32 Value) { return LexToString(Value); }));
-    if (Level->HasDaySky())
+        PoisonLevel, *FString::JoinBy(GetAttributes(), TEXT(","), [](int32 Value) { return LexToString(Value); }));
+    if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
         Options += FString::Printf(TEXT("?WadHour=%.9f"), Level->GetTimeOfDayHours());
     }
@@ -177,7 +205,7 @@ void ANativeWadPlayer::CheckLevelLink()
     {
         Options += TEXT("?WadItems=") + FString::JoinBy(CarriedItems, TEXT(","), [](int32 Type) { return LexToString(Type); });
     }
-    UGameplayStatics::OpenLevelBySoftObjectPtr(this, Link.Destination, true, Options);
+    return Options;
 }
 
 void ANativeWadPlayer::MoveInViewDirection(float Forward, float Right)
@@ -297,6 +325,19 @@ void ANativeWadPlayer::ReceiveEncounterHit(int32 Damage)
     }
 }
 
+void ANativeWadPlayer::ReceiveTrapPoison(int32 Damage)
+{
+    PoisonLevel = FMath::Min(MAX_int16, PoisonLevel + Damage / 10);
+    ShowInteractionMessage(TEXT("Poisoned"));
+    ReceiveEncounterHit(Damage);
+}
+
+void ANativeWadPlayer::StartWadEarthquake(double Duration)
+{
+    QuakeTime = Duration;
+    ShowInteractionMessage(TEXT("The ground shakes around you!!"));
+}
+
 void ANativeWadPlayer::CollectItem(int32 Type)
 {
     CarriedItems.Add(Type);
@@ -388,6 +429,11 @@ void ANativeWadPlayer::TickNeeds(float DeltaSeconds)
         Mana = FMath::Min(MaxMana, Mana + ManaRecovery);
         Food = FMath::Max(0, Food - 1);
         Water = FMath::Max(0, Water - 1);
+        if (PoisonLevel > 0)
+        {
+            ReceiveEncounterHit(PoisonLevel * 2);
+            PoisonLevel = FMath::Max(0, PoisonLevel - FMath::Max(5, Attributes[ConstitutionAttribute] >> 2));
+        }
     }
 }
 

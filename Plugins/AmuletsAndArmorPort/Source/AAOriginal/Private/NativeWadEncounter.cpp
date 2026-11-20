@@ -6,6 +6,7 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 
 namespace
@@ -174,13 +175,22 @@ bool ANativeWadGuardian::TakeMeleeHit(ANativeWadPlayer& Player, int32 Damage)
     HurtUntil = GetWorld()->GetTimeSeconds() + 20 / TicksPerSecond;
     if (IsDefeated())
     {
-        GetCharacterMovement()->DisableMovement();
-        GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        Sprite->SetMaterial(0, DownedMaterial);
+        RestoreEncounterHealth(0);
         Player.ShowInteractionMessage(Profile.Name + TEXT(" defeated"));
         UE_LOG(LogTemp, Display, TEXT("Defeated the authored %s."), *Profile.Name);
     }
     return true;
+}
+
+void ANativeWadGuardian::RestoreEncounterHealth(int32 SavedHealth)
+{
+    Health = FMath::Clamp(SavedHealth, 0, Profile.MaxHealth);
+    if (IsDefeated())
+    {
+        GetCharacterMovement()->DisableMovement();
+        GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Sprite->SetMaterial(0, DownedMaterial);
+    }
 }
 
 void ANativeWadGuardian::FireBolt(ANativeWadPlayer& Player)
@@ -205,10 +215,12 @@ ANativeWadBolt::ANativeWadBolt()
     Sprite->SetCollisionProfileName(TEXT("NoCollision"));
 }
 
-void ANativeWadBolt::Launch(UStaticMesh* Plane, UMaterialInterface* Image, const FVector& InVelocity, int32 InDamage)
+void ANativeWadBolt::Launch(UStaticMesh* Plane, UMaterialInterface* Image, const FVector& InVelocity, int32 InDamage,
+    ANativeWadLevel* PoisonTrap)
 {
     Velocity = InVelocity;
     Damage = InDamage;
+    ScriptTrap = PoisonTrap;
     if (Plane && Image)
     {
         SetSprite(*Sprite, Plane, Image, 0.16);
@@ -229,7 +241,18 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
     {
         if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(Hit.GetActor()))
         {
-            Player->ReceiveEncounterHit(Damage);
+            if (ScriptTrap.IsValid())
+            {
+                Player->ReceiveTrapPoison(Damage);
+            }
+            else
+            {
+                Player->ReceiveEncounterHit(Damage);
+            }
+        }
+        else if (ANativeWadLevel* Level = ScriptTrap.Get())
+        {
+            Level->CountBlockedScriptMissile();
         }
         Destroy();
         return;

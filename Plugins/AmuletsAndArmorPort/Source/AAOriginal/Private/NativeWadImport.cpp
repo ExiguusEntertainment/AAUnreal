@@ -409,7 +409,8 @@ struct FAAWadNativeImport
         }
         const FString MapName = FPaths::GetBaseFilename(WadPath).ToUpper();
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
-            || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output)))
+            || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output)))
         {
             return false;
         }
@@ -561,6 +562,11 @@ struct FAAWadNativeImport
             Output.Logf(TEXT("Failed to import WAD activities from %s."), *ScriptPath);
             return false;
         }
+        if (!ImportWadSounds(FPaths::GetPath(ScriptPath) / TEXT("SOUNDS.RES"), Activities, Actor.ActivitySounds, Output))
+        {
+            Output.Log(TEXT("Failed to import the sound samples used by the WAD script."));
+            return false;
+        }
         Actor.ImportedActivities = MoveTemp(Activities);
         Actor.ActivitySectors.Reset();
         for (int32 Index = 0; Index < Map.Sectors.Num(); ++Index)
@@ -616,7 +622,10 @@ struct FAAWadNativeImport
         UMaterial* BoltArt = SpriteMaterial(TEXT("GuardianBolt"), TEXT("ARROW1/BOLT2.CPC"));
         UMaterial* BerryArt = SpriteMaterial(TEXT("Berry"), TEXT("BERI/BERI.CPC"));
         UMaterial* DaggerArt = SpriteMaterial(TEXT("IronDagger"), TEXT("DAGGER/DAGGER.CPC"));
-        if (!Plane || !GuardianArt || !DownedArt || !AttackArt || !HurtArt || !BoltArt || !BerryArt || !DaggerArt)
+        Actor.ScriptMissileArt = SpriteMaterial(TEXT("PoisonMissile"), TEXT("MISSIL16/1.CPC"));
+        Actor.ScriptMissileMesh = Plane;
+        if (!Plane || !GuardianArt || !DownedArt || !AttackArt || !HurtArt || !BoltArt || !BerryArt || !DaggerArt
+            || !Actor.ScriptMissileArt)
         {
             Output.Log(TEXT("Failed to save an original L30 encounter sprite."));
             return false;
@@ -634,6 +643,44 @@ struct FAAWadNativeImport
         Dagger->Configure(Plane, DaggerArt, Map.Things[300].Type);
         Output.Log(TEXT("Installed the L30 activities and original Guardian, berry, and iron dagger placements."));
         return !bAssetError;
+    }
+
+    bool InstallL301Encounter(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        FOutputDevice& Output)
+    {
+        constexpr int32 GuardianThing = 246;
+        constexpr int32 GuardianSector = 44;
+        constexpr int32 EntryActivities[] = {0};
+        if (!Map.Things.IsValidIndex(GuardianThing) || Map.Things[GuardianThing].Type != 1018
+            || !Map.Sectors.IsValidIndex(GuardianSector)
+            || !InstallActivities(Actor, Map, WadPath, TEXT("S301.SRP"), EntryActivities, Output))
+        {
+            return false;
+        }
+        const auto LoadGuardianMaterial = [](const TCHAR* Name)
+        {
+            const FString AssetPath = FString::Printf(TEXT("/Game/Maps/L30_Assets/Things/%s.%s"), Name, Name);
+            return LoadObject<UMaterialInterface>(nullptr, *AssetPath);
+        };
+        auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        auto* Stand = LoadGuardianMaterial(TEXT("M_ElfGuardian"));
+        auto* Down = LoadGuardianMaterial(TEXT("M_ElfGuardianDowned"));
+        auto* Attack = LoadGuardianMaterial(TEXT("M_ElfGuardianAttack"));
+        auto* Hurt = LoadGuardianMaterial(TEXT("M_ElfGuardianHurt"));
+        auto* Bolt = LoadGuardianMaterial(TEXT("M_GuardianBolt"));
+        if (!Plane || !Stand || !Down || !Attack || !Hurt || !Bolt)
+        {
+            return false;
+        }
+        ANativeWadGuardian* Guardian = ImportSliceThing<ANativeWadGuardian>(World, Map, GuardianThing,
+            Map.Sectors[GuardianSector].FloorHeight + 28.0, TEXT("L301 Elf Guardian 246"));
+        if (!Guardian)
+        {
+            return false;
+        }
+        Guardian->Configure(Plane, Stand, Down, Attack, Hurt, Bolt, FWadEncounterProfile());
+        Output.Log(TEXT("Installed L301's initial activity and authored Guardian thing 246 in sector 44."));
+        return true;
     }
 
     bool InstallL151Slice(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,

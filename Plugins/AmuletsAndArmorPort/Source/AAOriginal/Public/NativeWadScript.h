@@ -17,7 +17,11 @@ enum class EWadScriptOperation : uint8
     Jump,
     Call,
     Block,
-    Unblock
+    Unblock,
+    PlaySound,
+    PlayAreaSound,
+    Earthquake,
+    LaunchMissile
 };
 
 USTRUCT()
@@ -42,6 +46,21 @@ struct FWadScriptCommand
 
     UPROPERTY()
     FString Text;
+
+    UPROPERTY()
+    FIntVector Position = FIntVector::ZeroValue;
+
+    UPROPERTY()
+    FIntVector Aim = FIntVector::ZeroValue;
+};
+
+USTRUCT()
+struct FWadSoundSample
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<uint8> UnsignedSamples;
 };
 
 USTRUCT()
@@ -59,4 +78,6 @@ struct FWadScriptActivity
 #if WITH_EDITOR
 bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> ActivityIds, int32 SectorCount,
     int32 SideCount, TArray<FWadScriptActivity>& Out, FOutputDevice& Output);
+bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& Activities,
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output);
 #endif

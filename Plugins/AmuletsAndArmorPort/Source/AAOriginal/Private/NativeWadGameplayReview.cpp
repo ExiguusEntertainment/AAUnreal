@@ -11,6 +11,8 @@
 #include "GenericPlatform/GenericPlatformInputDeviceMapper.h"
 #include "HAL/FileManager.h"
 #include "InputKeyEventArgs.h"
+#include "Kismet/GameplayStatics.h"
+#include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
 #include "UnrealClient.h"
 #include "NativeWadLevel.h"
@@ -325,7 +327,7 @@ namespace
     }
 
     enum class ESliceAction { Walk, Use, Ceiling, Ranged, Cover, Rejuvenate, Pickup, Equip, Guardian, EatBerry,
-        TimedClosed, TimedReset, PressureOpen, GateOpen, Lift, Capture, Travel, Complete };
+        TimedClosed, TimedReset, TrapStart, TrapCycle, PressureOpen, GateOpen, Checkpoint, Lift, Capture, Travel, Complete };
 
     struct FSliceStep
     {
@@ -361,6 +363,8 @@ namespace
         {EAction::Ceiling, {}, 162, 0}, {EAction::TimedClosed},
         {EAction::Walk, {136,1164,0}}, {EAction::Use, {136,1136,49}}, {EAction::Use, {136,1136,49}},
         {EAction::TimedReset},
+        {EAction::Walk, {96,1164,0}}, {EAction::TrapStart, {96,1136,49}}, {EAction::TrapCycle},
+        {EAction::TrapStart, {96,1136,49}}, {EAction::TrapCycle}, {EAction::Walk, {136,1164,0}},
         // The order keeps each timed door open as the player reaches it.
         {EAction::Use, {136,1136,49}},
         {EAction::Walk, {96,1164,0}}, {EAction::Use, {96,1136,49}},
@@ -370,6 +374,7 @@ namespace
         {EAction::Walk, {80,640,0}}, {EAction::Walk, {80,572,0}}, {EAction::Walk, {16,508,0}},
         {EAction::Use, {16,480,10}}, {EAction::GateOpen},
         {EAction::Capture, {}, INDEX_NONE, 0, TEXT("switch")},
+        {EAction::Checkpoint},
         // Walk back through the pressure-plate corridor and take the now-open exit.
         {EAction::Walk, {80,580,0}}, {EAction::Walk, {80,696,0}}, {EAction::Walk, {20,816,0}},
         {EAction::Walk, {48,1200,0}}, {EAction::Walk, {144,1460,0}}, {EAction::Walk, {360,1908,0}},
@@ -434,9 +439,16 @@ namespace
         double GateFloorStarted = 0.0;
         double GateCeilingStarted = 0.0;
         double TimedDoorStarted = 0.0;
+        double TrapStarted = 0.0;
+        int32 TrapMissilesBefore = 0;
+        int32 TrapBlockedBefore = 0;
         bool bLevelLink = false;
         bool bSlice = false;
         bool bSecondMap = false;
+        bool bCampaign = false;
+        bool bArrivalCaptured = false;
+        bool bCheckpointReview = false;
+        bool bCheckpointVerified = false;
         bool bWalking = false;
         bool bCapturedEncounter = false;
         bool bRequestedInventoryFrame = false;
@@ -495,7 +507,7 @@ namespace
         bool WalkTo(ANativeWadPlayer& Player, const FVector2D& Target)
         {
             const FVector2D Offset = Target - FVector2D(Player.GetActorLocation());
-            const double AcceptanceRadius = bSecondMap ? 14.0 : 5.0;
+            const double AcceptanceRadius = bSecondMap || Stage == EStage::Arrival ? 14.0 : 5.0;
             if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
                 Stop(Player);
@@ -890,6 +902,40 @@ namespace
                 }
                 break;
             }
+            case EAction::TrapStart:
+                if (!bCampaign)
+                {
+                    bDone = true;
+                }
+                else if (!bReleasedKey)
+                {
+                    TrapMissilesBefore = Level->GetScriptMissileCount();
+                    TrapBlockedBefore = Level->GetScriptMissilesBlocked();
+                    TrapStarted = Current.GetTimeSeconds();
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    bDone = true;
+                }
+                break;
+            case EAction::TrapCycle:
+            {
+                const double Elapsed = Current.GetTimeSeconds() - TrapStarted;
+                const int32 Launched = Level->GetScriptMissileCount() - TrapMissilesBefore;
+                if (bCampaign && Launched > 0 && Elapsed < 360.0 / 70.0 - 0.09)
+                {
+                    return Finish(&Player, TEXT("the trap launched before the source delay"));
+                }
+                bDone = !bCampaign || (Launched == 2 && Level->GetScriptMissilesBlocked() == TrapBlockedBefore + 2);
+                if (bCampaign && bDone)
+                {
+                    if (Elapsed > 360.0 / 70.0 + 0.65)
+                    {
+                        return Finish(&Player, TEXT("the trap did not launch and hit geometry on time"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the authored trap's two shots hit geometry after %.3fs."), Elapsed);
+                }
+                break;
+            }
             case EAction::PressureOpen:
                 for (const int32 Sector : {165, 166, 168})
                 {
@@ -932,6 +978,10 @@ namespace
                     {
                         return Finish(&Player, TEXT("the imported activity did not start its slides at the source times"));
                     }
+                    if (bCampaign && !Player.IsWadEarthquakeActive())
+                    {
+                        return Finish(&Player, TEXT("the exit activity did not start the authored earthquake"));
+                    }
                     UE_LOG(LogTemp, Display, TEXT("Verified imported activity motion at %.3fs and %.3fs. Gate 129 Z120, floor 176 Z0."),
                         GateFloorStarted, GateCeilingStarted);
                 }
@@ -947,6 +997,9 @@ namespace
                 {
                     return Finish(&Player, TEXT("could not save the slice frame"));
                 }
+                break;
+            case EAction::Checkpoint:
+                bDone = !bCampaign || Player.SaveWadCheckpoint(TEXT("NativeWadCheckpointReview"));
                 break;
             case EAction::Lift:
             {
@@ -989,6 +1042,101 @@ namespace
             return true;
         }
 
+        bool TickL301(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadGuardian> Guardian(&Current);
+            if (!Guardian || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the L301 encounter is missing or the player was defeated"));
+            }
+            if (Player.GetExperience() > ExperienceBeforeTravel)
+            {
+                UE_LOG(LogTemp, Display, TEXT("Completed the continuous campaign review. The carried dagger hit L301 Guardian thing 246 for %d XP."),
+                    Player.GetExperience() - ExperienceBeforeTravel);
+                return Finish(&Player);
+            }
+            if (NextPoint == 0)
+            {
+                NextPoint += WalkTo(Player, FVector2D(3046, 3218)) ? 1 : 0;
+                return true;
+            }
+            if (FVector::Dist2D(Player.GetActorLocation(), Guardian->GetActorLocation()) > 50.0)
+            {
+                WalkTo(Player, FVector2D(Guardian->GetActorLocation()));
+                return true;
+            }
+            Stop(Player);
+            Aim(Player, Guardian->GetActorLocation());
+            if (!bCapturedEncounter)
+            {
+                bool bSaved = false;
+                if (!CaptureView(Player, TEXT("l301-guardian"), bSaved))
+                {
+                    return true;
+                }
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("could not save the L301 encounter frame"));
+                }
+                bCapturedEncounter = true;
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            else
+            {
+                Press(Player, EKeys::LeftControl);
+            }
+            return true;
+        }
+
+        bool TickCheckpoint(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            if (!bCheckpointVerified)
+            {
+                if (!Player.HasRestoredWadCheckpoint())
+                {
+                    return FPlatformTime::Seconds() - StartTime < 5.0
+                        || Finish(&Player, TEXT("the new Unreal process did not restore the checkpoint"));
+                }
+                const auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(
+                    TEXT("NativeWadCheckpointReview"), 0));
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                const TActorIterator<ANativeWadGuardian> Guardian(&Current);
+                const TActorIterator<ANativeWadPickup> Pickup(&Current);
+                FVector2D Gate, Floor;
+                if (!Save || !Level || !Guardian || Pickup || !Guardian->IsDefeated()
+                    || Player.GetItemCount(NativeWadRules::IronDagger) != 1 || Player.GetItemCount(NativeWadRules::Berry) != 0
+                    || Player.GetReadyItem() != NativeWadRules::IronDagger || !Player.GetActorLocation().Equals(Save->Position, 3.0)
+                    || !Level->GetSectorSurfaceHeights(129, Gate) || Gate.Y != 120
+                    || !Level->GetSectorSurfaceHeights(176, Floor) || Floor.X != 0)
+                {
+                    return Finish(&Player, TEXT("restored checkpoint differs from the saved items, encounter, position, or sector heights"));
+                }
+                const FURL Options(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
+                const auto SavedStat = [&Options](const TCHAR* Key) { return FCString::Atoi(Options.GetOption(Key, TEXT("-1"))); };
+                if (Player.GetHealth() != SavedStat(TEXT("WadHealth=")) || Player.GetMana() != SavedStat(TEXT("WadMana="))
+                    || Player.GetFood() != SavedStat(TEXT("WadFood=")) || Player.GetExperience() != SavedStat(TEXT("WadXP="))
+                    || Player.GetCharacterLevel() != SavedStat(TEXT("WadLevel="))
+                    || Player.GetMaxHealth() != SavedStat(TEXT("WadMaxHealth=")) || Player.GetMaxMana() != SavedStat(TEXT("WadMaxMana=")))
+                {
+                    return Finish(&Player, TEXT("the character's stats changed after process restart"));
+                }
+                const int32 PreviousBlocks = Level->GetWadScriptBlockCount(40);
+                if (!Player.Use() || Level->GetWadScriptBlockCount(40) != PreviousBlocks + 1)
+                {
+                    return Finish(&Player, TEXT("the restored exit switch did not block a repeated activation"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified disk checkpoint restored character stats, ready dagger, removed pickups, defeated Guardian, raised gate and exit switch lock."));
+                bCheckpointVerified = true;
+            }
+            bool bSaved = false;
+            return !CaptureView(Player, TEXT("restored"), bSaved)
+                || Finish(&Player, bSaved ? nullptr : TEXT("could not save the restored checkpoint frame"));
+        }
+
         bool Tick()
         {
             UWorld* Current = World();
@@ -1003,15 +1151,22 @@ namespace
             {
                 return true;
             }
+            if (bCheckpointReview)
+            {
+                return TickCheckpoint(*Current, *Player);
+            }
             if (Current != SourceWorld.Get())
             {
-                if ((!bLevelLink && !bSlice) || !Current->GetMapName().EndsWith(TEXT("L301"))
-                    || !FVector2D(Player->GetActorLocation()).Equals(FVector2D(3440, 2944), 2.0))
+                if ((!bLevelLink && !bSlice) || !Current->GetMapName().EndsWith(TEXT("L301")))
                 {
                     return Finish(Player, TEXT("travel did not arrive at the source L301 player start"));
                 }
                 if (Stage != EStage::Arrival)
                 {
+                    if (!FVector2D(Player->GetActorLocation()).Equals(FVector2D(3440, 2944), 2.0))
+                    {
+                        return Finish(Player, TEXT("travel did not arrive at the source L301 player start"));
+                    }
                     if (bSlice && (Player->GetItemCount(NativeWadRules::Berry) != 0
                         || Player->GetItemCount(NativeWadRules::IronDagger) != 1
                         || Player->GetEquippedWeapon() != NativeWadRules::IronDagger || Player->GetSuccessfulCasts() != 1
@@ -1030,6 +1185,9 @@ namespace
                     CaptureFrames = 0;
                     bWalking = false;
                     Stage = EStage::Arrival;
+                    NextPoint = 0;
+                    bCapturedEncounter = false;
+                    HeldKey.Reset();
                     UE_LOG(LogTemp, Display, TEXT("Entered native L301 at source player start (3440, 2944)."));
                     if (bSlice)
                     {
@@ -1039,8 +1197,19 @@ namespace
                     }
                 }
                 bool bSaved = false;
-                return !CaptureView(*Player, TEXT("arrival"), bSaved)
-                    || Finish(Player, bSaved ? nullptr : TEXT("could not save the L301 arrival frame"));
+                if (!bArrivalCaptured)
+                {
+                    if (!CaptureView(*Player, TEXT("arrival"), bSaved))
+                    {
+                        return true;
+                    }
+                    if (!bSaved || !bCampaign)
+                    {
+                        return Finish(Player, bSaved ? nullptr : TEXT("could not save the L301 arrival frame"));
+                    }
+                    bArrivalCaptured = true;
+                }
+                return TickL301(*Current, *Player);
             }
 
             if (bSlice)
@@ -1231,7 +1400,7 @@ bool StartNativeWadLightingReview(UWorld* World, const FString& OutputPath, int3
 }
 
 bool StartNativeWadWalkReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bLevelLink, bool bSlice,
-    bool bSecondMap)
+    bool bSecondMap, bool bCampaign, bool bCheckpoint)
 {
     ANativeWadLevel* Level = GetReviewLevel(World, OutputPath, ImageSize);
     const FWorldContext* Context = Level ? GEngine->GetWorldContextFromWorld(World) : nullptr;
@@ -1246,8 +1415,10 @@ bool StartNativeWadWalkReview(UWorld* World, const FString& OutputPath, int32 Im
     Review->StartTime = FPlatformTime::Seconds();
     Review->Size = ImageSize;
     Review->bLevelLink = bLevelLink;
-    Review->bSlice = bSlice || bSecondMap;
+    Review->bSlice = bSlice || bSecondMap || bCampaign;
     Review->bSecondMap = bSecondMap;
+    Review->bCampaign = bCampaign;
+    Review->bCheckpointReview = bCheckpoint;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;
 }

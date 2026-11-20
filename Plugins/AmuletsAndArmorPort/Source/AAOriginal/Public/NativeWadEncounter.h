@@ -5,6 +5,7 @@
 #include "NativeWadEncounter.generated.h"
 
 class ANativeWadPlayer;
+class ANativeWadLevel;
 class UMaterialInterface;
 class USphereComponent;
 class UStaticMesh;
@@ -46,6 +47,8 @@ public:
         UMaterialInterface* Attacking, UMaterialInterface* Hurt, UMaterialInterface* Bolt, const FWadEncounterProfile& InProfile);
     bool TakeMeleeHit(ANativeWadPlayer& Player, int32 Damage);
     bool IsDefeated() const { return Health == 0; }
+    int32 GetEncounterHealth() const { return Health; }
+    void RestoreEncounterHealth(int32 SavedHealth);
     int32 GetBoltsFired() const { return BoltsFired; }
     int32 GetMeleeHits() const { return MeleeHits; }
     int32 GetRegeneratedHealth() const { return RegeneratedHealth; }
@@ -95,7 +98,8 @@ class ANativeWadBolt : public AActor
 
 public:
     ANativeWadBolt();
-    void Launch(UStaticMesh* Plane, UMaterialInterface* Image, const FVector& Velocity, int32 Damage);
+    void Launch(UStaticMesh* Plane, UMaterialInterface* Image, const FVector& Velocity, int32 Damage,
+        ANativeWadLevel* PoisonTrap = nullptr);
     virtual void Tick(float DeltaSeconds) override;
 
 private:
@@ -104,6 +108,7 @@ private:
 
     FVector Velocity = FVector::ZeroVector;
     int32 Damage = 0;
+    TWeakObjectPtr<ANativeWadLevel> ScriptTrap;
 };
 
 UCLASS()

@@ -12,4 +12,4 @@ bool StartNativeL30DoorReview(UWorld* World, const FString& OutputPath, int32 Im
 bool StartNativeWadLightingReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bDayClock = false);
 bool StartNativeL30PlayerReview(UWorld* World, const FString& OutputPath, int32 ImageSize);
 bool StartNativeWadWalkReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bLevelLink, bool bSlice,
-    bool bSecondMap);
+    bool bSecondMap, bool bCampaign, bool bCheckpoint);

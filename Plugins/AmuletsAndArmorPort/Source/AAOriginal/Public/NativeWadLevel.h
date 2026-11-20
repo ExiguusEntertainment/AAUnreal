@@ -12,6 +12,8 @@ class UMaterialInterface;
 class UStaticMeshComponent;
 class UWorld;
 class ANativeWadPlayer;
+class UStaticMesh;
+struct FWadLevelCheckpoint;
 
 USTRUCT()
 struct FAAWadNativeSector
@@ -164,8 +166,14 @@ public:
     bool UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, const AActor* UserActor);
     bool UseActivityFromView(ANativeWadPlayer& Player);
     void CheckActivitySector(const FVector2D& Position, int32& PreviousSector);
+    int32 FindActivitySector(const FVector2D& Position) const;
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
     int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
+    int32 GetScriptMissileCount() const { return ScriptMissileCount; }
+    int32 GetScriptMissilesBlocked() const { return ScriptMissilesBlocked; }
+    void CountBlockedScriptMissile() { ++ScriptMissilesBlocked; }
+    bool WriteCheckpoint(FWadLevelCheckpoint& Checkpoint) const;
+    bool RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint);
 
     bool GetSectorSurfaceHeights(int32 Sector, FVector2D& Heights) const;
     const TArray<FAAWadNativeSector>& GetSectors() const { return Sectors; }
@@ -192,6 +200,8 @@ private:
     void StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush);
     void TickActivitySlides(float DeltaSeconds);
     void SetActivitySwitch(int32 Side, bool bUp);
+    void PlayActivitySound(const FWadScriptCommand& Command);
+    void LaunchActivityMissile(const FWadScriptCommand& Command);
 
     struct FActivitySlide
     {
@@ -213,7 +223,20 @@ private:
     UPROPERTY()
     TObjectPtr<UMaterialInterface> ActivitySwitchDown;
 
+    UPROPERTY()
+    TMap<int32, FWadSoundSample> ActivitySounds;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMesh> ScriptMissileMesh;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> ScriptMissileArt;
+
+    TMap<int32, bool> ActivitySwitchStates;
     TArray<FActivitySlide> ActivitySlides;
+    int32 PendingScriptDelays = 0;
+    int32 ScriptMissileCount = 0;
+    int32 ScriptMissilesBlocked = 0;
     int32 ScriptVariables[256] = {};
     bool ScriptFlags[8] = {};
     TMap<int32, int32> ScriptBlockCounts;
