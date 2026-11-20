@@ -11,6 +11,8 @@
 #include "GenericPlatform/GenericPlatformInputDeviceMapper.h"
 #include "HAL/FileManager.h"
 #include "InputKeyEventArgs.h"
+#include "NativeWadEncounter.h"
+#include "UnrealClient.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #if WITH_EDITOR
@@ -322,6 +324,82 @@ namespace
         return *Level;
     }
 
+    enum class ESliceAction { Walk, Use, Ceiling, Ranged, Cover, Rejuvenate, Pickup, Equip, Guardian, EatBerry,
+        TimedClosed, TimedReset, PressureOpen, GateOpen, Lift, Capture, Travel, Complete };
+
+    struct FSliceStep
+    {
+        ESliceAction Action;
+        FVector Target = FVector::ZeroVector;
+        int32 Sector = INDEX_NONE;
+        double Height = 0.0;
+        const TCHAR* Frame = nullptr;
+    };
+
+    using EAction = ESliceAction;
+    const FSliceStep SliceRoute[] = {
+        {EAction::Capture, {}, INDEX_NONE, 0, TEXT("spawn")},
+        // Get into the Elf Guardian's room through door 144.
+        {EAction::Walk, {1256,916,0}}, {EAction::Walk, {1268,1192,0}}, {EAction::Walk, {1416,1340,0}},
+        {EAction::Use, {1440,1340,57}}, {EAction::Ceiling, {}, 144, 104},
+        {EAction::Capture, {}, INDEX_NONE, 0, TEXT("door")},
+        {EAction::Ranged}, {EAction::Ceiling, {}, 144, 8}, {EAction::Cover}, {EAction::Rejuvenate},
+        {EAction::Use, {1440,1340,57}}, {EAction::Ceiling, {}, 144, 104},
+        {EAction::Walk, {1488,1340,0}},
+        {EAction::Pickup, {}, NativeWadRules::IronDagger, 0, TEXT("dagger")}, {EAction::Equip, {}, NativeWadRules::IronDagger},
+        {EAction::Guardian}, {EAction::Pickup, {}, NativeWadRules::Berry, 0, TEXT("berry")},
+        {EAction::Equip, {}, NativeWadRules::Berry}, {EAction::EatBerry}, {EAction::Equip, {}, NativeWadRules::IronDagger},
+        // Return through the same door and take the outer path to the puzzle.
+        {EAction::Walk, {1480,1340,0}}, {EAction::Use, {1448,1340,57}}, {EAction::Ceiling, {}, 144, 104},
+        {EAction::Walk, {1416,1340,0}}, {EAction::Walk, {1220,1788,0}}, {EAction::Walk, {1024,2132,0}},
+        {EAction::Walk, {468,2580,0}}, {EAction::Walk, {52,2656,0}}, {EAction::Walk, {-504,2580,0}},
+        {EAction::Walk, {-672,2412,0}}, {EAction::Walk, {-680,2400,0}}, {EAction::Walk, {-680,2364,0}},
+        {EAction::Walk, {-424,2352,0}}, {EAction::Walk, {-324,2344,0}}, {EAction::Walk, {-168,2404,0}},
+        {EAction::Walk, {24,2392,0}}, {EAction::Walk, {364,2272,0}}, {EAction::Walk, {380,2256,0}},
+        {EAction::Walk, {416,2188,0}}, {EAction::Walk, {416,2136,0}}, {EAction::Walk, {360,2008,0}},
+        {EAction::Walk, {316,1764,0}}, {EAction::Walk, {144,1368,0}}, {EAction::Walk, {144,1240,0}},
+        {EAction::Ceiling, {}, 162, 0}, {EAction::TimedClosed},
+        {EAction::Walk, {136,1164,0}}, {EAction::Use, {136,1136,49}}, {EAction::Use, {136,1136,49}},
+        {EAction::TimedReset},
+        // The order keeps each timed door open as the player reaches it.
+        {EAction::Use, {136,1136,49}},
+        {EAction::Walk, {96,1164,0}}, {EAction::Use, {96,1136,49}},
+        {EAction::Walk, {176,1164,0}}, {EAction::Use, {176,1136,49}},
+        {EAction::Walk, {16,1164,0}}, {EAction::Walk, {8,1080,0}}, {EAction::Walk, {8,792,0}},
+        {EAction::Ceiling, {}, 162, 140}, {EAction::PressureOpen},
+        {EAction::Walk, {80,640,0}}, {EAction::Walk, {80,572,0}}, {EAction::Walk, {16,508,0}},
+        {EAction::Use, {16,480,10}}, {EAction::GateOpen},
+        {EAction::Capture, {}, INDEX_NONE, 0, TEXT("switch")},
+        // Walk back through the pressure-plate corridor and take the now-open exit.
+        {EAction::Walk, {80,580,0}}, {EAction::Walk, {80,696,0}}, {EAction::Walk, {20,816,0}},
+        {EAction::Walk, {48,1200,0}}, {EAction::Walk, {144,1460,0}}, {EAction::Walk, {360,1908,0}},
+        {EAction::Walk, {392,2112,0}}, {EAction::Walk, {416,2152,0}}, {EAction::Walk, {412,2224,0}},
+        {EAction::Walk, {380,2256,0}}, {EAction::Walk, {252,2324,0}}, {EAction::Walk, {-108,2404,0}},
+        {EAction::Walk, {-216,2404,0}}, {EAction::Walk, {-336,2344,0}}, {EAction::Walk, {-504,2352,0}},
+        {EAction::Walk, {-672,2356,0}}, {EAction::Walk, {-676,2360,0}}, {EAction::Walk, {-708,2424,0}},
+        {EAction::Walk, {-864,2920,0}}, {EAction::Walk, {-1148,3204,0}}, {EAction::Walk, {-1536,3500,0}},
+        {EAction::Capture, {-1518,3555,70}, INDEX_NONE, 0, TEXT("gate")},
+        {EAction::Walk, {-1488,3600,0}}, {EAction::Travel, {-1360,3712,0}},
+    };
+
+    const FSliceStep L151Route[] = {
+        {EAction::Capture, {}, INDEX_NONE, 0, TEXT("spawn")},
+        {EAction::Walk, {528,3420,0}}, {EAction::Walk, {536,3412,0}},
+        {EAction::Walk, {772,2912,0}}, {EAction::Walk, {780,2904,0}},
+        {EAction::Walk, {1352,2904,0}}, {EAction::Walk, {1924,3064,0}}, {EAction::Walk, {2496,3248,0}},
+        {EAction::Pickup, {}, NativeWadRules::FeatherfallPotion, 0, TEXT("potion")},
+        {EAction::Equip, {}, NativeWadRules::FeatherfallPotion}, {EAction::Equip, {}, NativeWadRules::IronDagger},
+        {EAction::Walk, {2308,2872,0}}, {EAction::Walk, {2364,2316,0}},
+        {EAction::Walk, {2788,1868,0}}, {EAction::Walk, {2808,1856,0}},
+        {EAction::Walk, {3272,1840,0}}, {EAction::Walk, {3452,1852,0}},
+        {EAction::Walk, {3588,1988,0}}, {EAction::Walk, {3588,2560,0}}, {EAction::Walk, {3440,3132,0}},
+        {EAction::Walk, {2990,3580,0}}, {EAction::Guardian},
+        {EAction::Walk, {3028,3700,0}}, {EAction::Walk, {3100,3708,0}},
+        {EAction::Lift, {}, 31, 0}, {EAction::Capture, {3400,3620,0}, INDEX_NONE, 0, TEXT("lift-raised")},
+        {EAction::Lift, {}, 31, -250}, {EAction::Capture, {3400,3620,-170}, INDEX_NONE, 0, TEXT("lift-returned")},
+        {EAction::Complete},
+    };
+
     struct FWalkReview
     {
         enum class EStage { Spawn, Route, Blocked, Opening, Cross, Reclose, ExitApproach, Arrival };
@@ -333,11 +411,37 @@ namespace
         EStage Stage = EStage::Spawn;
         double StartTime = 0.0;
         double StageTime = 0.0;
+        double SliceProgressTime = 0.0;
         int32 Size = 0;
         int32 NextPoint = 0;
         int32 CaptureFrames = 0;
+        int32 CoverBolts = INDEX_NONE;
+        int32 CapturedItem = INDEX_NONE;
+        int32 HealthBeforeCast = INDEX_NONE;
+        int32 ManaBeforeCast = INDEX_NONE;
+        int32 FoodBeforeBerry = INDEX_NONE;
+        int32 ExperienceBeforeTravel = INDEX_NONE;
+        int32 HealthBeforeTravel = INDEX_NONE;
+        int32 ManaBeforeTravel = INDEX_NONE;
+        int32 FoodBeforeTravel = INDEX_NONE;
+        int32 StartingExperience = 0;
+        int32 LevelBeforeTravel = 0;
+        int32 ThresholdBeforeTravel = 0;
+        int32 MaxHealthBeforeTravel = 0;
+        int32 MaxManaBeforeTravel = 0;
+        TArray<int32> AttributesBeforeTravel;
+        double CoverStart = 0.0;
+        double GateFloorStarted = 0.0;
+        double GateCeilingStarted = 0.0;
+        double TimedDoorStarted = 0.0;
         bool bLevelLink = false;
+        bool bSlice = false;
+        bool bSecondMap = false;
         bool bWalking = false;
+        bool bCapturedEncounter = false;
+        bool bRequestedInventoryFrame = false;
+        int32 InventoryFrameHold = 0;
+        TOptional<FKey> HeldKey;
 
         UWorld* World() const
         {
@@ -350,6 +454,10 @@ namespace
             if (Player && bWalking)
             {
                 SendKey(*Player, EKeys::W, IE_Released);
+            }
+            if (Player && HeldKey)
+            {
+                SendKey(*Player, HeldKey.GetValue(), IE_Released);
             }
             if (ASceneCapture2D* Actor = Camera.Get())
             {
@@ -387,7 +495,8 @@ namespace
         bool WalkTo(ANativeWadPlayer& Player, const FVector2D& Target)
         {
             const FVector2D Offset = Target - FVector2D(Player.GetActorLocation());
-            if (Offset.SizeSquared() < FMath::Square(5.0))
+            const double AcceptanceRadius = bSecondMap ? 14.0 : 5.0;
+            if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
                 Stop(Player);
                 return true;
@@ -423,13 +532,470 @@ namespace
             return true;
         }
 
+        void Aim(ANativeWadPlayer& Player, const FVector& Point)
+        {
+            Player.GetController()->SetControlRotation((Point - Player.GetPawnViewLocation()).Rotation());
+        }
+
+        void Press(ANativeWadPlayer& Player, const FKey& Key)
+        {
+            SendKey(Player, Key, IE_Pressed);
+            HeldKey = Key;
+        }
+
+        bool ReadyInventoryItem(ANativeWadPlayer& Player, int32 Type, bool bReleasedKey)
+        {
+            if (Player.GetReadyItem() == Type)
+            {
+                if (!Player.IsInventoryOpen())
+                {
+                    return true;
+                }
+                if (!bRequestedInventoryFrame)
+                {
+                    const FString Path = FPaths::GetPath(Output) / (FPaths::GetBaseFilename(Output) + TEXT("-ready-hand.png"));
+                    FScreenshotRequest::RequestScreenshot(Path, true, false);
+                    bRequestedInventoryFrame = true;
+                    InventoryFrameHold = 8;
+                }
+                if (InventoryFrameHold > 0)
+                {
+                    --InventoryFrameHold;
+                    return false;
+                }
+                if (!bReleasedKey)
+                {
+                    Press(Player, EKeys::NumPadSeven);
+                }
+                return false;
+            }
+            if (!Player.IsInventoryOpen())
+            {
+                if (!bReleasedKey)
+                {
+                    Press(Player, EKeys::NumPadSeven);
+                }
+                return false;
+            }
+            const int32 Slot = Player.GetCarriedItems().Find(Type);
+            auto* Controller = Cast<APlayerController>(Player.GetController());
+            auto* HUD = Controller ? Cast<ANativeWadHUD>(Controller->GetHUD()) : nullptr;
+            if (HUD && Slot != INDEX_NONE)
+            {
+                const int32 Button = Player.GetSelectedInventorySlot() == Slot ? INDEX_NONE : Slot;
+                // Drive the same screen-space hit test used by a mouse click, including in offscreen runs.
+                HUD->ClickInventory(HUD->InventorySlotCenter(Button));
+            }
+            return false;
+        }
+
+        bool TimedDoorBlocks(UWorld& World, ANativeWadPlayer& Player)
+        {
+            FHitResult Hit;
+            const FCollisionQueryParams Query(SCENE_QUERY_STAT(ReviewWadTimedDoor), true, &Player);
+            return World.SweepSingleByChannel(Hit, FVector(8,1072,31), FVector(8,1008,31), FQuat::Identity, ECC_Pawn,
+                FCollisionShape::MakeCapsule(ANativeWadPlayer::CapsuleRadius, ANativeWadPlayer::CapsuleHalfHeight), Query);
+        }
+
+        bool TickSlice(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || Player.GetHealth() == 0)
+            {
+                return Finish(&Player, TEXT("the playable slice lost its native level or player"));
+            }
+            if (NextPoint == 0)
+            {
+                SliceProgressTime = Current.GetTimeSeconds();
+                StartingExperience = Player.GetExperience();
+                FVector2D Gate;
+                const FVector2D Spawn = bSecondMap ? FVector2D(176,3464) : FVector2D(1608,432);
+                const bool bStartingSector = bSecondMap
+                    ? Level->GetSectorSurfaceHeights(31, Gate) && Gate.X == -250.0
+                    : Level->GetSectorSurfaceHeights(129, Gate) && Gate.Y == 0.0;
+                if (!FVector2D(Player.GetActorLocation()).Equals(Spawn, 2.0) || !bStartingSector
+                    || Player.GetItemCount(Berry) != 0 || Player.GetCharacterLevel() != 1 || Player.GetMana() != MaxMana)
+                {
+                    return Finish(&Player, TEXT("the slice did not begin at the original spawn with its initial sector heights"));
+                }
+            }
+            bool bReleasedKey = HeldKey.IsSet();
+            if (bReleasedKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            const TConstArrayView<FSliceStep> Route = bSecondMap ? MakeArrayView(L151Route) : MakeArrayView(SliceRoute);
+            if (!Route.IsValidIndex(NextPoint))
+            {
+                return Finish(&Player, TEXT("no route steps remain before travel"));
+            }
+            const FSliceStep& Step = Route[NextPoint];
+            if (Current.GetTimeSeconds() - SliceProgressTime > (Step.Action == EAction::Guardian ? 55.0 : 12.0))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Slice stalled on action %d, target %s, sector %d, height %.0f."),
+                    int32(Step.Action), *Step.Target.ToString(), Step.Sector, Step.Height);
+                return Finish(&Player, TEXT("the player did not reach the next slice checkpoint"));
+            }
+            bool bDone = false;
+            bool bSaved = false;
+            switch (Step.Action)
+            {
+            case EAction::Walk:
+                bDone = WalkTo(Player, FVector2D(Step.Target));
+                break;
+            case EAction::Use:
+                if (!bReleasedKey)
+                {
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    bDone = true;
+                }
+                break;
+            case EAction::Ceiling:
+            {
+                FVector2D Heights;
+                bDone = Level->GetSectorSurfaceHeights(Step.Sector, Heights) && Heights.Y == Step.Height;
+                break;
+            }
+            case EAction::Ranged:
+            case EAction::Cover:
+            {
+                const TActorIterator<ANativeWadGuardian> Guardian(&Current);
+                if (!Guardian)
+                {
+                    return Finish(&Player, TEXT("the imported Guardian is missing"));
+                }
+                if (Step.Action == EAction::Ranged)
+                {
+                    bDone = Guardian->GetBoltsFired() > 0 && Player.GetHealth() == MaxHealth - 300;
+                    if (bDone)
+                    {
+                        UE_LOG(LogTemp, Display, TEXT("Verified an original Guardian bolt hit for 300 damage."));
+                    }
+                    break;
+                }
+                if (Guardian->CanSeePlayer(Player))
+                {
+                    return Finish(&Player, TEXT("the closed door did not block Guardian sight"));
+                }
+                if (CoverBolts == INDEX_NONE)
+                {
+                    CoverBolts = Guardian->GetBoltsFired();
+                    CoverStart = Current.GetTimeSeconds();
+                }
+                if (Guardian->GetBoltsFired() != CoverBolts)
+                {
+                    return Finish(&Player, TEXT("the Guardian fired after losing sight"));
+                }
+                bDone = Current.GetTimeSeconds() - CoverStart >= 5.2;
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified no Guardian shots through closed door 144 over a full bolt cooldown."));
+                }
+                break;
+            }
+            case EAction::Rejuvenate:
+                if (Player.GetSuccessfulCasts() == 1)
+                {
+                    const int32 Restored = FMath::Min(MaxHealth, HealthBeforeCast + RejuvenatePower);
+                    if (Player.GetMana() != ManaBeforeCast - RejuvenateCost || Player.GetHealth() != Restored)
+                    {
+                        return Finish(&Player, TEXT("Rejuvenate did not use the source mana cost and healing"));
+                    }
+                    bDone = true;
+                }
+                else if (!bReleasedKey)
+                {
+                    if (Player.GetRunes().IsEmpty())
+                    {
+                        Press(Player, EKeys::NumPadFour);
+                    }
+                    else if (Player.GetRunes() == TEXT("4"))
+                    {
+                        Press(Player, EKeys::NumPadFive);
+                    }
+                    else if (Player.GetRunes() == TEXT("45"))
+                    {
+                        HealthBeforeCast = Player.GetHealth();
+                        ManaBeforeCast = Player.GetMana();
+                        Press(Player, EKeys::RightMouseButton);
+                    }
+                }
+                break;
+            case EAction::Equip:
+                bDone = ReadyInventoryItem(Player, Step.Sector, bReleasedKey);
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Readied item %d through the inventory slot and ready-hand box."), Step.Sector);
+                }
+                break;
+            case EAction::Guardian:
+            {
+                const TActorIterator<ANativeWadGuardian> It(&Current);
+                if (!It)
+                {
+                    return Finish(&Player, TEXT("the imported Guardian is missing"));
+                }
+                ANativeWadGuardian* Guardian = *It;
+                if (bSecondMap && Player.GetExperience() > StartingExperience)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Hit L151's authored %s with the readied dagger. XP %d."),
+                        *Guardian->GetEncounterName(), Player.GetExperience());
+                    bDone = true;
+                    break;
+                }
+                if (Guardian->IsDefeated())
+                {
+                    const int32 Earned = Player.GetExperience() - StartingExperience;
+                    if (Guardian->GetMeleeHits() == 0 || Earned != GuardianHealth + Guardian->GetRegeneratedHealth())
+                    {
+                        return Finish(&Player, TEXT("the Guardian melee or source damage-to-experience check failed"));
+                    }
+                    if (StartingExperience > 0)
+                    {
+                        const TConstArrayView<int32> Attributes = Player.GetAttributes();
+                        int32 Gain = 0;
+                        for (int32 Index = 0; Index < AttributeCount; ++Index)
+                        {
+                            if (Attributes[Index] < PriestAttributes[Index] + 2)
+                            {
+                                return Finish(&Player, TEXT("a priest attribute missed its guaranteed level gain"));
+                            }
+                            Gain += Attributes[Index] - PriestAttributes[Index];
+                        }
+                        const int32 NextThreshold = FirstLevelThreshold + 2000 + 10000 * 2 + 3000 * 4;
+                        if (Player.GetExperience() < FirstLevelThreshold || Player.GetCharacterLevel() != 2
+                            || Player.GetExperienceNeeded() != NextThreshold || Gain != 18
+                            || Player.GetMaxHealth() != MaxHealth + (Attributes[ConstitutionAttribute] + 10) * 10
+                            || Player.GetMaxMana() != MaxMana + (Attributes[MagicAttribute] + 10) * 10)
+                        {
+                            return Finish(&Player, TEXT("the source level-up gains did not apply at the first threshold"));
+                        }
+                        UE_LOG(LogTemp, Display, TEXT("Verified first priest level-up with 18 attribute points and source health/mana gains."));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified Guardian melee and %d XP from 700 starting health plus %d recovered health."),
+                        Earned, Guardian->GetRegeneratedHealth());
+                    bDone = true;
+                    break;
+                }
+                if (FVector::Dist2D(Player.GetActorLocation(), Guardian->GetActorLocation()) > 52.0)
+                {
+                    WalkTo(Player, FVector2D(Guardian->GetActorLocation()));
+                    break;
+                }
+                Stop(Player);
+                Aim(Player, Guardian->GetActorLocation());
+                if (!bCapturedEncounter)
+                {
+                    if (!CaptureView(Player, TEXT("guardian"), bSaved))
+                    {
+                        break;
+                    }
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture the Guardian"));
+                    }
+                    bCapturedEncounter = true;
+                }
+                if (!bReleasedKey)
+                {
+                    Press(Player, bSecondMap ? EKeys::LeftMouseButton : EKeys::LeftControl);
+                }
+                break;
+            }
+            case EAction::Pickup:
+            {
+                const int32 Type = Step.Sector;
+                if (Player.GetItemCount(Type) == 1)
+                {
+                    bDone = true;
+                    break;
+                }
+                TActorIterator<ANativeWadPickup> Pickup(&Current);
+                while (Pickup && Pickup->GetItemType() != Type)
+                {
+                    ++Pickup;
+                }
+                if (!Pickup)
+                {
+                    return Finish(&Player, TEXT("the authored pickup is missing"));
+                }
+                if (FVector::Dist2D(Player.GetActorLocation(), Pickup->GetActorLocation()) > 40.0)
+                {
+                    WalkTo(Player, FVector2D(Pickup->GetActorLocation()));
+                    break;
+                }
+                Stop(Player);
+                Aim(Player, Pickup->GetActorLocation());
+                if (CapturedItem != Type)
+                {
+                    if (!CaptureView(Player, Step.Frame, bSaved))
+                    {
+                        break;
+                    }
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture the authored pickup"));
+                    }
+                    CapturedItem = Type;
+                }
+                if (!bReleasedKey)
+                {
+                    Press(Player, EKeys::E);
+                }
+                break;
+            }
+            case EAction::EatBerry:
+                if (Player.GetItemCount(Berry) == 0 && FoodBeforeBerry != INDEX_NONE)
+                {
+                    if (Player.GetFood() != FMath::Min(MaxFood, FoodBeforeBerry + BerryFood))
+                    {
+                        return Finish(&Player, TEXT("the berry did not restore the source food amount"));
+                    }
+                    bDone = true;
+                }
+                else if (!bReleasedKey)
+                {
+                    FoodBeforeBerry = Player.GetFood();
+                    Press(Player, EKeys::LeftMouseButton);
+                }
+                break;
+            case EAction::TimedClosed:
+                if (!TimedDoorBlocks(Current, Player))
+                {
+                    return Finish(&Player, TEXT("the closed timed door did not block the player capsule"));
+                }
+                bDone = true;
+                break;
+            case EAction::TimedReset:
+            {
+                FVector2D Heights;
+                Level->GetSectorSurfaceHeights(166, Heights);
+                const double Age = Current.GetTimeSeconds() - SliceProgressTime;
+                if (TimedDoorStarted == 0.0 && Heights.Y > 0.0)
+                {
+                    TimedDoorStarted = Age;
+                }
+                if (Age >= 360.0 / TicksPerSecond + 0.15 && Heights.Y == 0.0)
+                {
+                    if (Level->GetWadScriptBlockCount(17) != 1
+                        || !FMath::IsNearlyEqual(TimedDoorStarted, 220.0 / TicksPerSecond, 0.12))
+                    {
+                        return Finish(&Player, TEXT("the timed switch did not honor its original delay and repeat block"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified activity 17 blocked a repeat and sector 166 opened on the source delay."));
+                    bDone = true;
+                }
+                break;
+            }
+            case EAction::PressureOpen:
+                for (const int32 Sector : {165, 166, 168})
+                {
+                    FVector2D Heights;
+                    if (!Level->GetSectorSurfaceHeights(Sector, Heights) || Heights.Y != 120)
+                    {
+                        return Finish(&Player, TEXT("the imported pressure plate did not keep its timed doors open"));
+                    }
+                }
+                if (TimedDoorBlocks(Current, Player))
+                {
+                    return Finish(&Player, TEXT("the opened timed door still blocked the player capsule"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the imported pressure plate holds all three doors open with clear collision."));
+                bDone = true;
+                break;
+            case EAction::GateOpen:
+            {
+                FVector2D Gate;
+                FVector2D Floor;
+                if (!Level->GetSectorSurfaceHeights(129, Gate) || !Level->GetSectorSurfaceHeights(176, Floor))
+                {
+                    return Finish(&Player, TEXT("the imported activity has no floor or gate sector"));
+                }
+                const double Age = Current.GetTimeSeconds() - SliceProgressTime;
+                if (GateFloorStarted == 0.0 && Floor.X < 80.0)
+                {
+                    GateFloorStarted = Age;
+                }
+                if (GateCeilingStarted == 0.0 && Gate.Y > 0.0)
+                {
+                    GateCeilingStarted = Age;
+                }
+                bDone = Gate.Y == 120.0 && Floor.X == 0.0;
+                if (bDone)
+                {
+                    constexpr double TimerTolerance = 0.085;
+                    if (!FMath::IsNearlyEqual(GateFloorStarted, 100.0 / TicksPerSecond, TimerTolerance)
+                        || !FMath::IsNearlyEqual(GateCeilingStarted, 200.0 / TicksPerSecond, TimerTolerance))
+                    {
+                        return Finish(&Player, TEXT("the imported activity did not start its slides at the source times"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified imported activity motion at %.3fs and %.3fs. Gate 129 Z120, floor 176 Z0."),
+                        GateFloorStarted, GateCeilingStarted);
+                }
+                break;
+            }
+            case EAction::Capture:
+                if (!Step.Target.IsZero())
+                {
+                    Aim(Player, Step.Target);
+                }
+                bDone = CaptureView(Player, Step.Frame, bSaved);
+                if (bDone && !bSaved)
+                {
+                    return Finish(&Player, TEXT("could not save the slice frame"));
+                }
+                break;
+            case EAction::Lift:
+            {
+                FVector2D Heights;
+                const double Feet = Player.GetActorLocation().Z - ANativeWadPlayer::CapsuleHalfHeight;
+                bDone = Level->GetSectorSurfaceHeights(Step.Sector, Heights) && Heights.X == Step.Height
+                    && FMath::IsNearlyEqual(Feet, Step.Height, 5.0);
+                if (bDone)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L151 lift sector %d carries the player at floor Z%.0f."),
+                        Step.Sector, Step.Height);
+                }
+                break;
+            }
+            case EAction::Travel:
+                ExperienceBeforeTravel = Player.GetExperience();
+                HealthBeforeTravel = Player.GetHealth();
+                ManaBeforeTravel = Player.GetMana();
+                FoodBeforeTravel = Player.GetFood();
+                LevelBeforeTravel = Player.GetCharacterLevel();
+                ThresholdBeforeTravel = Player.GetExperienceNeeded();
+                MaxHealthBeforeTravel = Player.GetMaxHealth();
+                MaxManaBeforeTravel = Player.GetMaxMana();
+                AttributesBeforeTravel.Reset();
+                AttributesBeforeTravel.Append(Player.GetAttributes().GetData(), Player.GetAttributes().Num());
+                if (WalkTo(Player, FVector2D(Step.Target)))
+                {
+                    return Finish(&Player, TEXT("the player reached the exit marker without traveling"));
+                }
+                break;
+            case EAction::Complete:
+                UE_LOG(LogTemp, Display, TEXT("Completed authored L151 encounter, inventory, and lift review."));
+                return Finish(&Player);
+            }
+            if (bDone)
+            {
+                ++NextPoint;
+                SliceProgressTime = Current.GetTimeSeconds();
+            }
+            return true;
+        }
+
         bool Tick()
         {
             UWorld* Current = World();
             APlayerController* Controller = Current ? Current->GetFirstPlayerController() : nullptr;
             ANativeWadPlayer* Player = Controller ? Cast<ANativeWadPlayer>(Controller->GetPawn()) : nullptr;
             const double Now = FPlatformTime::Seconds();
-            if (Now - StartTime > 120.0)
+            if (Now - StartTime > (bSlice ? 180.0 : 120.0))
             {
                 return Finish(Player, TEXT("the review timed out"));
             }
@@ -439,24 +1005,48 @@ namespace
             }
             if (Current != SourceWorld.Get())
             {
-                if (!bLevelLink || !Current->GetMapName().EndsWith(TEXT("L301"))
+                if ((!bLevelLink && !bSlice) || !Current->GetMapName().EndsWith(TEXT("L301"))
                     || !FVector2D(Player->GetActorLocation()).Equals(FVector2D(3440, 2944), 2.0))
                 {
                     return Finish(Player, TEXT("travel did not arrive at the source L301 player start"));
                 }
                 if (Stage != EStage::Arrival)
                 {
+                    if (bSlice && (Player->GetItemCount(NativeWadRules::Berry) != 0
+                        || Player->GetItemCount(NativeWadRules::IronDagger) != 1
+                        || Player->GetEquippedWeapon() != NativeWadRules::IronDagger || Player->GetSuccessfulCasts() != 1
+                        || Player->GetExperience() != ExperienceBeforeTravel || Player->GetMana() != ManaBeforeTravel
+                        || Player->GetFood() != FoodBeforeTravel || Player->GetHealth() != HealthBeforeTravel
+                        || Player->GetCharacterLevel() != LevelBeforeTravel || Player->GetExperienceNeeded() != ThresholdBeforeTravel
+                        || Player->GetMaxHealth() != MaxHealthBeforeTravel || Player->GetMaxMana() != MaxManaBeforeTravel
+                        || AttributesBeforeTravel.Num() != Player->GetAttributes().Num()
+                        || FMemory::Memcmp(AttributesBeforeTravel.GetData(), Player->GetAttributes().GetData(),
+                            AttributesBeforeTravel.Num() * sizeof(int32)) != 0
+                        || Player->GetHealth() <= 0))
+                    {
+                        return Finish(Player, TEXT("the gameplay state did not carry into L301"));
+                    }
                     Camera.Reset();
                     CaptureFrames = 0;
                     bWalking = false;
                     Stage = EStage::Arrival;
                     UE_LOG(LogTemp, Display, TEXT("Entered native L301 at source player start (3440, 2944)."));
+                    if (bSlice)
+                    {
+                        UE_LOG(LogTemp, Display, TEXT("Completed continuous L30 gameplay slice. L301 arrival: level %d, health %d/%d, mana %d/%d, food %d, XP %d/%d, dagger ready."),
+                            Player->GetCharacterLevel(), Player->GetHealth(), Player->GetMaxHealth(), Player->GetMana(), Player->GetMaxMana(),
+                            Player->GetFood(), Player->GetExperience(), Player->GetExperienceNeeded());
+                    }
                 }
                 bool bSaved = false;
                 return !CaptureView(*Player, TEXT("arrival"), bSaved)
                     || Finish(Player, bSaved ? nullptr : TEXT("could not save the L301 arrival frame"));
             }
 
+            if (bSlice)
+            {
+                return TickSlice(*Current, *Player);
+            }
             const FVector Position = Player->GetActorLocation();
             bool bSaved = false;
             if (bLevelLink)
@@ -640,11 +1230,12 @@ bool StartNativeWadLightingReview(UWorld* World, const FString& OutputPath, int3
     return true;
 }
 
-bool StartNativeL30WalkReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bLevelLink)
+bool StartNativeWadWalkReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bLevelLink, bool bSlice,
+    bool bSecondMap)
 {
     ANativeWadLevel* Level = GetReviewLevel(World, OutputPath, ImageSize);
     const FWorldContext* Context = Level ? GEngine->GetWorldContextFromWorld(World) : nullptr;
-    if (!Context || !World->GetMapName().EndsWith(TEXT("L30")))
+    if (!Context || !World->GetMapName().EndsWith(bSecondMap ? TEXT("L151") : TEXT("L30")))
     {
         return false;
     }
@@ -655,6 +1246,8 @@ bool StartNativeL30WalkReview(UWorld* World, const FString& OutputPath, int32 Im
     Review->StartTime = FPlatformTime::Seconds();
     Review->Size = ImageSize;
     Review->bLevelLink = bLevelLink;
+    Review->bSlice = bSlice || bSecondMap;
+    Review->bSecondMap = bSecondMap;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;
 }

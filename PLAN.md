@@ -7,9 +7,9 @@ The goal is a playable Unreal port of Amulets & Armor from a new game through th
 | Milestone | Completion check | Status |
 | --- | --- | --- |
 | 1. Native level foundation | Import original geometry, materials, collision, moving sectors, and lighting into saved Unreal levels. | Proven on L30 and L151 at GitHub checkpoint `727f482`. |
-| 2. One complete gameplay slice | Play a continuous route from an original spawn through an authored interaction, an encounter, a pickup, and a level transition. | In progress. The L30 spawn-to-door route and L301 arrival are verified. The scripted gate, encounter, and pickup are still needed for the continuous run. |
-| 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Planned |
-| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | Planned |
+| 2. One complete gameplay slice | Play a continuous route from an original spawn through an authored interaction, an encounter, a pickup, and a level transition. | Verified from L30's original spawn to L301 in Steps 16–18. |
+| 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Steps 19–24 verify a Guardian fight, the ready hand, one spell, and the first priest level-up. |
+| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | Steps 25–26 extend the source script importer to L30's timed doors and L151's lift. |
 | 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | Planned. Sector lighting already runs in the native levels. |
 | 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | Planned |
 
@@ -100,11 +100,31 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - Step 15 imports type 1518 as a level link on the sector containing its marker. L30's thing 394 links sector 157 to native L301. Walking into that sector triggers travel and spawns the player at L301's source start `(3440, 2944)`. The day clock carries across the transition. The exit test starts beyond the closed scripted gate in sector 129.
 - The gallery is `Saved/Wad-Port-Steps13-15-Review.html`. In a fresh standalone game, run `AA.ExportNativeWadPortReview Route <OutputPng> [ImageSize]` or `AA.ExportNativeWadPortReview Link <OutputPng> [ImageSize]` on L30. Run `AA.ExportNativeWadPortReview Sky <OutputPng> [ImageSize]` on L151.
 
-### Remaining work for the first gameplay slice
+### Steps 16–18 first complete gameplay slice
 
-16. **Restore the route to L30's exit.** Trace the source trigger and movement for sector 129's gate. Verify the player can reach the L301 link from spawn using the authored interactions.
-17. **Add one authored encounter and pickup.** Use the source's creature and item placements. Verify that the player can survive the encounter, collect the item, and carry it into L301.
-18. **Verify the complete gameplay slice.** Play from L30's original spawn through the door, encounter, pickup, gate, and L301 transition in one session.
+16. **Restore the route to L30's exit.** The selected `S30.SRP` activities run through the native level's wall use, sector entry, and movement controls. Activities 16–18 start the timed doors and sector 167's pressure plate opens them permanently after the source delay. Activity 40 changes the exit switch, lowers floor 176 from Z80 to Z0, and raises gate 129 from Z0 to Z120. Activity 201 displays the original blocked-slab response. The script port covers these interactions and their movement. Original audio, trap projectiles, and visual effects are still part of the authored-event work.
+17. **Add one authored encounter and pickup.** The Elf Guardian (thing 9, type 1018) and berry (thing 210, type 243) use their original L30 positions and palette sprites. The Guardian has basic pursuit and ranged damage. Use left mouse for a melee hit and E to collect the berry. The HUD shows health and berry count, and both carry across native level travel.
+18. **Verify the complete gameplay slice.** A standalone Unreal run started at `(1608, 432)`, used door 144, fought the Guardian, collected the berry, operated the timed switches and pressure plate, opened the exit, and reached L301's original spawn. The review drives player inputs throughout and verifies the berry and surviving health on arrival.
+
+- Run `AA.ExportNativeWadPortReview Slice <OutputPng> [ImageSize]` in a fresh standalone L30 game. The seven images are in `Saved/Wad-Gameplay-Slice-Review.html`.
+
+### Steps 19–22 core gameplay and script import
+
+19. **Port the Guardian's combat.** Type 1018 uses the original melee range, damage, windup, and cooldown, plus its ranged bolt and health regeneration. Its original sprites show the attack and hurt poses, and it retreats below 500 health. The route checks a 300-damage bolt, no shots through a closed door over a full cooldown, and melee during the fight. Movement and sight use Unreal collision.
+20. **Use inventory and equipment.** E collects the original iron dagger (thing 300) and berry (thing 210). The dagger uses the original ready-weapon damage and speed from `DES00200` and the hit frame from `DAGGER.ANI`. A berry restores up to 200 raw food points from `DES00243`. The walkthrough checks the food cap, the consumed slot, and the equipped dagger in L301. See Step 23 for the current controls.
+21. **Cast Rejuvenate and verify XP.** The slice uses a level-one priest. Spell 70 uses the source success roll, 1,000 mana cost on success, 500 on a fizzle, and up to 500 health restored on success. The Guardian awards XP equal to actual damage, including damage to regenerated health. The walkthrough checks the award and carries health, food, mana, XP, and equipment into L301. Step 24 adds rune entry and level-up rewards.
+22. **Import activity 40.** The editor reads `S30.SRP` and saves the activity in the Unreal level. The runtime executes the imported switch change, waits, message, two sliders, and the block that prevents repeat execution. The walkthrough measures both slide start times and final heights. Sound and visual effect commands are recognized and reported as deferred during import.
+
+- Run `AA.ExportNativeWadPortReview Slice <OutputPng> [ImageSize]` for the updated walkthrough. The review gallery is `Saved/Wad-Core-Gameplay-Review.html`.
+
+### Steps 23–26 ready hand, progression, and a second gameplay map
+
+23. **Use the original ready-hand controls.** Aim at the item and press E to collect it. Keypad 7 opens the inventory. Click an item and then the ready-hand box. Left Ctrl uses the ready hand, as does a left click in mouse-look mode. The L30 route collects and equips the iron dagger, readies and eats the berry, and readies the dagger again for travel.
+24. **Enter runes and gain a level.** Enter keypad 4 and 5, then cast Rejuvenate with right mouse or keypad Enter. Automation checks the heal, the 500-mana fizzle, and the original requirement to have more than 1,000 mana. The L30 walkthrough starts with 1,280 XP so the Guardian fight crosses 2,000 XP and triggers the priest's first level-up. It verifies the source attribute and maximum health and mana gains, then checks that the resulting stats and equipment carry to L301.
+25. **Import timed doors and the pressure plate.** The L30 importer follows calls and jumps in `S30.SRP` and saves the executable activities in the native map. The walkthrough verifies activity 17's delay, repeated switch press, and timed close. It presses all three switches, steps on sector 167's pressure plate, and checks that sectors 165, 166, and 168 stay open with clear collision. Sound, visual effects, and trap projectiles remain deferred.
+26. **Reuse the runtime in L151.** The walkthrough starts at the original spawn, collects and readies the authored Potion of Featherfalling, and lands a dagger hit on the authored Gaiseric Magician. It triggers activity 1 and verifies that the sector 31 lift carries the player from floor Z−250 to Z0 and back. The potion's effect remains to be implemented.
+
+- Run `AA.ExportNativeWadPortReview Slice <OutputPng> [ImageSize]` in standalone L30 with `?WadXP=1280`. Run `AA.ExportNativeWadPortReview SecondMap <OutputPng> [ImageSize]` in standalone L151 with `?WadItems=200?WadReady=0` to start its review with an iron dagger. All nine tests under `AAOriginal.WAD` passed. See `Saved/Wad-Ready-Hand-and-Lift-Review.html` for eight captures.
 
 ### Asset follow-ups
 

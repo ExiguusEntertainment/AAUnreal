@@ -170,7 +170,8 @@ void ANativeWadLevel::Tick(float DeltaSeconds)
             It.RemoveCurrent();
         }
     }
-    if (ActiveDoors.IsEmpty() && !bRunDayClock)
+    TickActivitySlides(DeltaSeconds);
+    if (ActiveDoors.IsEmpty() && ActivitySlides.IsEmpty() && !bRunDayClock)
     {
         SetActorTickEnabled(false);
     }
@@ -178,35 +179,40 @@ void ANativeWadLevel::Tick(float DeltaSeconds)
 
 int32 ANativeWadLevel::FindLevelLinkAt(const FVector2D& Position) const
 {
+    const FVector2D Local(GetActorTransform().InverseTransformPosition(FVector(Position, GetActorLocation().Z)));
     for (int32 Index = 0; Index < LevelLinks.Num(); ++Index)
     {
-        const int32 Sector = LevelLinks[Index].Sector;
-        if (!LinesBySector.IsValidIndex(Sector))
-        {
-            continue;
-        }
-        bool bInside = false;
-        for (const int32 LineIndex : LinesBySector[Sector])
-        {
-            const FWadLineDef& Line = WallTopology.Lines[LineIndex];
-            if (WallTopology.GetSectorForSide(Line.Side[0]) == WallTopology.GetSectorForSide(Line.Side[1]))
-            {
-                continue;
-            }
-            const FIntPoint A = Vertices[Line.From];
-            const FIntPoint B = Vertices[Line.To];
-            if ((A.Y > Position.Y) != (B.Y > Position.Y)
-                && Position.X < A.X + (Position.Y - A.Y) * (B.X - A.X) / (B.Y - A.Y))
-            {
-                bInside = !bInside;
-            }
-        }
-        if (bInside)
+        if (ContainsSectorPoint(LevelLinks[Index].Sector, Local))
         {
             return Index;
         }
     }
     return INDEX_NONE;
+}
+
+bool ANativeWadLevel::ContainsSectorPoint(int32 Sector, const FVector2D& LocalPosition) const
+{
+    if (!LinesBySector.IsValidIndex(Sector))
+    {
+        return false;
+    }
+    bool bInside = false;
+    for (const int32 LineIndex : LinesBySector[Sector])
+    {
+        const FWadLineDef& Line = WallTopology.Lines[LineIndex];
+        if (WallTopology.GetSectorForSide(Line.Side[0]) == WallTopology.GetSectorForSide(Line.Side[1]))
+        {
+            continue;
+        }
+        const FIntPoint A = Vertices[Line.From];
+        const FIntPoint B = Vertices[Line.To];
+        if ((A.Y > LocalPosition.Y) != (B.Y > LocalPosition.Y)
+            && LocalPosition.X < A.X + (LocalPosition.Y - A.Y) * (B.X - A.X) / (B.Y - A.Y))
+        {
+            bInside = !bInside;
+        }
+    }
+    return bInside;
 }
 
 bool ANativeWadLevel::IsDoorObstructed(int32 Sector, double FromZ, double ToZ) const

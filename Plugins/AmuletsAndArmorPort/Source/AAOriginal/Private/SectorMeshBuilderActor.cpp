@@ -277,6 +277,50 @@ bool LoadWadBackdrop(const FString& PictureName, FIntPoint& Size, TArray<FColor>
     return true;
 }
 
+bool LoadWadSprite(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels)
+{
+    TArray<FColor> Palette;
+    TArray<uint8> Picture;
+    if (!LoadGamePalette(Palette)
+        || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(TEXT("OBJS") / PicturePath))
+        || Picture.Num() < 4)
+    {
+        return false;
+    }
+    Size = FIntPoint(Picture[2] | (Picture[3] << 8), Picture[0] | (Picture[1] << 8));
+    const int32 ColumnDataStart = 4 + Size.X * 4;
+    if (Size.X < 1 || Size.Y < 1 || Size.Y > 256 || Picture.Num() < ColumnDataStart)
+    {
+        return false;
+    }
+    Pixels.Init(FColor(0, 0, 0, 0), Size.X * Size.Y);
+    for (int32 X = 0; X < Size.X; ++X)
+    {
+        // A CPC column stores a file offset followed by the inclusive top and bottom rows.
+        const uint8* Column = Picture.GetData() + 4 + X * 4;
+        const int32 Top = Column[2];
+        const int32 Bottom = Column[3];
+        if (Top == 255 && Bottom == 255)
+        {
+            continue;
+        }
+        const int32 Offset = Column[0] | (Column[1] << 8);
+        if (Top > Bottom || Bottom >= Size.Y || Offset < ColumnDataStart || Offset + Bottom - Top >= Picture.Num())
+        {
+            return false;
+        }
+        for (int32 Y = Top; Y <= Bottom; ++Y)
+        {
+            const uint8 Color = Picture[Offset + Y - Top];
+            if (Color != 0)
+            {
+                Pixels[Y * Size.X + X] = Palette[Color];
+            }
+        }
+    }
+    return true;
+}
+
 void ASectorMeshBuilderActor::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);

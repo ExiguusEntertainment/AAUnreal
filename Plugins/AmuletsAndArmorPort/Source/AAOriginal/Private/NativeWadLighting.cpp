@@ -49,6 +49,7 @@ void ANativeWadLevel::BeginPlay()
         SetTimeOfDayHours(ArrivalHour);
     }
     RefreshSectorLights();
+    RunWadActivity(0);
 }
 
 int32 ANativeWadLevel::GetSectorLightLevel(int32 Sector) const

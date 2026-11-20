@@ -44,6 +44,7 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "MeshDescription.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
+#include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -406,6 +407,12 @@ struct FAAWadNativeImport
         {
             return false;
         }
+        const FString MapName = FPaths::GetBaseFilename(WadPath).ToUpper();
+        if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output)))
+        {
+            return false;
+        }
         Actor.LevelLinks = MoveTemp(Links);
         AWorldSettings* Settings = World.GetWorldSettings();
         Settings->Modify();
@@ -469,6 +476,212 @@ struct FAAWadNativeImport
     {
         Asset.MarkPackageDirty();
         AssetsToSave.AddUnique(&Asset);
+    }
+
+    UMaterial* SpriteMaterial(const FString& Name, const FString& PicturePath)
+    {
+        FIntPoint Size;
+        TArray<FColor> Pixels;
+        if (!LoadWadSprite(PicturePath, Size, Pixels))
+        {
+            return nullptr;
+        }
+        UTexture2D* Picture = FindOrCreateAsset<UTexture2D>(TEXT("Things"), TEXT("T_") + Name);
+        UMaterial* Result = FindOrCreateAsset<UMaterial>(TEXT("Things"), TEXT("M_") + Name);
+        if (!Picture || !Result)
+        {
+            return nullptr;
+        }
+        Picture->Source.Init(Size.X, Size.Y, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
+        Picture->CompressionSettings = TC_EditorIcon;
+        Picture->MipGenSettings = TMGS_NoMipmaps;
+        Picture->AddressX = TA_Clamp;
+        Picture->AddressY = TA_Clamp;
+        Picture->Filter = TF_Nearest;
+        Picture->NeverStream = true;
+        Picture->SRGB = true;
+        Picture->PostEditChange();
+        QueueSave(*Picture);
+
+        Result->SetShadingModel(MSM_Unlit);
+        Result->BlendMode = BLEND_Masked;
+        Result->TwoSided = true;
+        auto& Expressions = Result->GetExpressionCollection();
+        Expressions.Empty();
+        auto* Sample = NewObject<UMaterialExpressionTextureSample>(Result);
+        Sample->Texture = Picture;
+        auto* Emissive = NewObject<UMaterialExpressionMultiply>(Result);
+        Emissive->A.Connect(0, Sample);
+        Emissive->ConstB = 0.35f;
+        Expressions.AddExpression(Sample);
+        Expressions.AddExpression(Emissive);
+        Result->GetEditorOnlyData()->EmissiveColor.Connect(0, Emissive);
+        Result->GetEditorOnlyData()->OpacityMask.Connect(4, Sample);
+        Result->PostEditChange();
+        QueueSave(*Result);
+        return Result;
+    }
+
+    template<class T>
+    static T* ImportSliceThing(UWorld& World, const FDoomWadMapData& Map, int32 ThingId, double CenterZ, const TCHAR* Name)
+    {
+        const FName Tag(Name);
+        for (TActorIterator<T> Actor(&World); Actor; ++Actor)
+        {
+            if (Actor->ActorHasTag(Tag))
+            {
+                Actor->Modify();
+                return *Actor;
+            }
+        }
+        const FWadThing& Thing = Map.Things[ThingId];
+        const FVector Position(Thing.X, Thing.Y, CenterZ);
+        FActorSpawnParameters Params;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        T* Actor = World.SpawnActor<T>(Position, FRotator(0, Thing.Angle * 45.0, 0), Params);
+        if (Actor)
+        {
+            Actor->Tags.Add(Tag);
+            Actor->SetActorLabel(Name);
+        }
+        return Actor;
+    }
+
+    static bool InstallActivities(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        const TCHAR* ScriptName, TConstArrayView<int32> EntryActivities, FOutputDevice& Output)
+    {
+        FString ScriptPath = FPaths::GetPath(WadPath) / ScriptName;
+        if (!FPaths::FileExists(ScriptPath))
+        {
+            ScriptPath = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe") / ScriptName;
+        }
+        TArray<FWadScriptActivity> Activities;
+        if (!ImportWadScriptActivities(ScriptPath, EntryActivities, Map.Sectors.Num(), Map.Sides.Num(), Activities, Output))
+        {
+            Output.Logf(TEXT("Failed to import WAD activities from %s."), *ScriptPath);
+            return false;
+        }
+        Actor.ImportedActivities = MoveTemp(Activities);
+        Actor.ActivitySectors.Reset();
+        for (int32 Index = 0; Index < Map.Sectors.Num(); ++Index)
+        {
+            const int32 Activity = Map.Sectors[Index].Type;
+            Actor.Sectors[Index].Activity = Activity;
+            if (Activity && EntryActivities.Contains(Activity))
+            {
+                Actor.ActivitySectors.Add(Index);
+            }
+        }
+        for (int32 Index = 0; Index < Map.Lines.Num(); ++Index)
+        {
+            const int32 Activity = Map.Lines[Index].Special;
+            Actor.Lines[Index].Activity = EntryActivities.Contains(Activity) ? Activity : 0;
+        }
+        Output.Logf(TEXT("Installed %d activities from %s."), Actor.ImportedActivities.Num(), ScriptName);
+        return true;
+    }
+
+    bool InstallL30Slice(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        FOutputDevice& Output)
+    {
+        if (!Map.Lines.IsValidIndex(1182) || Map.Lines[1182].Special != 40
+            || !Map.Sectors.IsValidIndex(177) || Map.Sectors[129].CeilingHeight != 0
+            || Map.Sectors[163].Type != 15 || Map.Sectors[167].Type != 19
+            || !Map.Sides.IsValidIndex(1636) || !Map.Things.IsValidIndex(300) || Map.Things[9].Type != 1018
+            || Map.Things[210].Type != NativeWadRules::Berry || Map.Things[300].Type != NativeWadRules::IronDagger)
+        {
+            Output.Log(TEXT("The source does not match the L30 script and encounter records."));
+            return false;
+        }
+        constexpr int32 EntryActivities[] = {0, 15, 16, 17, 18, 19, 21, 22, 31, 40, 201};
+        if (!InstallActivities(Actor, Map, WadPath, TEXT("S30.SRP"), EntryActivities, Output))
+        {
+            return false;
+        }
+        Parents[uint8(EWadWallBlend::Opaque)] = LoadObject<UMaterialInterface>(nullptr,
+            TEXT("/Game/AAReview/M_AANativeOpaque.M_AANativeOpaque"));
+        const UStaticMeshComponent* OriginalSwitch = Actor.Sides[1636].Bands[uint8(EWadWallBand::Lower)];
+        if (!Parents[uint8(EWadWallBlend::Opaque)] || !Texture(TEXT("SWIT1U")) || !OriginalSwitch || !OriginalSwitch->GetMaterial(0))
+        {
+            return false;
+        }
+        Actor.ActivitySwitchUp = Material(TEXT("SWIT1U"), EWadWallBlend::Opaque);
+        Actor.ActivitySwitchDown = OriginalSwitch->GetMaterial(0);
+
+        auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        UMaterial* GuardianArt = SpriteMaterial(TEXT("ElfGuardian"), TEXT("ARCHER/ARCHER01.CPC"));
+        UMaterial* DownedArt = SpriteMaterial(TEXT("ElfGuardianDowned"), TEXT("ARCHER/ARCDI04.CPC"));
+        UMaterial* AttackArt = SpriteMaterial(TEXT("ElfGuardianAttack"), TEXT("ARCHER/ARCDI01.CPC"));
+        UMaterial* HurtArt = SpriteMaterial(TEXT("ElfGuardianHurt"), TEXT("ARCHER/ARCHER05.CPC"));
+        UMaterial* BoltArt = SpriteMaterial(TEXT("GuardianBolt"), TEXT("ARROW1/BOLT2.CPC"));
+        UMaterial* BerryArt = SpriteMaterial(TEXT("Berry"), TEXT("BERI/BERI.CPC"));
+        UMaterial* DaggerArt = SpriteMaterial(TEXT("IronDagger"), TEXT("DAGGER/DAGGER.CPC"));
+        if (!Plane || !GuardianArt || !DownedArt || !AttackArt || !HurtArt || !BoltArt || !BerryArt || !DaggerArt)
+        {
+            Output.Log(TEXT("Failed to save an original L30 encounter sprite."));
+            return false;
+        }
+        const double Floor = Map.Sectors[108].FloorHeight;
+        ANativeWadGuardian* Guardian = ImportSliceThing<ANativeWadGuardian>(World, Map, 9, Floor + 28.0, TEXT("L30 Elf Guardian"));
+        ANativeWadPickup* Berry = ImportSliceThing<ANativeWadPickup>(World, Map, 210, Floor + 10.0, TEXT("L30 Berry Pickup"));
+        ANativeWadPickup* Dagger = ImportSliceThing<ANativeWadPickup>(World, Map, 300, Floor + 10.0, TEXT("L30 Iron Dagger"));
+        if (!Guardian || !Berry || !Dagger)
+        {
+            return false;
+        }
+        Guardian->Configure(Plane, GuardianArt, DownedArt, AttackArt, HurtArt, BoltArt, FWadEncounterProfile());
+        Berry->Configure(Plane, BerryArt, Map.Things[210].Type);
+        Dagger->Configure(Plane, DaggerArt, Map.Things[300].Type);
+        Output.Log(TEXT("Installed the L30 activities and original Guardian, berry, and iron dagger placements."));
+        return !bAssetError;
+    }
+
+    bool InstallL151Slice(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        FOutputDevice& Output)
+    {
+        constexpr int32 MageThing = 31;
+        constexpr int32 PotionThing = 224;
+        constexpr int32 EntryActivities[] = {0, 1};
+        if (!Map.Sectors.IsValidIndex(31) || Map.Sectors[31].Type != 1 || !Map.Things.IsValidIndex(PotionThing)
+            || Map.Things[MageThing].Type != 3002 || Map.Things[PotionThing].Type != NativeWadRules::FeatherfallPotion
+            || !InstallActivities(Actor, Map, WadPath, TEXT("S151.SRP"), EntryActivities, Output))
+        {
+            Output.Log(TEXT("Unable to install the L151 lift and encounter."));
+            return false;
+        }
+        auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        UMaterial* Stand = SpriteMaterial(TEXT("GaisericMagician"), TEXT("PHIL/PHIL01.CPC"));
+        UMaterial* Down = SpriteMaterial(TEXT("GaisericMagicianDowned"), TEXT("PHIL/BDDED04.CPC"));
+        UMaterial* Attack = SpriteMaterial(TEXT("GaisericMagicianAttack"), TEXT("PHIL/BDDED02.CPC"));
+        UMaterial* Hurt = SpriteMaterial(TEXT("GaisericMagicianHurt"), TEXT("PHIL/BRDATK01.CPC"));
+        UMaterial* Missile = SpriteMaterial(TEXT("MagicDart"), TEXT("MISSIL12/1.CPC"));
+        UMaterial* Potion = SpriteMaterial(TEXT("FeatherfallPotion"), TEXT("POTION17/POTION17.CPC"));
+        if (!Plane || !Stand || !Down || !Attack || !Hurt || !Missile || !Potion)
+        {
+            Output.Log(TEXT("Unable to load the original L151 encounter art."));
+            return false;
+        }
+        ANativeWadGuardian* Mage = ImportSliceThing<ANativeWadGuardian>(World, Map, MageThing,
+            Map.Sectors[19].FloorHeight + 28.0, TEXT("L151 Gaiseric Magician"));
+        ANativeWadPickup* Item = ImportSliceThing<ANativeWadPickup>(World, Map, PotionThing,
+            Map.Sectors[4].FloorHeight + 10.0, TEXT("L151 Potion of Featherfalling"));
+        if (!Mage || !Item)
+        {
+            return false;
+        }
+        FWadEncounterProfile Profile;
+        Profile.Name = TEXT("Gaiseric Magician");
+        Profile.MaxHealth = 2500;
+        Profile.RetreatHealth = 1000;
+        Profile.MeleeDamage = 250;
+        Profile.BoltDamage = 100;
+        Profile.BoltRange = 10000;
+        Profile.MeleeDelayUpdates = 10;
+        Profile.RangedDelayUpdates = 25;
+        Mage->Configure(Plane, Stand, Down, Attack, Hurt, Missile, Profile);
+        Item->Configure(Plane, Potion, NativeWadRules::FeatherfallPotion);
+        Output.Log(TEXT("Installed the L151 lift, Gaiseric Magician thing 31, and potion thing 224."));
+        return !bAssetError;
     }
 
     bool InstallDaySky(ANativeWadLevel& Actor, const FString& WadPath, FOutputDevice& Output)

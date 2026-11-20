@@ -2,13 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "DoomWadWalls.h"
+#include "NativeWadScript.h"
 #include "GameFramework/Actor.h"
 #include "NativeWadLevel.generated.h"
 
 class UBoxComponent;
 class UMaterialInstanceDynamic;
+class UMaterialInterface;
 class UStaticMeshComponent;
 class UWorld;
+class ANativeWadPlayer;
 
 USTRUCT()
 struct FAAWadNativeSector
@@ -26,6 +29,9 @@ struct FAAWadNativeSector
 
     UPROPERTY(VisibleAnywhere, Category="WAD")
     bool bOutside = false;
+
+    UPROPERTY()
+    int32 Activity = 0;
 };
 
 USTRUCT()
@@ -59,6 +65,9 @@ struct FAAWadNativeLine
 
     UPROPERTY()
     uint16 Flags = 0;
+
+    UPROPERTY()
+    int32 Activity = 0;
 
     UPROPERTY()
     TArray<TObjectPtr<UBoxComponent>> Collision;
@@ -153,6 +162,10 @@ public:
     bool UseDoor(int32 Sector);
 
     bool UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, const AActor* UserActor);
+    bool UseActivityFromView(ANativeWadPlayer& Player);
+    void CheckActivitySector(const FVector2D& Position, int32& PreviousSector);
+    bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
+    int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
 
     bool GetSectorSurfaceHeights(int32 Sector, FVector2D& Heights) const;
     const TArray<FAAWadNativeSector>& GetSectors() const { return Sectors; }
@@ -172,6 +185,41 @@ private:
     void ApplySectorLight(int32 Sector, int32 Light);
     void RefreshSectorLights();
     void UpdateDaySky();
+    bool ContainsSectorPoint(int32 Sector, const FVector2D& LocalPosition) const;
+    const FWadScriptActivity* FindWadActivity(int32 Activity) const;
+    bool RunWadActivity(int32 Activity, ANativeWadPlayer* Player = nullptr);
+    void RunWadScriptCommands(int32 Activity, int32 StartCommand, TWeakObjectPtr<ANativeWadPlayer> Player, int32& Budget);
+    void StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush);
+    void TickActivitySlides(float DeltaSeconds);
+    void SetActivitySwitch(int32 Side, bool bUp);
+
+    struct FActivitySlide
+    {
+        int32 Sector;
+        double From;
+        double To;
+        double Duration;
+        double Elapsed;
+        bool bCeiling;
+        bool bPauseOnCrush;
+    };
+
+    UPROPERTY()
+    TArray<int32> ActivitySectors;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> ActivitySwitchUp;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> ActivitySwitchDown;
+
+    TArray<FActivitySlide> ActivitySlides;
+    int32 ScriptVariables[256] = {};
+    bool ScriptFlags[8] = {};
+    TMap<int32, int32> ScriptBlockCounts;
+
+    UPROPERTY()
+    TArray<FWadScriptActivity> ImportedActivities;
 
     enum class EDoorPhase : uint8 { Opening, Holding, Closing };
 

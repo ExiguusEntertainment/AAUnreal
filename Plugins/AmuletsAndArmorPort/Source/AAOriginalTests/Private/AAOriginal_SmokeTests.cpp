@@ -3,6 +3,7 @@
 #include "AAOriginalAPI.h"
 #include "DoomWadLoader.h"
 #include "DoomWadWalls.h"
+#include "NativeWadRules.h"
 #include "SectorMeshBuilderActor.h"
 #include "Engine/World.h"
 #include "Engine/Texture2D.h"
@@ -1181,5 +1182,33 @@ bool FAAOriginal_WadLoader_L30_BoundaryAreaCoverage::RunTest(const FString& Para
     TestTrue(TEXT("Most large sectors should cover at least 30% of their wall-topology bbox"),
         LargeSectorsSampled == 0 || LargeSectorsAtOrAbove30Pct >= 55);
 
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalRejuvenateOutcomes, "AAOriginal.WAD.Gameplay.RejuvenateOutcomes",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalRejuvenateOutcomes::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    int32 Health = 1800;
+    int32 Mana = 2200;
+    TestTrue(TEXT("The last successful roll casts"), ResolveRejuvenate(Health, Mana, MaxHealth, Magic, 1, 87)
+        == ERejuvenateResult::Success);
+    TestEqual(TEXT("Healing stops at maximum health"), Health, MaxHealth);
+    TestEqual(TEXT("Success spends 1000 mana"), Mana, 1200);
+
+    Health = 1800;
+    Mana = 2200;
+    TestTrue(TEXT("The first failing roll fizzles"), ResolveRejuvenate(Health, Mana, MaxHealth, Magic, 1, 88)
+        == ERejuvenateResult::Fizzle);
+    TestEqual(TEXT("Fizzle leaves health alone"), Health, 1800);
+    TestEqual(TEXT("Fizzle spends 500 mana"), Mana, 1700);
+
+    Mana = RejuvenateCost;
+    TestTrue(TEXT("The original requires mana strictly above the cost"),
+        ResolveRejuvenate(Health, Mana, MaxHealth, Magic, 1, 0) == ERejuvenateResult::InsufficientMana);
+    TestEqual(TEXT("A mana refusal leaves health alone"), Health, 1800);
+    TestEqual(TEXT("A mana refusal spends nothing"), Mana, RejuvenateCost);
     return true;
 }
