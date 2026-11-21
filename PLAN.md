@@ -9,7 +9,7 @@ The goal is a playable Unreal port of Amulets & Armor from a new game through th
 | 1. Native level foundation | Import original geometry, materials, collision, moving sectors, and lighting into saved Unreal levels. | Proven on L30 and L151 at GitHub checkpoint `727f482`. |
 | 2. One complete gameplay slice | Play a continuous route from an original spawn through an authored interaction, an encounter, a pickup, and a level transition. | Verified from L30's original spawn to L301 in Steps 16–18. |
 | 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Steps 19–24 verify a Guardian fight, the ready hand, one spell, and the first priest level-up. |
-| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | Verified travel from L30 through L301, L531, and L31 to L22. L22's door and corridor trap work in the native map. Its town-screen destination is recorded. |
+| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | 18 of 30 source maps are native. Quest progression and Town Hall returns have been exercised through Exiguus and the Undead, the fourth quest. |
 | 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | Disk checkpoints restore settled levels, ordinary door phases, scripted lifts, and pending waits. L301's positional stream and waterfall loops run with the source audio. |
 | 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | Planned |
 
@@ -269,6 +269,24 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - The replay uses regular controls from staged approaches. Run `ElmoreL151Exit` from `NativeWadElmoreL151Review`, then `ElmoreL152` and `ElmoreL153Puzzles` from the arrival checkpoints. Run `ElmoreOrb` and `ElmoreOrbEmpty` from `NativeWadElmoreVaultReview`, and `ElmoreOrbReturn` from `NativeWadElmoreOrbReview`.
 - All nine WAD regression tests passed. Vault, orb, and Town Hall screenshots are in `Saved/Wad-Orb-of-Defense-Review.html`.
 - Elmore's encounter in L152, the Gargoyles in L153, and a continuous walkthrough through all four key doors remain to be verified or ported.
+
+### Exiguus and the Undead
+
+87. **Trace the next Town Hall quest.** `QUEST3.INI` defines Castle Arius (L231), the underground traps (L75), the next keep (L10), and the cemetery (L12). Exiguus drops item 955, the Orb of the Undead. King Gregor takes the orb and awards 50 gold.
+88. **Import L231 and launch from Town Hall.** Bring the completed Elmore character into the next quest at the original start `(-2208, 2416)`. Startup activity 0 adds journal page 403. The map has 272 sectors, 1,122 lines, and 12 imported activities.
+89. **Verify the castle lift and exit.** Step onto the plate for floor 263, check that it rises from Z0 to Z320 and returns, then cross Thing 141 into L75 at `(2096, 3034)`.
+90. **Import L75 and its traps.** Import 196 sectors, 979 lines, and 17 activities, including crushing ceilings, timed floors, and the Evil Knight trap.
+91. **Exercise the traps and move on to L10.** Verify the crusher in sector 105, the wall switch and first exit lift, the two knights released by sector 148, and travel through Thing 140 to `(-1268, -531)`.
+92. **Import L10 and the moving key platform.** Import 242 sectors, 1,051 lines, and 27 activities. Attach the local Key 6 pickup to its original moving floor.
+93. **Verify L10's two switches and key door.** Check that floor 120 lowers first to Z100 and then to Z0, collect Key 6, cross door 200, and use Thing 234 to reach L12 at `(4530, 1171)`.
+94. **Import L12 and its cemetery mechanisms.** Import 304 sectors, 1,368 lines, 15 activities, and the four electric skeleton generators. The original exit plate lowers floor 294 and pauses the generators.
+95. **Verify the cemetery key door and Exiguus's quest drop.** Use L12's Key 1 at door 81. Verify that Exiguus drops the Orb of the Undead only on defeat and that the collected orb survives a checkpoint reload.
+96. **Verify both Town Hall outcomes.** Use Thing 576 to return to King Gregor. Turn-in consumes the orb for 50 gold and no quest XP. Return empty-handed to verify the failure result and no reward.
+
+- The replay drives movement and interactions from staged approaches. The Exiguus drop review applies a controlled finishing hit.
+- Use `AA.ExportNativeWadPortReview` with `UndeadLaunch`, `UndeadCastle`, `UndeadTraps`, `UndeadKeep`, `UndeadBoss`, `UndeadReturn`, and `UndeadEmpty`. `ElmoreOrbReturn` writes the starting Town Hall checkpoint, `NativeWadElmoreTownReview`. `UndeadReturn` writes the completed checkpoint, `NativeWadUndeadTownReview`.
+- All nine WAD automation tests passed. The gallery is `Saved/Wad-Exiguus-Review.html`.
+- A continuous route, combat balance, Exiguus's summoning, other creature combat effects, the boulders, the flying-potion generator, and the Blue Wizard generators remain follow-ups.
 
 ### Asset follow-ups
 

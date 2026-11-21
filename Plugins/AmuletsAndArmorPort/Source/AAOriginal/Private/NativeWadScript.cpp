@@ -186,7 +186,8 @@ namespace
                 break;
             }
             case 57:
-                Command.Operation = EWadScriptOperation::ActivateGenerator;
+            case 58:
+                Command.Operation = Opcode == 57 ? EWadScriptOperation::ActivateGenerator : EWadScriptOperation::DeactivateGenerator;
                 if (!Reader.Literal(Command.Target) || Command.Target < 0)
                 {
                     return false;

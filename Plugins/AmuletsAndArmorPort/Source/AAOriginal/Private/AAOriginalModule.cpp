@@ -1088,7 +1088,8 @@ public:
                     || Review == TEXT("elmorecombat64") || Review == TEXT("elmorecombat65")
                     || Review == TEXT("elmorel65exit") || Review == TEXT("elmorel34") || Review == TEXT("elmorel151reload")
                     || Review == TEXT("elmorel151exit") || Review == TEXT("elmorel152") || Review == TEXT("elmorel153puzzles")
-                    || Review == TEXT("elmoreorb") || Review == TEXT("elmoreorbreturn") || Review == TEXT("elmoreorbempty"))
+                    || Review == TEXT("elmoreorb") || Review == TEXT("elmoreorbreturn") || Review == TEXT("elmoreorbempty")
+                    || Review.StartsWith(TEXT("undead")))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }

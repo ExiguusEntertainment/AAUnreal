@@ -454,7 +454,8 @@ void ANativeWadPlayer::CollectItem(int32 Type)
         : Type == IronDagger ? TEXT("Picked up an iron dagger")
         : Type == JugurthaJournal ? TEXT("Picked up Jugurtha's journal")
         : Type == AndrewNecklace ? TEXT("Picked up the Necklace of Andrew")
-        : Type == OrbOfDefense ? TEXT("Picked up the Orb of Defense") : TEXT("Picked up an item"));
+        : Type == OrbOfDefense ? TEXT("Picked up the Orb of Defense")
+        : Type == OrbOfTheUndead ? TEXT("Picked up the Orb of the Undead") : TEXT("Picked up an item"));
     UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
 }
 

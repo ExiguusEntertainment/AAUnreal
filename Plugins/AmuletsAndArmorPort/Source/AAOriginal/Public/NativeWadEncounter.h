@@ -27,6 +27,8 @@ struct FWadEncounterProfile
     UPROPERTY()
     FString Name = TEXT("Elf Guardian");
     UPROPERTY()
+    int32 SourceType = 0;
+    UPROPERTY()
     int32 MaxHealth = NativeWadRules::GuardianHealth;
     UPROPERTY()
     int32 RetreatHealth = 500;
@@ -78,12 +80,14 @@ public:
     bool IsDefeated() const { return Health == 0; }
     int32 GetEncounterHealth() const { return Health; }
     void RestoreEncounterHealth(int32 SavedHealth);
+    void SetDefeatPickup(class ANativeWadPickup* Pickup);
     void SetSpawned(bool bSpawned);
     int32 GetBoltsFired() const { return BoltsFired; }
     int32 GetMeleeHits() const { return MeleeHits; }
     int32 GetRegeneratedHealth() const { return RegeneratedHealth; }
     bool CanSeePlayer(const ANativeWadPlayer& Player) const;
     const FString& GetEncounterName() const { return Profile.Name; }
+    int32 GetSourceType() const { return Profile.SourceType; }
 
 private:
     UPROPERTY(VisibleAnywhere)
@@ -106,6 +110,9 @@ private:
 
     UPROPERTY()
     FWadEncounterProfile Profile;
+
+    UPROPERTY()
+    TObjectPtr<class ANativeWadPickup> DefeatPickup;
 
     void FireBolt(ANativeWadPlayer& Player);
     int32 Health = NativeWadRules::GuardianHealth;

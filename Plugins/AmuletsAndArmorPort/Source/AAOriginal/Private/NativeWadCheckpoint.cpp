@@ -117,7 +117,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     {
         const FWadCreatureGenerator* Generator = CreatureGenerators.Find(Id);
         if (!Generator || State.Released < 0 || State.Released > Generator->Creatures.Num()
-            || !FMath::IsFinite(State.Remaining) || State.Remaining < 0 || State.Remaining > Generator->Interval
+            || !FMath::IsFinite(State.Remaining) || State.Remaining < 0 || State.Remaining > Generator->Interval + Generator->RandomInterval
             || (State.Released < Generator->Creatures.Num()) != (State.Remaining > 0))
         {
             return false;

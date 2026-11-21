@@ -169,6 +169,18 @@ struct FWadCreatureGenerator
 
     UPROPERTY()
     float Interval = 0.0f;
+
+    UPROPERTY()
+    int32 RandomInterval = 0;
+
+    UPROPERTY()
+    int32 MaxActive = 0;
+
+    UPROPERTY()
+    int32 SourceType = 0;
+
+    UPROPERTY()
+    bool bStartsActive = false;
 };
 
 USTRUCT()

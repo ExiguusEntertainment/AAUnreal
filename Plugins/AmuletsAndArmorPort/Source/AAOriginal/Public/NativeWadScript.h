@@ -33,7 +33,8 @@ enum class EWadScriptOperation : uint8
     RestoreVitals,
     ChangeSideTexture,
     AddJournalPage,
-    ToggleWallSwitch
+    ToggleWallSwitch,
+    DeactivateGenerator
 };
 
 USTRUCT()
@@ -127,6 +128,9 @@ struct FWadCreatureGeneratorState
 
     UPROPERTY()
     float Remaining = 0.0f;
+
+    UPROPERTY(SaveGame)
+    bool bPaused = false;
 };
 
 #if WITH_EDITOR

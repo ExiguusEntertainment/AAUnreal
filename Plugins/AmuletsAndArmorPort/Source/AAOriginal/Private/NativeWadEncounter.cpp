@@ -200,6 +200,21 @@ void ANativeWadGuardian::RestoreEncounterHealth(int32 SavedHealth)
         GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         Sprite->SetMaterial(0, DownedMaterial);
     }
+    if (IsValid(DefeatPickup))
+    {
+        if (IsDefeated())
+        {
+            const double Offset = 12.0 - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+            DefeatPickup->SetActorLocation(GetActorLocation() + FVector(0.0, 0.0, Offset));
+        }
+        DefeatPickup->SetAvailable(IsDefeated());
+    }
+}
+
+void ANativeWadGuardian::SetDefeatPickup(ANativeWadPickup* Pickup)
+{
+    DefeatPickup = Pickup;
+    DefeatPickup->SetAvailable(false);
 }
 
 void ANativeWadGuardian::SetSpawned(bool bSpawned)

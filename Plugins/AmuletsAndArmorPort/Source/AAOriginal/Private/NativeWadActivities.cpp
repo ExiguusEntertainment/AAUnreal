@@ -6,6 +6,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
@@ -220,6 +221,12 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
             ActivatePickupGenerator(Command.Target);
             ActivateCreatureGenerator(Command.Target);
             break;
+        case EWadScriptOperation::DeactivateGenerator:
+            if (FWadCreatureGeneratorState* State = CreatureGeneratorStates.Find(Command.Target))
+            {
+                State->bPaused = true;
+            }
+            break;
         case EWadScriptOperation::AddNumbers:
         case EWadScriptOperation::SubtractNumbers:
         case EWadScriptOperation::MultiplyNumbers:
@@ -336,10 +343,15 @@ void ANativeWadLevel::TickPickupGenerators(float DeltaSeconds)
 
 void ANativeWadLevel::ActivateCreatureGenerator(int32 Id)
 {
-    if (const FWadCreatureGenerator* Generator = CreatureGenerators.Find(Id);
-        Generator && !CreatureGeneratorStates.Contains(Id))
+    if (const FWadCreatureGenerator* Generator = CreatureGenerators.Find(Id))
     {
-        CreatureGeneratorStates.Add(Id, {0, Generator->Interval});
+        FWadCreatureGeneratorState* State = CreatureGeneratorStates.Find(Id);
+        if (!State)
+        {
+            const float Delay = Generator->Interval + FMath::RandHelper(Generator->RandomInterval);
+            State = &CreatureGeneratorStates.Add(Id, {0, Delay});
+        }
+        State->bPaused = false;
         SetActorTickEnabled(true);
     }
 }
@@ -348,7 +360,7 @@ bool ANativeWadLevel::HasPendingCreatureGenerators() const
 {
     for (const auto& [Id, State] : CreatureGeneratorStates)
     {
-        if (State.Remaining > 0.0f)
+        if (State.Remaining > 0.0f && !State.bPaused)
         {
             return true;
         }
@@ -361,7 +373,7 @@ void ANativeWadLevel::TickCreatureGenerators(float DeltaSeconds)
     for (auto& [Id, State] : CreatureGeneratorStates)
     {
         const FWadCreatureGenerator& Generator = CreatureGenerators.FindChecked(Id);
-        if (!Generator.Creatures.IsValidIndex(State.Released))
+        if (State.bPaused || !Generator.Creatures.IsValidIndex(State.Released))
         {
             continue;
         }
@@ -370,7 +382,22 @@ void ANativeWadLevel::TickCreatureGenerators(float DeltaSeconds)
         {
             continue;
         }
-        State.Remaining = Generator.Interval;
+        State.Remaining = Generator.Interval + FMath::RandHelper(Generator.RandomInterval);
+        if (Generator.MaxActive > 0)
+        {
+            int32 Active = 0;
+            for (TActorIterator<ANativeWadGuardian> It(GetWorld()); It && Active < Generator.MaxActive; ++It)
+            {
+                if (!It->IsHidden() && !It->IsDefeated() && It->GetSourceType() == Generator.SourceType)
+                {
+                    ++Active;
+                }
+            }
+            if (Active >= Generator.MaxActive)
+            {
+                continue;
+            }
+        }
         ANativeWadGuardian* Creature = Generator.Creatures[State.Released];
         FVector Spawn = Creature->GetActorLocation();
         const UCapsuleComponent* Capsule = Creature->GetCapsuleComponent();

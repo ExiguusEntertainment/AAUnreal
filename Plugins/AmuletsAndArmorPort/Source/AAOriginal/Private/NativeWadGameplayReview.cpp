@@ -465,6 +465,7 @@ namespace
     };
 
     enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll };
+    enum class EUndeadReview { None, Launch, Castle, Traps, Keep, Boss, Return, Empty };
     enum class EL25Review
     {
         None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload,
@@ -489,6 +490,13 @@ namespace
     constexpr const TCHAR* ElmoreL153Slot = TEXT("NativeWadElmoreL153Review");
     constexpr const TCHAR* ElmoreVaultSlot = TEXT("NativeWadElmoreVaultReview");
     constexpr const TCHAR* ElmoreOrbSlot = TEXT("NativeWadElmoreOrbReview");
+    constexpr const TCHAR* ElmoreTownSlot = TEXT("NativeWadElmoreTownReview");
+    constexpr const TCHAR* UndeadCastleSlot = TEXT("NativeWadUndeadCastleReview");
+    constexpr const TCHAR* UndeadTrapsSlot = TEXT("NativeWadUndeadTrapsReview");
+    constexpr const TCHAR* UndeadKeepSlot = TEXT("NativeWadUndeadKeepReview");
+    constexpr const TCHAR* UndeadCemeterySlot = TEXT("NativeWadUndeadCemeteryReview");
+    constexpr const TCHAR* UndeadOrbSlot = TEXT("NativeWadUndeadOrbReview");
+    constexpr const TCHAR* UndeadTownSlot = TEXT("NativeWadUndeadTownReview");
     constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
     enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
 
@@ -615,6 +623,7 @@ namespace
         bool bLiftReload = false;
         bool bDoorReload = false;
         ETownReview TownReview = ETownReview::None;
+        EUndeadReview UndeadReview = EUndeadReview::None;
         EL25Review L25Review = EL25Review::None;
         TArray<int32> ItemsBeforeTravel;
         int32 ReadyBeforeTravel = INDEX_NONE;
@@ -3422,9 +3431,422 @@ namespace
             bool bSaved = false;
             if (Now - StageTime > 0.5 && CaptureTownFrame(bSuccess ? TEXT("town-success") : TEXT("town-empty"), bSaved))
             {
+                if (bSuccess && !Player.SaveWadCheckpoint(ElmoreTownSlot))
+                {
+                    return Finish(&Player, TEXT("could not save the Elmore Town Hall result"));
+                }
                 UE_LOG(LogTemp, Display, TEXT("Verified Elmore's Retreat Town Hall result. Success=%d, experience reward=%d."),
                     bSuccess, Player.GetExperience() - ExperienceBeforeTravel);
                 return Finish(&Player, bSaved ? nullptr : TEXT("could not capture the original Elmore result"));
+            }
+            return true;
+        }
+
+        bool TickUndeadCastle(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D Lift;
+            Level.GetSectorSurfaceHeights(263, Lift);
+            if (NextPoint == 0 && PlaceReviewPlayer(Level, Player, {1648, 2460}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 1 && WalkTo(Player, {1648, 2392}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 2 && Lift.X == 320.0)
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 3 && Lift.X == 0.0 && PlaceReviewPlayer(Level, Player, {861, -250}))
+            {
+                UE_LOG(LogTemp, Display, TEXT("Verified the L231 pressure plate raises floor 263 to 320 and returns it to zero."));
+                ++NextPoint;
+            }
+            else if (NextPoint == 4)
+            {
+                WalkTo(Player, {861, -319});
+            }
+            return true;
+        }
+
+        bool TickUndeadTraps(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D Crusher, Lift;
+            Level.GetSectorSurfaceHeights(105, Crusher);
+            Level.GetSectorSurfaceHeights(48, Lift);
+            if (NextPoint == 0 && PlaceReviewPlayer(Level, Player, {2034, 1687}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 1 && WalkTo(Player, {2084, 1659}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 2 && Crusher.Y <= 120)
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 3 && Crusher.Y == 224 && PlaceReviewPlayer(Level, Player, {1, 1023}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 4 && Player.GetCharacterMovement()->IsMovingOnGround())
+            {
+                Aim(Player, {29, 1023, 44});
+                Press(Player, EKeys::E);
+                ++NextPoint;
+            }
+            else if (NextPoint == 5 && Lift.X == 16 && PlaceReviewPlayer(Level, Player, {-887, 1009}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 6 && WalkTo(Player, {-950, 1009}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 7 && Lift.X == 96 && PlaceReviewPlayer(Level, Player, {1528, 511}))
+            {
+                UE_LOG(LogTemp, Display, TEXT("Verified L75's crusher cycles and the original switch lowers the first exit lift before it rises again."));
+                ++NextPoint;
+            }
+            else if (NextPoint == 8 && WalkTo(Player, {1528, 465}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 9)
+            {
+                FWadLevelCheckpoint Snapshot;
+                if (Level.WriteCheckpoint(Snapshot, true) && Snapshot.CreatureGenerators.FindRef(2).Released == 1
+                    && Snapshot.CreatureGenerators.FindRef(3).Released == 1 && PlaceReviewPlayer(Level, Player, {-975, -210}))
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L75's trap releases both authored Evil Knights."));
+                    ++NextPoint;
+                }
+            }
+            else if (NextPoint == 10)
+            {
+                WalkTo(Player, {-1035, -210});
+            }
+            return true;
+        }
+
+        bool TickUndeadKeep(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D Platform, DoorHeights;
+            Level.GetSectorSurfaceHeights(120, Platform);
+            Level.GetSectorSurfaceHeights(200, DoorHeights);
+            switch (NextPoint)
+            {
+            case 0:
+                CapturedItem = Player.GetItemCount(NativeWadRules::ElmoreKey6);
+                if (PlaceReviewPlayer(Level, Player, {-499, -48})) { ++NextPoint; }
+                break;
+            case 1:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-471, -48, 164});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Platform.X == 100 && PlaceReviewPlayer(Level, Player, {-2417, 1696})) { ++NextPoint; }
+                break;
+            case 3:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-2445, 1696, 44});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Platform.X == 0 && PlaceReviewPlayer(Level, Player, {-983, 1793})) { ++NextPoint; }
+                break;
+            case 5:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-956, 1771, 12});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 6:
+                if (Player.GetItemCount(NativeWadRules::ElmoreKey6) == CapturedItem + 1
+                    && PlaceReviewPlayer(Level, Player, {-969, 2905})) { ++NextPoint; }
+                break;
+            case 7:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-969, 2939, 128});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 8:
+                if (DoorHeights.Y - DoorHeights.X >= 56 && WalkTo(Player, {-969, 2980}))
+                {
+                    if (!PlaceReviewPlayer(Level, Player, {-804, 3175}))
+                    {
+                        return Finish(&Player, TEXT("could not reach the L10 exit approach"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified both L10 switches, Key 6 riding its platform, and crossing the native key door."));
+                    ++NextPoint;
+                }
+                break;
+            case 9:
+                WalkTo(Player, {-740, 3175});
+                break;
+            }
+            return true;
+        }
+
+        bool TickUndeadBoss(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            ANativeWadGuardian* Boss = nullptr;
+            ANativeWadPickup* Orb = nullptr;
+            for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+            {
+                if (It->ActorHasTag(TEXT("WAD Creature Exiguus"))) { Boss = *It; break; }
+            }
+            for (TActorIterator<ANativeWadPickup> It(Player.GetWorld()); It; ++It)
+            {
+                if (It->GetItemType() == NativeWadRules::OrbOfTheUndead) { Orb = *It; break; }
+            }
+            if (!Boss || (NextPoint < 7 && !Orb))
+            {
+                return Finish(&Player, TEXT("the L12 encounter lost Exiguus or his orb"));
+            }
+            if (NextPoint == 0)
+            {
+                if (Orb->IsAvailable() || Boss->GetEncounterHealth() != 10000 || !PlaceReviewPlayer(Level, Player, {4040, 3350}))
+                {
+                    return Finish(&Player, TEXT("Exiguus did not begin alive with his drop hidden"));
+                }
+                ++NextPoint;
+            }
+            else if (NextPoint == 1 && Player.GetCharacterMovement()->IsMovingOnGround())
+            {
+                Aim(Player, {4040, 3376, 12});
+                Press(Player, EKeys::E);
+                ++NextPoint;
+            }
+            else if (NextPoint == 2 && Player.GetItemCount(NativeWadRules::Key1) == 1
+                && PlaceReviewPlayer(Level, Player, {1235, 3616}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 3 && Player.GetCharacterMovement()->IsMovingOnGround())
+            {
+                Aim(Player, {1268, 3616, 60});
+                Press(Player, EKeys::E);
+                ++NextPoint;
+            }
+            else if (NextPoint == 4)
+            {
+                FVector2D DoorHeights;
+                if (Level.GetSectorSurfaceHeights(81, DoorHeights) && DoorHeights.Y - DoorHeights.X >= 56
+                    && WalkTo(Player, {1310, 3616}) && PlaceReviewPlayer(Level, Player, {-3729, 3603}))
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L12's original Key 1 opens door sector 81 and permits crossing."));
+                    ++NextPoint;
+                }
+            }
+            else if (NextPoint == 5 && Player.GetCharacterMovement()->IsMovingOnGround())
+            {
+                Aim(Player, Boss->GetActorLocation());
+                bool bSaved = false;
+                if (CaptureTownFrame(TEXT("exiguus"), bSaved))
+                {
+                    if (!bSaved || !Boss->TakeMeleeHit(Player, Boss->GetEncounterHealth()))
+                    {
+                        return Finish(&Player, TEXT("the controlled Exiguus defeat failed"));
+                    }
+                    ++NextPoint;
+                }
+            }
+            else if (NextPoint == 6)
+            {
+                if (!Boss->IsDefeated() || !Orb->IsAvailable())
+                {
+                    return Finish(&Player, TEXT("Exiguus did not drop the Orb of the Undead on defeat"));
+                }
+                Aim(Player, Orb->GetActorLocation());
+                Press(Player, EKeys::E);
+                ++NextPoint;
+            }
+            else if (NextPoint == 7)
+            {
+                if (Player.GetItemCount(NativeWadRules::OrbOfTheUndead) != 1)
+                {
+                    return Finish(&Player, TEXT("E did not collect Exiguus's orb"));
+                }
+                bool bSaved = false;
+                if (CaptureTownFrame(TEXT("orb-of-the-undead"), bSaved))
+                {
+                    if (!bSaved || !Player.SaveWadCheckpoint(UndeadOrbSlot))
+                    {
+                        return Finish(&Player, TEXT("could not save Exiguus's defeat and the collected orb"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified Exiguus's defeat releases his hidden orb and E collects it."));
+                    return Finish(&Player);
+                }
+            }
+            return true;
+        }
+
+        bool TickUndeadExit(ANativeWadLevel& Level, ANativeWadPlayer& Player, const UNativeWadTravelState& Travel)
+        {
+            FVector2D Exit;
+            Level.GetSectorSurfaceHeights(294, Exit);
+            if (NextPoint == 0)
+            {
+                const bool bSuccess = UndeadReview == EUndeadReview::Return;
+                if ((Player.GetItemCount(NativeWadRules::OrbOfTheUndead) == 1) != bSuccess)
+                {
+                    return Finish(&Player, TEXT("the L12 return review has the wrong orb inventory"));
+                }
+                AndrewStartingGold = Travel.Quest.Gold;
+                ExperienceBeforeTravel = Player.GetExperience();
+                if (PlaceReviewPlayer(Level, Player, {-3853, 3657})) { ++NextPoint; }
+            }
+            else if (NextPoint == 1 && WalkTo(Player, {-3895, 3671}))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 2 && Exit.X == 0 && PlaceReviewPlayer(Level, Player, {1946, 960}))
+            {
+                FWadLevelCheckpoint Snapshot;
+                if (!Level.WriteCheckpoint(Snapshot, true) || Snapshot.CreatureGenerators.Num() != 4
+                    || !Snapshot.CreatureGenerators.FindRef(0).bPaused || !Snapshot.CreatureGenerators.FindRef(1).bPaused
+                    || !Snapshot.CreatureGenerators.FindRef(2).bPaused || !Snapshot.CreatureGenerators.FindRef(3).bPaused)
+                {
+                    return Finish(&Player, TEXT("L12's exit plate did not pause the four original skeleton generators"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified L12's exit plate lowers floor 294 to zero."));
+                ++NextPoint;
+            }
+            else if (NextPoint == 3)
+            {
+                WalkTo(Player, {1880, 960});
+            }
+            return true;
+        }
+
+        bool TickUndead(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the Exiguus review lost the player or campaign"));
+            }
+            const bool bTown = Current.GetAuthGameMode<ANativeWadTownGameMode>() != nullptr;
+            const FWadQuestProgress& Quest = Travel->Quest;
+            if (bTown && UndeadReview == EUndeadReview::Launch)
+            {
+                if (!Player.HasRestoredWadCheckpoint() || !Player.HasCompletedWadLevel(TEXT("L153")))
+                {
+                    return Finish(&Player, TEXT("the Exiguus quest needs the completed Elmore save"));
+                }
+                if (Quest.bShowResult) { Press(Player, EKeys::Enter); return true; }
+                if (NextPoint == 0 && Quest.Selected == 2)
+                {
+                    RecordTownCharacter(Player);
+                    Press(Player, EKeys::Right);
+                    ++NextPoint;
+                }
+                else if (NextPoint == 1 && Quest.Selected == 3)
+                {
+                    SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                    Press(Player, EKeys::Q);
+                    ++NextPoint;
+                }
+                else if (NextPoint == 2 && CaptureUndeadFrame(Player, TEXT("briefing")))
+                {
+                    Press(Player, EKeys::Enter);
+                    ++NextPoint;
+                }
+                return true;
+            }
+            if (bTown)
+            {
+                if (Travel->ArrivingFromMap != 0) { return true; }
+                const bool bSuccess = UndeadReview == EUndeadReview::Return;
+                const auto* L12 = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L12"));
+                if (!Quest.bShowResult || Quest.Active != INDEX_NONE || Quest.ResultQuest != 3 || Quest.bSucceeded != bSuccess
+                    || Quest.Gold != AndrewStartingGold + (bSuccess ? 50 : 0) || Player.GetExperience() != ExperienceBeforeTravel
+                    || Player.GetItemCount(NativeWadRules::OrbOfTheUndead) != 0
+                    || !L12 || L12->RemainingPickups.Contains(TEXT("WAD Exiguus Orb Drop")) == bSuccess)
+                {
+                    return Finish(&Player, TEXT("Town Hall did not apply the original Orb of the Undead result"));
+                }
+                if (CaptureUndeadFrame(Player, bSuccess ? TEXT("town-success") : TEXT("town-empty")))
+                {
+                    if (bSuccess && !Player.SaveWadCheckpoint(UndeadTownSlot))
+                    {
+                        return Finish(&Player, TEXT("could not save the completed Exiguus quest"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified Exiguus Town Hall result. Success=%d, gold reward=%d."),
+                        bSuccess, Quest.Gold - AndrewStartingGold);
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            if (Quest.Active != 3 || !Travel->JournalPages.Contains(403))
+            {
+                return Finish(&Player, TEXT("the Exiguus route lost its quest or source journal page"));
+            }
+            if (&Current != SourceWorld.Get())
+            {
+                const TCHAR* Map = UndeadReview == EUndeadReview::Launch ? TEXT("L231") : UndeadReview == EUndeadReview::Castle ? TEXT("L75")
+                    : UndeadReview == EUndeadReview::Traps ? TEXT("L10") : TEXT("L12");
+                const FVector2D Spawn = UndeadReview == EUndeadReview::Launch ? FVector2D(-2208, 2416)
+                    : UndeadReview == EUndeadReview::Castle ? FVector2D(2096, 3034)
+                    : UndeadReview == EUndeadReview::Traps ? FVector2D(-1268, -531) : FVector2D(4530, 1171);
+                const TCHAR* Slot = UndeadReview == EUndeadReview::Launch ? UndeadCastleSlot : UndeadReview == EUndeadReview::Castle ? UndeadTrapsSlot
+                    : UndeadReview == EUndeadReview::Traps ? UndeadKeepSlot : UndeadCemeterySlot;
+                if (!Current.GetMapName().EndsWith(Map) || !FVector2D(Player.GetActorLocation()).Equals(Spawn, 4)
+                    || (UndeadReview == EUndeadReview::Launch && !MatchesTownCharacter(Player)))
+                {
+                    return Finish(&Player, TEXT("the Exiguus route did not reach its authored start"));
+                }
+                if (Player.GetCharacterMovement()->IsMovingOnGround() && CaptureUndeadFrame(Player, TEXT("arrival")))
+                {
+                    if (!Player.SaveWadCheckpoint(Slot))
+                    {
+                        return Finish(&Player, TEXT("could not save the Exiguus arrival"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified Exiguus quest arrival at %s with the source spawn and journal."), Map);
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || !Player.HasRestoredWadCheckpoint())
+            {
+                return Finish(&Player, TEXT("the Exiguus map needs its native checkpoint"));
+            }
+            switch (UndeadReview)
+            {
+            case EUndeadReview::Castle: return TickUndeadCastle(**Level, Player);
+            case EUndeadReview::Traps: return TickUndeadTraps(**Level, Player);
+            case EUndeadReview::Keep: return TickUndeadKeep(**Level, Player);
+            case EUndeadReview::Boss: return TickUndeadBoss(**Level, Player);
+            default: return TickUndeadExit(**Level, Player, *Travel);
+            }
+        }
+
+        bool CaptureUndeadFrame(ANativeWadPlayer& Player, const TCHAR* Name)
+        {
+            bool bSaved = false;
+            if (!CaptureTownFrame(Name, bSaved))
+            {
+                return false;
+            }
+            if (!bSaved)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Could not capture Exiguus review image %s in %s."), Name, *Player.GetWorld()->GetMapName());
             }
             return true;
         }
@@ -5101,6 +5523,10 @@ namespace
             {
                 return TickTown(*Current, *Player);
             }
+            if (UndeadReview != EUndeadReview::None)
+            {
+                return TickUndead(*Current, *Player);
+            }
             if (L25Review != EL25Review::None)
             {
                 return TickL25(*Current, *Player);
@@ -5423,6 +5849,10 @@ bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 I
 
 bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, const FString& Mode)
 {
+    const EUndeadReview UndeadReview = Mode == TEXT("undeadlaunch") ? EUndeadReview::Launch
+        : Mode == TEXT("undeadcastle") ? EUndeadReview::Castle : Mode == TEXT("undeadtraps") ? EUndeadReview::Traps
+        : Mode == TEXT("undeadkeep") ? EUndeadReview::Keep : Mode == TEXT("undeadboss") ? EUndeadReview::Boss
+        : Mode == TEXT("undeadreturn") ? EUndeadReview::Return : Mode == TEXT("undeadempty") ? EUndeadReview::Empty : EUndeadReview::None;
     const EL25Review L25Review = Mode == TEXT("churchpassages") ? EL25Review::Passages
         : Mode == TEXT("churchkeyreload") ? EL25Review::KeyReload
         : Mode == TEXT("churchdoorreload") ? EL25Review::DoorReload : Mode == TEXT("churchknights") ? EL25Review::Knights
@@ -5446,7 +5876,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : Mode == TEXT("townstart") ? ETownReview::Start
         : Mode == TEXT("townscroll") ? ETownReview::Scroll : ETownReview::None;
     const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start
-        || TownReview == ETownReview::Scroll || L25Review == EL25Review::ElmoreLaunch;
+        || TownReview == ETownReview::Scroll || L25Review == EL25Review::ElmoreLaunch || UndeadReview == EUndeadReview::Launch;
     const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
         : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
     const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
@@ -5458,6 +5888,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bDoorReload = Mode == TEXT("doorreload");
     const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bStartsInL20 ? TEXT("L20")
+        : UndeadReview == EUndeadReview::Castle ? TEXT("L231") : UndeadReview == EUndeadReview::Traps ? TEXT("L75")
+        : UndeadReview == EUndeadReview::Keep ? TEXT("L10") : UndeadReview != EUndeadReview::None ? TEXT("L12")
         : L25Review >= EL25Review::ElmoreL153Puzzles ? TEXT("L153") : L25Review == EL25Review::ElmoreL152 ? TEXT("L152")
         : L25Review == EL25Review::ElmoreL151Exit ? TEXT("L151")
         : L25Review == EL25Review::ElmoreL151Reload ? TEXT("L151") : L25Review == EL25Review::ElmoreL34 ? TEXT("L34")
@@ -5489,6 +5921,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bLiftReload = Mode == TEXT("liftreload");
     Review->bDoorReload = bDoorReload;
     Review->TownReview = TownReview;
+    Review->UndeadReview = UndeadReview;
     Review->L25Review = L25Review;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;

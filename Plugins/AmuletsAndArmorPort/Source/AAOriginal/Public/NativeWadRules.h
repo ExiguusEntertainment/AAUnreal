@@ -34,6 +34,8 @@ namespace NativeWadRules
     inline constexpr int32 ChurchKey = 258;
     inline constexpr int32 AndrewNecklace = 958;
     inline constexpr int32 OrbOfDefense = 954;
+    inline constexpr int32 OrbOfTheUndead = 955;
+    inline constexpr int32 Key1 = 257;
     inline constexpr int32 ElmoreKey3 = 259;
     inline constexpr int32 ElmoreKey5 = 261;
     inline constexpr int32 ElmoreKey6 = 262;

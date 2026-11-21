@@ -20,6 +20,8 @@ namespace
         case ChurchKey: return TEXT("Church key");
         case AndrewNecklace: return TEXT("Necklace of Andrew");
         case OrbOfDefense: return TEXT("Orb of Defense");
+        case OrbOfTheUndead: return TEXT("Orb of the Undead");
+        case Key1: return TEXT("Key 1");
         case ElmoreKey3: return TEXT("Key 3");
         case ElmoreKey5: return TEXT("Key 5");
         case ElmoreKey6: return TEXT("Key 6");

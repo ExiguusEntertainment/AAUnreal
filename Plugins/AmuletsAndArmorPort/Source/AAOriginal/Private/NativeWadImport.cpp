@@ -709,6 +709,8 @@ struct FAAWadNativeImport
         const bool bChurchQuestMap = MapName == TEXT("L25") || MapName == TEXT("L20") || MapName == TEXT("L60");
         const bool bRetreatMap = MapName == TEXT("L64") || MapName == TEXT("L65") || MapName == TEXT("L34")
             || MapName == TEXT("L152") || MapName == TEXT("L153");
+        const bool bUndeadMap = MapName == TEXT("L231") || MapName == TEXT("L75") || MapName == TEXT("L10")
+            || MapName == TEXT("L12");
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && (!InstallL151Slice(World, Actor, Map, WadPath, Output)
                 || !InstallL151Key(World, Actor, Map, Output)))
@@ -717,11 +719,12 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L25") && !InstallL25Script(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L20") && !InstallL20Script(Actor, Map, WadPath, Output))
-            || ((bChurchQuestMap || bRetreatMap) && !InstallScenery(World, Actor, Map, bRetreatMap, Output))
+            || ((bChurchQuestMap || bRetreatMap || bUndeadMap) && !InstallScenery(World, Actor, Map, bRetreatMap || bUndeadMap, Output))
             || (bChurchQuestMap && !InstallChurchEncounters(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
             || (bRetreatMap && (!InstallRetreatScript(Actor, Map, WadPath, MapName, Output)
                 || !InstallRetreatEncounters(World, Actor, Map, Output)))
+            || (bUndeadMap && !InstallUndeadQuest(World, Actor, Map, WadPath, MapName, Output))
             || (MapName == TEXT("L152") && !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("ElmoreKey6"),
                     TEXT("KEY6/KEY6.CPC"), TEXT("L152 Key 6"), Output, FWadLevelCheckpoint::ElmoreKeysRevision))
             || (MapName == TEXT("L153") && (!InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("ElmoreKey3"),
@@ -757,6 +760,272 @@ struct FAAWadNativeImport
             : MapName == TEXT("L65") ? TConstArrayView<int32>(L65Entries)
             : MapName == TEXT("L152") ? TConstArrayView<int32>(L152Entries)
             : MapName == TEXT("L153") ? TConstArrayView<int32>(L153Entries) : TConstArrayView<int32>(L34Entries);
+        return InstallCampaignScript(Actor, Map, WadPath, MapName, Entries, UnavailableSounds, Output);
+    }
+
+    bool InstallUndeadQuest(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        const FString& MapName, FOutputDevice& Output)
+    {
+        TArray<int32> Entries{0};
+        for (const auto& Sector : Map.Sectors)
+        {
+            Entries.AddUnique(Sector.Type);
+        }
+        for (const auto& Line : Map.Lines)
+        {
+            Entries.AddUnique(Line.Special);
+        }
+        Entries.Sort();
+        constexpr int32 UnavailableSounds[] = {3501};
+        if (!InstallCampaignScript(Actor, Map, WadPath, MapName, Entries, UnavailableSounds, Output))
+        {
+            return false;
+        }
+        if (!InstallUndeadCreatures(World, Actor, Map, WadPath, Output))
+        {
+            return false;
+        }
+        if (MapName == TEXT("L10"))
+        {
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("Key6"),
+                TEXT("KEY6/KEY6.CPC"), TEXT("L10 Key 6"), Output, 0, true);
+        }
+        if (MapName == TEXT("L12"))
+        {
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key1, TEXT("Key1"),
+                TEXT("KEY1/KEY1.CPC"), TEXT("L12 Key 1"), Output) && InstallExiguus(World, Actor, Map, Output);
+        }
+        return true;
+    }
+
+    bool InstallUndeadCreatures(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
+        const FString& WadPath, FOutputDevice& Output)
+    {
+        struct FGeneratorSource
+        {
+            int32 Type, X, Y, Angle, Interval, Random, MaxActive, MaxLike, Active, Count;
+        };
+        TArray<FGeneratorSource> Source;
+        TArray<FString> Lines;
+        if (!FFileHelper::LoadFileToStringArray(Lines, *FPaths::ChangeExtension(WadPath, TEXT("GEN"))))
+        {
+            return false;
+        }
+        for (const FString& Line : Lines)
+        {
+            FString Record = Line;
+            int32 Comment;
+            if (Record.FindChar(TCHAR(';'), Comment))
+            {
+                Record.LeftInline(Comment);
+            }
+            TArray<FString> Words;
+            Record.ParseIntoArrayWS(Words);
+            if (Words.IsEmpty())
+            {
+                continue;
+            }
+            int32 Fields[10];
+            if (Words.Num() != 11 || Words[0] != TEXT("G"))
+            {
+                return false;
+            }
+            for (int32 Index = 0; Index < UE_ARRAY_COUNT(Fields); ++Index)
+            {
+                if (!FDefaultValueHelper::ParseInt(Words[Index + 1], Fields[Index]))
+                {
+                    return false;
+                }
+            }
+            Source.Add({Fields[0], Fields[1], Fields[2], Fields[3], Fields[4], Fields[5],
+                Fields[6], Fields[7], Fields[8], Fields[9]});
+        }
+        struct FCreatureSource
+        {
+            int32 Type;
+            const TCHAR* Name;
+            const TCHAR* Resource;
+            const TCHAR* Standing;
+            const TCHAR* Hurt;
+            const TCHAR* Downed;
+            const TCHAR* Attacking;
+            const TCHAR* Bolt;
+            int32 Health, Retreat, Melee, Radius, Step, Vision, BoltDamage;
+        };
+        constexpr FCreatureSource Creatures[] = {
+            {4080, TEXT("Evil Knight"), TEXT("EVILKNT"), TEXT("EKNTW001.CPC"), TEXT("EKNTD001.CPC"),
+                TEXT("EKNTD008.CPC"), TEXT("EKNTA001.CPC"), nullptr, 3000, 300, 400, 15, 10, 180, 0},
+            {1025, TEXT("Electric Skeleton"), TEXT("NEWSKEL"), TEXT("SKWK1A.CPC"), TEXT("SKDY1A.CPC"),
+                TEXT("SKDY1F.CPC"), TEXT("SKAT1A.CPC"), TEXT("MISSIL12/1.CPC"), 3000, 500, 600, 15, 10, 180, 100},
+        };
+        Actor.CreatureGenerators.Reset();
+        UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        for (const FCreatureSource& Creature : Creatures)
+        {
+            const auto HasType = [&Creature](const auto& Entry) { return Entry.Type == Creature.Type; };
+            if (!Map.Things.ContainsByPredicate(HasType) && !Source.ContainsByPredicate(HasType))
+            {
+                continue;
+            }
+            const FString Root(Creature.Resource);
+            FIntPoint Size;
+            auto* Standing = SpriteMaterial(Root, Root / Creature.Standing, &Size);
+            auto* Hurt = SpriteMaterial(Root + TEXT("_Hurt"), Root / Creature.Hurt);
+            auto* Downed = SpriteMaterial(Root + TEXT("_Down"), Root / Creature.Downed);
+            auto* Attacking = SpriteMaterial(Root + TEXT("_Attack"), Root / Creature.Attacking);
+            auto* Bolt = Creature.Bolt ? SpriteMaterial(TEXT("MagicDart"), Creature.Bolt) : nullptr;
+            if (!Plane || !Standing || !Hurt || !Downed || !Attacking || (Creature.Bolt && !Bolt))
+            {
+                return false;
+            }
+            FWadEncounterProfile Profile;
+            Profile.Name = Creature.Name;
+            Profile.SourceType = Creature.Type;
+            Profile.MaxHealth = Creature.Health;
+            Profile.RetreatHealth = Creature.Retreat;
+            Profile.MeleeDamage = Creature.Melee;
+            Profile.MeleeDelayUpdates = 10;
+            Profile.MeleeRange = 30.0f;
+            Profile.CollisionRadius = Creature.Radius;
+            Profile.CollisionHalfHeight = Size.Y * 0.5f;
+            Profile.SpriteSize = FVector2D(Size);
+            Profile.UpdateTicks = 7;
+            Profile.WalkSpeed = Creature.Step * TicksPerSecond / 10.0f;
+            Profile.VisionHalfAngle = Creature.Vision * 0.5f;
+            Profile.BoltDamage = Creature.BoltDamage;
+            Profile.MinBoltRange = Creature.Bolt ? 250.0f : 0.0f;
+            Profile.BoltRange = Creature.Bolt ? 1000 : 0;
+            const double Offset = Profile.CollisionHalfHeight + 2.0;
+            const auto Configure = [&](ANativeWadGuardian& Enemy)
+            {
+                Enemy.Configure(Plane, Standing, Downed, Attacking, Hurt, Bolt, Profile);
+            };
+            for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+            {
+                const FWadThing& Thing = Map.Things[Id];
+                if (!HasType(Thing))
+                {
+                    continue;
+                }
+                const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+                if (!Map.Sectors.IsValidIndex(Sector))
+                {
+                    return false;
+                }
+                const FString Label = FString::Printf(TEXT("WAD Creature Thing %d"), Id);
+                auto* Enemy = ImportSliceThing<ANativeWadGuardian>(World, Map, Id, Actor.GetWalkingHeight(Sector) + Offset, *Label);
+                if (!Enemy)
+                {
+                    return false;
+                }
+                Configure(*Enemy);
+            }
+            for (int32 Id = 0; Id < Source.Num(); ++Id)
+            {
+                const FGeneratorSource& Record = Source[Id];
+                if (!HasType(Record))
+                {
+                    continue;
+                }
+                const FVector2D XY(Record.X, Record.Y);
+                const int32 Sector = Actor.FindWadSector(XY);
+                if (Sector == INDEX_NONE || Record.Interval <= 0 || Record.Random < 0 || Record.Count <= 0
+                    || Record.Count > 40 || Record.MaxActive <= 0 || Record.MaxLike <= 0)
+                {
+                    return false;
+                }
+                FWadCreatureGenerator& Generator = Actor.CreatureGenerators.Add(Id);
+                Generator.Sector = Sector;
+                Generator.Interval = Record.Interval;
+                Generator.RandomInterval = Record.Random;
+                Generator.SourceType = Creature.Type;
+                Generator.MaxActive = FMath::Min(Record.MaxActive, Record.MaxLike);
+                Generator.bStartsActive = Record.Active != 0;
+                const FVector Position(XY, Actor.GetWalkingHeight(Sector) + Offset);
+                const FRotator Rotation(0, Record.Angle * (360.0 / 65536.0), 0);
+                for (int32 Index = 0; Index < Record.Count; ++Index)
+                {
+                    const FString Label = FString::Printf(TEXT("WAD Generator %d Creature %d"), Id, Index);
+                    auto* Enemy = ImportTaggedActor<ANativeWadGuardian>(World, Position, Rotation, *Label);
+                    if (!Enemy)
+                    {
+                        return false;
+                    }
+                    Enemy->SetActorLocationAndRotation(Position, Rotation);
+                    Configure(*Enemy);
+                    Enemy->SetSpawned(false);
+                    Generator.Creatures.Add(Enemy);
+                }
+                Output.Logf(TEXT("Imported generator %d with %d %s releases."), Id, Record.Count, Creature.Name);
+            }
+        }
+        for (int32 Id = 0; Id < Source.Num(); ++Id)
+        {
+            if (!Actor.CreatureGenerators.Contains(Id))
+            {
+                Output.Logf(TEXT("Deferred original generator %d (thing type %d)."), Id, Source[Id].Type);
+            }
+        }
+        return true;
+    }
+
+    bool InstallExiguus(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        constexpr int32 CreatureType = 1032;
+        const int32 Id = Map.Things.IndexOfByPredicate([](const FWadThing& Thing) { return Thing.Type == CreatureType; });
+        if (!Map.Things.IsValidIndex(Id))
+        {
+            return false;
+        }
+        const FWadThing& Thing = Map.Things[Id];
+        const FVector2D XY(Thing.X, Thing.Y);
+        const int32 Sector = Actor.FindWadSector(XY);
+        UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        FIntPoint Size;
+        UMaterial* Standing = SpriteMaterial(TEXT("WIZORNG"), TEXT("WIZORNG/OWWALK01.CPC"), &Size);
+        UMaterial* Hurt = SpriteMaterial(TEXT("WIZORNG_Hurt"), TEXT("WIZORNG/OWDIE01.CPC"));
+        UMaterial* Downed = SpriteMaterial(TEXT("WIZORNG_Down"), TEXT("WIZORNG/OWDIE08.CPC"));
+        UMaterial* Attacking = SpriteMaterial(TEXT("WIZORNG_Attack"), TEXT("WIZORNG/OWA01.CPC"));
+        UMaterial* OrbImage = SpriteMaterial(TEXT("OrbOfTheUndead"), TEXT("ORB6/ORB6.CPC"));
+        if (Sector == INDEX_NONE || !Plane || !Standing || !Hurt || !Downed || !Attacking || !OrbImage)
+        {
+            return false;
+        }
+        FWadEncounterProfile Profile;
+        Profile.Name = TEXT("Exiguus");
+        Profile.MaxHealth = 10000;
+        Profile.RetreatHealth = 0;
+        Profile.MeleeDamage = 400;
+        Profile.MeleeDelayUpdates = 10;
+        Profile.MeleeRange = 60.0f;
+        Profile.BoltDamage = 0;
+        Profile.BoltRange = 0;
+        Profile.RegenPerUpdate = 0;
+        Profile.CollisionRadius = 25.0f;
+        Profile.CollisionHalfHeight = Size.Y * 0.5f;
+        Profile.SpriteSize = FVector2D(Size);
+        Profile.UpdateTicks = 7;
+        Profile.WalkSpeed = 12 * TicksPerSecond / (7 + (7 >> 1));
+        Profile.VisionHalfAngle = 157.5f;
+        const double Floor = Actor.GetWalkingHeight(Sector);
+        ANativeWadGuardian* Exiguus = ImportSliceThing<ANativeWadGuardian>(World, Map, Id,
+            Floor + Profile.CollisionHalfHeight + 2.0, TEXT("WAD Creature Exiguus"));
+        ANativeWadPickup* Orb = ImportTaggedActor<ANativeWadPickup>(World, FVector(XY, Floor + 12.0),
+            FRotator::ZeroRotator, TEXT("WAD Exiguus Orb Drop"));
+        if (!Exiguus || !Orb)
+        {
+            return false;
+        }
+        Orb->Configure(Plane, OrbImage, NativeWadRules::OrbOfTheUndead);
+        Exiguus->Configure(Plane, Standing, Downed, Attacking, Hurt, nullptr, Profile);
+        Exiguus->SetDefeatPickup(Orb);
+        Output.Logf(TEXT("Imported Exiguus from Thing %d in sector %d and attached his Orb of the Undead drop."), Id, Sector);
+        return true;
+    }
+
+    bool InstallCampaignScript(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        const FString& MapName, TConstArrayView<int32> Entries, TConstArrayView<int32> UnavailableSounds, FOutputDevice& Output)
+    {
         const FString ScriptName = TEXT("S") + MapName.Mid(1) + TEXT(".SRP");
         if (!InstallActivities(Actor, Map, WadPath, *ScriptName, Entries, Output, UnavailableSounds))
         {
@@ -802,7 +1071,8 @@ struct FAAWadNativeImport
                 else if (Command.Operation == EWadScriptOperation::LaunchMissile && !Actor.ScriptMissileMaterials.Contains(Command.Target))
                 {
                     const TCHAR* Resource = Command.Target == 4005 ? TEXT("MISSILE6/1.CPC") : Command.Target == 4006 ? TEXT("MISSILE7/1.CPC")
-                        : Command.Target == 4012 ? TEXT("MISSIL13/1.CPC") : Command.Target == 4015 ? TEXT("MISSIL16/1.CPC") : nullptr;
+                        : Command.Target == 4012 ? TEXT("MISSIL13/1.CPC") : Command.Target == 4015 ? TEXT("MISSIL16/1.CPC")
+                        : Command.Target == 4016 ? TEXT("EARTHBND/1.CPC") : nullptr;
                     Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
                     UMaterialInterface* Image = Resource ? SpriteMaterial(FString::Printf(TEXT("Missile%d"), Command.Target), Resource) : nullptr;
                     if (!Actor.ScriptMissileMesh || !Image)
@@ -1440,7 +1710,8 @@ struct FAAWadNativeImport
     }
 
     bool InstallQuestPickup(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, int32 Type,
-        const TCHAR* Asset, const TCHAR* Picture, const TCHAR* Label, FOutputDevice& Output, int32 CheckpointRevision = 0)
+        const TCHAR* Asset, const TCHAR* Picture, const TCHAR* Label, FOutputDevice& Output,
+        int32 CheckpointRevision = 0, bool bFollowFloor = false)
     {
         const int32 Index = Map.Things.IndexOfByPredicate([Type](const FWadThing& Thing) { return Thing.Type == Type; });
         if (!Map.Things.IsValidIndex(Index))
@@ -1466,6 +1737,11 @@ struct FAAWadNativeImport
             return false;
         }
         Pickup->Configure(Plane, Image, Type, CheckpointRevision);
+        if (bFollowFloor && !Pickup->AttachToComponent(Actor.Sectors[Sector].Floor, FAttachmentTransformRules::KeepWorldTransform))
+        {
+            Output.Logf(TEXT("Could not attach %s to its moving floor."), Label);
+            return false;
+        }
         Output.Logf(TEXT("Imported %s from Thing %d in sector %d."), Label, Index, Sector);
         return true;
     }
@@ -2659,6 +2935,8 @@ bool SaveNativeWadHud(FOutputDevice& Output)
         {NativeWadRules::JugurthaJournal, 1, TEXT("BOOK/BOOK.CPC")},
         {958, 1, TEXT("NECKLACE/NECKLACE.CPC")},
         {NativeWadRules::OrbOfDefense, 1, TEXT("ORB5/ORB5.CPC")},
+        {NativeWadRules::OrbOfTheUndead, 1, TEXT("ORB6/ORB6.CPC")},
+        {NativeWadRules::Key1, 1, TEXT("KEY1/KEY1.CPC")},
         {NativeWadRules::ElmoreKey3, 1, TEXT("KEY3/KEY3.CPC")},
         {NativeWadRules::ElmoreKey5, 1, TEXT("KEY5/KEY5.CPC")},
         {NativeWadRules::ElmoreKey6, 1, TEXT("KEY6/KEY6.CPC")},

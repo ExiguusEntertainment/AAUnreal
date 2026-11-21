@@ -54,6 +54,10 @@ void ANativeWadLevel::BeginPlay()
                 Creature->SetSpawned(false);
             }
         }
+        if (Generator.bStartsActive)
+        {
+            ActivateCreatureGenerator(Id);
+        }
     }
     if (DaySky)
     {
