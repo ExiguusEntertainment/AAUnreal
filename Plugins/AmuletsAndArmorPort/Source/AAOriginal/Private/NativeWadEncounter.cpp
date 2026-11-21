@@ -147,7 +147,9 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         return;
     }
-    if (bRetreat || bCloseRetreat || Distance > Profile.BoltRange || (!bMelee && Distance <= Profile.MinBoltRange))
+    const bool bHasMissile = Profile.BoltDamage > 0 && BoltMaterial;
+    if (bRetreat || bCloseRetreat || (!bMelee && (!bHasMissile
+        || Distance > Profile.BoltRange || Distance <= Profile.MinBoltRange)))
     {
         AddMovementInput(bRetreat || bCloseRetreat ? -TowardPlayer : TowardPlayer, 1.0f, true);
     }
@@ -161,7 +163,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         HitTime = Now + 18 / TicksPerSecond;
         AttackPoseUntil = Now + 20 / TicksPerSecond;
     }
-    else if (!bMelee && Distance <= Profile.BoltRange
+    else if (bHasMissile && !bMelee && Distance <= Profile.BoltRange
         && (Profile.bKeepsBoltDistance || Distance > Profile.MinBoltRange || bRetreat) && BoltDelay == 0)
     {
         BoltDelay = Profile.RangedDelayUpdates;

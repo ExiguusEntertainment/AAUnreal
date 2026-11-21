@@ -707,7 +707,7 @@ struct FAAWadNativeImport
         }
         const FString MapName = FPaths::GetBaseFilename(WadPath).ToUpper();
         const bool bChurchQuestMap = MapName == TEXT("L25") || MapName == TEXT("L20") || MapName == TEXT("L60");
-        const bool bRetreatMap = MapName == TEXT("L64") || MapName == TEXT("L65");
+        const bool bRetreatMap = MapName == TEXT("L64") || MapName == TEXT("L65") || MapName == TEXT("L34");
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
@@ -718,7 +718,8 @@ struct FAAWadNativeImport
             || ((bChurchQuestMap || bRetreatMap) && !InstallScenery(World, Actor, Map, bRetreatMap, Output))
             || (bChurchQuestMap && !InstallChurchEncounters(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
-            || (bRetreatMap && !InstallRetreatScript(Actor, Map, WadPath, MapName, Output))
+            || (bRetreatMap && (!InstallRetreatScript(Actor, Map, WadPath, MapName, Output)
+                || !InstallRetreatEncounters(World, Actor, Map, Output)))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output))))
         {
@@ -736,11 +737,13 @@ struct FAAWadNativeImport
     {
         constexpr int32 L64Entries[] = {0, 1, 2, 3, 4, 201};
         constexpr int32 L65Entries[] = {0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 201, 202, 203, 204};
+        constexpr int32 L34Entries[] = {0, 1, 2, 3, 4, 5, 200, 202, 203};
         // Some script IDs are absent from the shipped SOUNDS.RES. Import any that a complete archive provides.
         constexpr int32 UnavailableSounds[] = {5, 1508, 1510};
-        const bool bL64 = MapName == TEXT("L64");
-        if (!InstallActivities(Actor, Map, WadPath, bL64 ? TEXT("S64.SRP") : TEXT("S65.SRP"),
-            bL64 ? TConstArrayView<int32>(L64Entries) : TConstArrayView<int32>(L65Entries), Output, UnavailableSounds))
+        const TConstArrayView<int32> Entries = MapName == TEXT("L64") ? TConstArrayView<int32>(L64Entries)
+            : MapName == TEXT("L65") ? TConstArrayView<int32>(L65Entries) : TConstArrayView<int32>(L34Entries);
+        const FString ScriptName = TEXT("S") + MapName.Mid(1) + TEXT(".SRP");
+        if (!InstallActivities(Actor, Map, WadPath, *ScriptName, Entries, Output, UnavailableSounds))
         {
             return false;
         }
@@ -1082,7 +1085,9 @@ struct FAAWadNativeImport
         };
         static const TMap<int32, FString> RetreatResources = {
             {14, TEXT("BARREL1")}, {15, TEXT("BARREL3")}, {18, TEXT("ROCK_1")}, {25, TEXT("SWPPLT03")},
-            {65, TEXT("SKULL")}, {72, TEXT("STONE")}, {124, TEXT("STAL5")}, {4079, TEXT("TREE9")}
+            {59, TEXT("JAW")}, {65, TEXT("SKULL")}, {72, TEXT("STONE")}, {121, TEXT("STAL2")},
+            {124, TEXT("STAL5")}, {134, TEXT("STAL15")}, {136, TEXT("STAL17")},
+            {4075, TEXT("TREE5")}, {4079, TEXT("TREE9")}
         };
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         if (!Plane)
@@ -1128,6 +1133,101 @@ struct FAAWadNativeImport
             PassableCount += Definition.bPassable ? 1 : 0;
         }
         Output.Logf(TEXT("Imported %d authored scenery placements (%d solid, %d passable)."), Count, Count - PassableCount, PassableCount);
+        return !bAssetError;
+    }
+
+    bool InstallRetreatEncounters(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        struct FCreature
+        {
+            int32 Type;
+            const TCHAR* Name;
+            const TCHAR* Resource;
+            const TCHAR* Standing;
+            const TCHAR* Hurt;
+            const TCHAR* Downed;
+            const TCHAR* Attacking;
+            int32 Health, RetreatHealth, MeleeDamage, MeleeRange, Radius, Step, UpdateTicks, Vision;
+            int32 MinDartRange, MaxDartRange, DartDelay;
+        };
+        // Original placements and art come from THINGS and the object stance tables. CREDATA.H supplies the combat values.
+        const FCreature Creatures[] = {
+            {3000, TEXT("Bronze Barbarian"), TEXT("BRONZE"), TEXT("BRONZ01.CPC"), TEXT("DEDBZ02.CPC"), TEXT("DEDBZ04.CPC"),
+                TEXT("BRZATK01.CPC"), 2500, 500, 350, 60, 20, 12, 14, 180, 0, 0, 0},
+            {3001, TEXT("Black Barbarian"), TEXT("GUS"), TEXT("GUS01.CPC"), TEXT("DEDGUS02.CPC"), TEXT("DEDGUS04.CPC"),
+                TEXT("GSATK01.CPC"), 3000, 500, 400, 60, 20, 10, 7, 270, 5000, 5000, 50},
+            {3002, TEXT("White Barbarian"), TEXT("PHIL"), TEXT("PHIL01.CPC"), TEXT("BDDED02.CPC"), TEXT("BDDED04.CPC"),
+                TEXT("BRDATK01.CPC"), 2500, 1000, 250, 60, 20, 10, 5, 270, 250, 10000, 25},
+            {3003, TEXT("Blue Barbarian"), TEXT("BLUE"), TEXT("BLUWK01.CPC"), TEXT("BLUDED02.CPC"), TEXT("BLUDED04.CPC"),
+                TEXT("BLUATK01.CPC"), 2500, 750, 300, 60, 20, 10, 7, 180, 0, 0, 0},
+            {1033, TEXT("Skeleton Knight"), TEXT("SKELKNT"), TEXT("SWNW01.CPC"), TEXT("SDNW01.CPC"), TEXT("SDNW04.CPC"),
+                TEXT("2SA001.CPC"), 2500, 100, 300, 30, 15, 10, 7, 90, 0, 0, 0},
+        };
+        UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        if (!Plane)
+        {
+            return false;
+        }
+        for (const FCreature& Creature : Creatures)
+        {
+            if (!Map.Things.ContainsByPredicate([&Creature](const FWadThing& Thing) { return Thing.Type == Creature.Type; }))
+            {
+                continue;
+            }
+            const FString Resource(Creature.Resource);
+            FIntPoint Size;
+            auto* Standing = SpriteMaterial(Resource, Resource / Creature.Standing, &Size);
+            auto* Hurt = SpriteMaterial(Resource + TEXT("_Hurt"), Resource / Creature.Hurt);
+            auto* Downed = SpriteMaterial(Resource + TEXT("_Down"), Resource / Creature.Downed);
+            auto* Attacking = SpriteMaterial(Resource + TEXT("_Attack"), Resource / Creature.Attacking);
+            auto* Dart = Creature.MaxDartRange ? SpriteMaterial(TEXT("MagicDart"), TEXT("MISSIL12/1.CPC")) : nullptr;
+            if (!Standing || !Hurt || !Downed || !Attacking || (Creature.MaxDartRange && !Dart))
+            {
+                return false;
+            }
+            FWadEncounterProfile Profile;
+            Profile.Name = Creature.Name;
+            Profile.MaxHealth = Creature.Health;
+            Profile.RetreatHealth = Creature.RetreatHealth;
+            Profile.MeleeDamage = Creature.MeleeDamage;
+            Profile.MeleeDelayUpdates = 10;
+            Profile.BoltDamage = Dart ? 100 : 0;
+            Profile.MinBoltRange = Creature.MinDartRange;
+            Profile.BoltRange = Creature.MaxDartRange;
+            Profile.RangedDelayUpdates = Creature.DartDelay;
+            Profile.CollisionRadius = Creature.Radius;
+            Profile.CollisionHalfHeight = Size.Y * 0.5f;
+            Profile.SpriteSize = FVector2D(Size);
+            Profile.MeleeRange = Creature.MeleeRange;
+            Profile.UpdateTicks = Creature.UpdateTicks;
+            Profile.WalkSpeed = Creature.Step * TicksPerSecond / (Creature.UpdateTicks + (Creature.UpdateTicks >> 1));
+            Profile.VisionHalfAngle = Creature.Vision * 0.5f;
+            int32 Count = 0;
+            for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+            {
+                const FWadThing& Thing = Map.Things[Id];
+                if (Thing.Type != Creature.Type)
+                {
+                    continue;
+                }
+                const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+                if (!Map.Sectors.IsValidIndex(Sector))
+                {
+                    Output.Logf(TEXT("Creature thing %d (%s) falls outside the authored floor."), Id, Creature.Name);
+                    return false;
+                }
+                const FString Tag = FString::Printf(TEXT("WAD Creature Thing %d"), Id);
+                auto* Enemy = ImportSliceThing<ANativeWadGuardian>(World, Map, Id,
+                    Actor.GetWalkingHeight(Sector) + Profile.CollisionHalfHeight + 2.0, *Tag);
+                if (!Enemy)
+                {
+                    return false;
+                }
+                Enemy->Configure(Plane, Standing, Downed, Attacking, Hurt, Dart, Profile);
+                ++Count;
+            }
+            Output.Logf(TEXT("Imported %d authored %s placements (thing type %d)."), Count, Creature.Name, Creature.Type);
+        }
         return !bAssetError;
     }
 

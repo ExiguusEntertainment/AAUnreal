@@ -468,7 +468,8 @@ namespace
     enum class EL25Review
     {
         None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload,
-        L60Puzzles, L60Relic, L60Return, L60Empty, ElmoreLaunch, ElmoreL64, ElmoreL64Reload, ElmoreL65, ElmoreL65Reload
+        L60Puzzles, L60Relic, L60Return, L60Empty, ElmoreLaunch, ElmoreL64, ElmoreL64Reload, ElmoreL65, ElmoreL65Reload,
+        ElmoreCombat64, ElmoreCombat65, ElmoreL65Exit, ElmoreL34, ElmoreL151Reload
     };
     constexpr const TCHAR* L25KeySlot = TEXT("NativeWadChurchKeyReview");
     constexpr const TCHAR* L25DoorSlot = TEXT("NativeWadChurchDoorReview");
@@ -481,6 +482,8 @@ namespace
     constexpr const TCHAR* ElmoreSlideSlot = TEXT("NativeWadElmoreLiftReview");
     constexpr const TCHAR* ElmoreL65Slot = TEXT("NativeWadElmoreL65Review");
     constexpr const TCHAR* ElmoreTeleporterSlot = TEXT("NativeWadElmoreTeleportReview");
+    constexpr const TCHAR* ElmoreL34Slot = TEXT("NativeWadElmoreL34Review");
+    constexpr const TCHAR* ElmoreL151Slot = TEXT("NativeWadElmoreL151Review");
     constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
     enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
 
@@ -557,6 +560,7 @@ namespace
         double SliceProgressTime = 0.0;
         int32 Size = 0;
         int32 NextPoint = 0;
+        int32 LighthouseHealInputs = 0;
         int32 CaptureFrames = 0;
         int32 CoverBolts = INDEX_NONE;
         int32 CapturedItem = INDEX_NONE;
@@ -2750,6 +2754,316 @@ namespace
             return true;
         }
 
+        bool TickElmoreCombat(ANativeWadLevel& Level, ANativeWadPlayer& Player, bool bRanged)
+        {
+            const FName TargetTag(bRanged ? TEXT("WAD Creature Thing 247") : TEXT("WAD Creature Thing 404"));
+            ANativeWadGuardian* Enemy = nullptr;
+            int32 Count = 0;
+            for (TActorIterator<ANativeWadGuardian> Candidate(Player.GetWorld()); Candidate; ++Candidate)
+            {
+                ++Count;
+                if (Candidate->ActorHasTag(TargetTag))
+                {
+                    Enemy = *Candidate;
+                }
+            }
+            if (!Enemy || Count != (bRanged ? 31 : 28) || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the authored barbarian encounter placements are incomplete"));
+            }
+            if (NextPoint == 0)
+            {
+                const FVector2D Point = bRanged ? FVector2D(2261, 1905) : FVector2D(-493, 87);
+                if (Enemy->GetEncounterHealth() != 2500 || !PlaceReviewPlayer(Level, Player, Point))
+                {
+                    return Finish(&Player, TEXT("the barbarian fixture lost its original health or approach"));
+                }
+                HealthBeforeTravel = Player.GetHealth();
+                Aim(Player, Enemy->GetActorLocation());
+                StageTime = Player.GetWorld()->GetTimeSeconds();
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 1)
+            {
+                const int32 Damage = HealthBeforeTravel - Player.GetHealth();
+                const bool bAttacked = bRanged ? Enemy->GetBoltsFired() > 0 : Enemy->GetMeleeHits() == 1;
+                if (bAttacked && Damage == (bRanged ? 100 : 350))
+                {
+                    ++NextPoint;
+                }
+                else if (Damage > (bRanged ? 100 : 350) || Player.GetWorld()->GetTimeSeconds() - StageTime > 5.0)
+                {
+                    return Finish(&Player, TEXT("the barbarian missed its authored attack or inflicted unexpected damage"));
+                }
+                else
+                {
+                    return true;
+                }
+            }
+            bool bSaved = false;
+            if (CaptureTownFrame(bRanged ? TEXT("white-barbarian") : TEXT("bronze-barbarian"), bSaved))
+            {
+                UE_LOG(LogTemp, Display, TEXT("%s"), bRanged ? TEXT("Verified the L65 White Barbarian's 100-damage magic dart.")
+                    : TEXT("Verified the L64 Bronze Barbarian's 350-damage melee attack."));
+                return Finish(&Player, bSaved ? nullptr : TEXT("could not capture the authored encounter"));
+            }
+            return true;
+        }
+
+        bool TickElmoreL65Exit(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D WestDoor, Lift, EastDoor;
+            if (!Level.GetSectorSurfaceHeights(154, WestDoor) || !Level.GetSectorSurfaceHeights(153, Lift)
+                || !Level.GetSectorSurfaceHeights(172, EastDoor))
+            {
+                return Finish(&Player, TEXT("L65's authored exit lift and doors are missing"));
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (!Player.HasRestoredWadCheckpoint() || !FVector2D(Player.GetActorLocation()).Equals({1628, 2370}, 6))
+                {
+                    return Finish(&Player, TEXT("the L65 exit replay needs the first teleporter checkpoint"));
+                }
+                Press(Player, EKeys::NumPadFour);
+                ++NextPoint;
+                break;
+            case 1:
+                Press(Player, EKeys::NumPadFive);
+                ++NextPoint;
+                break;
+            case 2:
+                Press(Player, EKeys::Enter);
+                ++NextPoint;
+                break;
+            case 3:
+                if (WalkTo(Player, {1470, 2368}))
+                {
+                    Aim(Player, {1466, 2400, 144});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+            {
+                FWadLevelCheckpoint State;
+                if (!Level.WriteCheckpoint(State, true) || State.ActivityWallTextures.FindRef(748) != TEXT("SW2BRN1")
+                    || State.Variables[2] != 1)
+                {
+                    return Finish(&Player, TEXT("L65 line 533 did not enable the second teleporter"));
+                }
+                ++NextPoint;
+                break;
+            }
+            case 5:
+                if (FVector2D(Player.GetActorLocation()).Equals({2234, 1600}, 6))
+                {
+                    Stop(Player);
+                    UE_LOG(LogTemp, Display, TEXT("Verified L65's second switch enables the teleporter to (2234, 1600)."));
+                    if (!PlaceReviewPlayer(Level, Player, {2624, 1619}))
+                    {
+                        return Finish(&Player, TEXT("could not reach the L65 lift approach"));
+                    }
+                    ++NextPoint;
+                }
+                else if (WalkTo(Player, {1628, 2370}))
+                {
+                    return Finish(&Player, TEXT("L65's second teleporter did not send the player to its authored destination"));
+                }
+                break;
+            case 6:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {2656, 1619, 233});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 7:
+                if (WestDoor.Y - WestDoor.X >= 58 && WalkTo(Player, {2706, 1619}))
+                {
+                    StageTime = Player.GetWorld()->GetTimeSeconds();
+                    ++NextPoint;
+                }
+                break;
+            case 8:
+                if (Player.GetWorld()->GetTimeSeconds() - StageTime > 1.05 && Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    if (Lift.X != 0)
+                    {
+                        return Finish(&Player, TEXT("L65's alternating lift did not lower to the east door"));
+                    }
+                    Aim(Player, {2733, 1619, 42});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 9:
+                if (EastDoor.Y - EastDoor.X >= 58)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified both authored L65 lift doors and the lowering floor in sector 153."));
+                    ++NextPoint;
+                }
+                break;
+            case 10:
+                if (WalkTo(Player, {2852, 1619}))
+                {
+                    return Finish(&Player, TEXT("L65's original exit marker did not lead to L34"));
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickElmoreL34(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            FVector2D Trap, Exit;
+            if (!Level.GetSectorSurfaceHeights(148, Trap) || !Level.GetSectorSurfaceHeights(33, Exit))
+            {
+                return Finish(&Player, TEXT("L34's original trap floor and exit are missing"));
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (!Player.HasRestoredWadCheckpoint() || Exit.X != 104 || Trap.X != 0)
+                {
+                    return Finish(&Player, TEXT("the L34 mechanism replay needs its authored starting state"));
+                }
+                if (LighthouseHealInputs < 6 && Player.GetMana() >= 1000 && Player.GetHealth() < Player.GetMaxHealth())
+                {
+                    const FKey Runes[] = {EKeys::NumPadFour, EKeys::NumPadFive, EKeys::Enter};
+                    Press(Player, Runes[LighthouseHealInputs++ % UE_ARRAY_COUNT(Runes)]);
+                    return true;
+                }
+                if (!PlaceReviewPlayer(Level, Player, {-368, -2975}))
+                {
+                    return Finish(&Player, TEXT("could not reach the L34 trap approach"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (WalkTo(Player, {-373, -3036}))
+                {
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Now - StageTime > 0.35)
+                {
+                    if (Trap.X != -200)
+                    {
+                        return Finish(&Player, TEXT("the authored L34 pressure plate did not drop to Z-200"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (Now - StageTime > 7.2)
+                {
+                    if (Trap.X != 0 || !PlaceReviewPlayer(Level, Player, {611, -3088}))
+                    {
+                        return Finish(&Player, TEXT("L34's trap did not reset to the original floor"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L34's original pressure plate drops its floor to Z-200 and resets to Z0."));
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {656, -3088, 40});
+                    Press(Player, EKeys::E);
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 5:
+                if (Now - StageTime > 2.15)
+                {
+                    FWadLevelCheckpoint State;
+                    if (Exit.X != 32 || !Level.WriteCheckpoint(State, true)
+                        || State.ActivityWallTextures.FindRef(1221) != TEXT("SWIT1U")
+                        || !PlaceReviewPlayer(Level, Player, {-480, 978}))
+                    {
+                        return Finish(&Player, TEXT("L34's authored E switch did not open the lighthouse exit"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L34 line 914 lowers exit floor 33 from Z104 to Z32."));
+                    ++NextPoint;
+                }
+                break;
+            case 6:
+                NextPoint += WalkTo(Player, {-353, 978}) ? 1 : 0;
+                break;
+            case 7:
+                if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) == 184 && Player.GetActorLocation().Y <= 885)
+                {
+                    Stop(Player);
+                    UE_LOG(LogTemp, Display, TEXT("Verified player movement across the opened L34 gate into sector 184."));
+                    if (!PlaceReviewPlayer(Level, Player, {-132, 852}))
+                    {
+                        return Finish(&Player, TEXT("could not reach the L34 exit approach after the gate crossing"));
+                    }
+                    ++NextPoint;
+                }
+                else
+                {
+                    WalkTo(Player, {-353, 876});
+                }
+                break;
+            case 8:
+                if (WalkTo(Player, {-29, 852}))
+                {
+                    return Finish(&Player, TEXT("L34's original exit marker did not lead to L151"));
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickElmoreTravel(ANativeWadLevel& Level, ANativeWadPlayer& Player, const UNativeWadTravelState& Travel)
+        {
+            const FString Map = Player.GetWorld()->GetMapName();
+            const bool bL34 = Map.EndsWith(TEXT("L34"));
+            const bool bL151 = Map.EndsWith(TEXT("L151"));
+            if (L25Review == EL25Review::ElmoreL65Exit && !bL34)
+            {
+                return TickElmoreL65Exit(Level, Player);
+            }
+            if (L25Review == EL25Review::ElmoreL34 && !bL151)
+            {
+                return TickElmoreL34(Level, Player);
+            }
+            const int32 Destination = bL34 ? 34 : bL151 ? 151 : 0;
+            const bool bReload = L25Review == EL25Review::ElmoreL151Reload;
+            const FWadLevelCheckpoint* L65 = Travel.VisitedLevels.Find(TEXT("/Game/Maps/L65"));
+            const FWadLevelCheckpoint* L34 = Travel.VisitedLevels.Find(TEXT("/Game/Maps/L34"));
+            if (!Destination || Travel.Quest.ResumeMaps.FindRef(2) != Destination
+                || !L65 || L65->ActivityWallTextures.FindRef(748) != TEXT("SW2BRN1")
+                || !FVector2D(Player.GetActorLocation()).Equals(bL34 ? FVector2D(912, 1596) : FVector2D(176, 3464), 5)
+                || (bL151 && (!L34 || L34->SectorHeights.FindRef(33).X != 32 || L34->Encounters.Num() != 30))
+                || (bReload && !Player.HasRestoredWadCheckpoint()))
+            {
+                return Finish(&Player, TEXT("the Elmore handoff lost the authored destination or prior quest state"));
+            }
+            bool bSaved = false;
+            const TCHAR* Image = bL34 ? TEXT("l34-arrival") : bReload ? TEXT("l151-reloaded") : TEXT("l151-arrival");
+            if (CaptureTownFrame(Image, bSaved))
+            {
+                if (!bSaved || (!bReload && !Player.SaveWadCheckpoint(bL34 ? ElmoreL34Slot : ElmoreL151Slot)))
+                {
+                    return Finish(&Player, TEXT("could not verify and save the authored Elmore destination"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("%s"), bL34 ? TEXT("Verified L65 Thing 239 takes Elmore's Retreat to the L34 lighthouse.")
+                    : bReload ? TEXT("Verified L151 reopens with the active quest and archived L65 and L34 states.")
+                    : TEXT("Verified L34 Thing 180 takes the active quest to L151 and archives the lighthouse."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool TickL25(UWorld& Current, ANativeWadPlayer& Player)
         {
             if (HeldKey)
@@ -2760,6 +3074,12 @@ namespace
                     SendKey(Player, EKeys::LeftAlt, IE_Released);
                 }
                 HeldKey.Reset();
+            }
+            if (L25Review == EL25Review::ElmoreCombat64 || L25Review == EL25Review::ElmoreCombat65)
+            {
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                return Level ? TickElmoreCombat(**Level, Player, L25Review == EL25Review::ElmoreCombat65)
+                    : Finish(&Player, TEXT("could not load the native barbarian encounter map"));
             }
             if (L25Review >= EL25Review::ElmoreLaunch)
             {
@@ -2772,6 +3092,12 @@ namespace
                 if (L25Review == EL25Review::ElmoreLaunch)
                 {
                     return TickElmoreLaunch(Player, *Travel, Current.GetAuthGameMode<ANativeWadTownGameMode>() != nullptr);
+                }
+                if (L25Review >= EL25Review::ElmoreL65Exit)
+                {
+                    const TActorIterator<ANativeWadLevel> Level(&Current);
+                    return Level && Player.GetHealth() > 0 ? TickElmoreTravel(**Level, Player, *Travel)
+                        : Finish(&Player, TEXT("the Elmore replay lost its player or native level"));
                 }
                 if (L25Review == EL25Review::ElmoreL64Reload && Current.GetMapName().EndsWith(TEXT("L65")))
                 {
@@ -4680,6 +5006,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : Mode == TEXT("elmorelaunch") ? EL25Review::ElmoreLaunch : Mode == TEXT("elmorel64") ? EL25Review::ElmoreL64
         : Mode == TEXT("elmorel64reload") ? EL25Review::ElmoreL64Reload : Mode == TEXT("elmorel65") ? EL25Review::ElmoreL65
         : Mode == TEXT("elmorel65reload") ? EL25Review::ElmoreL65Reload
+        : Mode == TEXT("elmorecombat64") ? EL25Review::ElmoreCombat64 : Mode == TEXT("elmorecombat65") ? EL25Review::ElmoreCombat65
+        : Mode == TEXT("elmorel65exit") ? EL25Review::ElmoreL65Exit : Mode == TEXT("elmorel34") ? EL25Review::ElmoreL34
+        : Mode == TEXT("elmorel151reload") ? EL25Review::ElmoreL151Reload
         : EL25Review::None;
     const ETownReview TownReview = Mode == TEXT("towntour") ? ETownReview::Tour : Mode == TEXT("townfailure") ? ETownReview::Failure
         : Mode == TEXT("townreload") || L25Review == EL25Review::Exit ? ETownReview::Reload
@@ -4698,6 +5027,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bDoorReload = Mode == TEXT("doorreload");
     const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bStartsInL20 ? TEXT("L20")
+        : L25Review == EL25Review::ElmoreL151Reload ? TEXT("L151") : L25Review == EL25Review::ElmoreL34 ? TEXT("L34")
+        : L25Review == EL25Review::ElmoreCombat64 ? TEXT("L64")
         : L25Review >= EL25Review::ElmoreL65 ? TEXT("L65")
         : L25Review >= EL25Review::ElmoreL64 ? TEXT("L64")
         : L25Review >= EL25Review::L60Reload ? TEXT("L60")

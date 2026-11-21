@@ -246,7 +246,18 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - Floor scenery turns horizontally around its bottom center. Hanging scenery turns around its top center. Both follow their authored mounting surface, including moving sectors. The displayed sprite can change frames without moving that point.
 - The replay stages the player near selected mechanisms and uses regular movement and use inputs for the tested switches, crossings, and map transitions. Start `ElmoreLaunch` in Town Hall from `NativeWadAndrewTownReview`, which `ChurchL60Return` writes. Then use `ElmoreL64`, `ElmoreL64Reload`, `ElmoreL65`, and `ElmoreL65Reload` with the checkpoints from each preceding mode.
 - The captures are in `Saved/Wad-Elmore-Retreat-Review.html`.
-- The map imports cover L64 and L65 scenery and mechanisms. Barbarian encounters and the rest of the route through L65 are subsequent work.
+
+### The L65 exit and the lighthouse
+
+79. **Restore the barbarian encounters.** Imported 28 barbarians in L64 and 31 in L65 across four authored types. Verified the Bronze Barbarian's 350-damage melee hit and the White Barbarian's 100-damage magic dart using the native encounter system.
+80. **Complete the L65 teleporter and lift route.** From the first teleporter checkpoint, line 533 enabled the second teleporter to `(2234, 1600)`. The replay opened both doors, rode the lift down, and crossed Thing 239 into L34.
+81. **Import the L34 lighthouse.** Built 186 sectors and 915 lines, placed 88 scenery objects and 30 skeleton knights, and imported all nine script activities. The replay took the pressure trap to Z-200 and back and used line 914 to lower the exit floor from Z104 to Z32.
+82. **Carry Elmore's Retreat through L34 into L151.** Crossed the opened lighthouse gate and entered the exit for Thing 180. A fresh Unreal process restored L151's authored spawn with the active quest, both journal pages, and the archived L65 switch and L34 exit.
+
+- Run `AA.ExportNativeWadPortReview ElmoreCombat64 <OutputPng>` in L64 and `ElmoreCombat65` in L65. For campaign travel, use `ElmoreL65Exit` from `NativeWadElmoreTeleportReview`, then `ElmoreL34` from `NativeWadElmoreL34Review` and `ElmoreL151Reload` from `NativeWadElmoreL151Review`.
+- The replay uses regular movement and interaction from selected approaches. It verifies traversal of the opened L34 gate, then stages the player near the exit beyond the skeletons and solid glowers.
+- All nine WAD regression tests passed. The encounter and travel screenshots are in `Saved/Wad-Lighthouse-Review.html`.
+- L34's Shadow and Lich encounters remain to be ported.
 
 ### Asset follow-ups
 
@@ -256,6 +267,7 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - [ ] Restore `AASHITTY` in L25 when the source texture is available. The native import uses the default material for that surface.
 - [ ] Restore `MARBLE1` and `MARBGRAY` in L60 when the source textures are available. The import uses the default material on the affected surfaces.
 - [ ] Restore `ASHWALL2` and `AASHITTY` in L64 and `MARBGRAY` in L65. Find authored sound samples 5, 1508, and 1510 referenced by their scripts.
+- [ ] Restore `STARTAN3` and `AASHITTY` in L34 when the source textures are available.
 
 ## 2026-04-11 Review Findings
 

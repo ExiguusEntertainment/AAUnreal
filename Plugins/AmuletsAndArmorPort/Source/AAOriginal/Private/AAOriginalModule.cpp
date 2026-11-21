@@ -1082,7 +1082,9 @@ public:
                     || Review == TEXT("churchl60puzzles") || Review == TEXT("churchl60relic")
                     || Review == TEXT("churchl60return") || Review == TEXT("churchl60empty")
                     || Review == TEXT("elmorelaunch") || Review == TEXT("elmorel64") || Review == TEXT("elmorel64reload")
-                    || Review == TEXT("elmorel65") || Review == TEXT("elmorel65reload"))
+                    || Review == TEXT("elmorel65") || Review == TEXT("elmorel65reload")
+                    || Review == TEXT("elmorecombat64") || Review == TEXT("elmorecombat65")
+                    || Review == TEXT("elmorel65exit") || Review == TEXT("elmorel34") || Review == TEXT("elmorel151reload"))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }
