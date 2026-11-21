@@ -32,6 +32,7 @@ namespace NativeWadRules
     inline constexpr int32 FeatherfallPotion = 817;
     inline constexpr int32 JugurthaJournal = 957;
     inline constexpr int32 ChurchKey = 258;
+    inline constexpr int32 AndrewNecklace = 958;
     inline constexpr int32 ChurchMountedKnight = 1008;
     inline constexpr int32 ChurchFootKnight = 1009;
     inline constexpr int32 GrayCrossbowBolt = 886;

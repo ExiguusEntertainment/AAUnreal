@@ -15,6 +15,8 @@ class UStaticMeshComponent;
 class UWorld;
 class ANativeWadPlayer;
 class ANativeWadPickup;
+class ANativeWadGuardian;
+class ANativeWadScenery;
 class UStaticMesh;
 struct FWadLevelCheckpoint;
 
@@ -154,6 +156,21 @@ struct FWadPickupGenerator
 };
 
 USTRUCT()
+struct FWadCreatureGenerator
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<TObjectPtr<ANativeWadGuardian>> Creatures;
+
+    UPROPERTY()
+    int32 Sector = INDEX_NONE;
+
+    UPROPERTY()
+    float Interval = 0.0f;
+};
+
+USTRUCT()
 struct FAAWadNativeLevelLink
 {
     GENERATED_BODY()
@@ -249,6 +266,9 @@ private:
     bool UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player);
     void ActivatePickupGenerator(int32 Id);
     void TickPickupGenerators(float DeltaSeconds);
+    void ActivateCreatureGenerator(int32 Id);
+    void TickCreatureGenerators(float DeltaSeconds);
+    bool HasPendingCreatureGenerators() const;
     void SetSectorHeight(int32 Sector, double Z, bool bCeiling);
     void UpdateLine(int32 Line, bool bPersist);
     void ApplyLight(UStaticMeshComponent& Mesh, int32 Light, bool bPersist) const;
@@ -317,6 +337,13 @@ private:
     UPROPERTY()
     TMap<int32, FWadPickupGenerator> PickupGenerators;
 
+    UPROPERTY()
+    TMap<int32, FWadCreatureGenerator> CreatureGenerators;
+
+    UPROPERTY()
+    TMap<int32, TObjectPtr<ANativeWadScenery>> ScriptObjects;
+
+    TMap<int32, FWadCreatureGeneratorState> CreatureGeneratorStates;
     TMap<int32, float> PendingPickupGenerators;
     TSet<int32> FiredPickupGenerators;
     TSet<int32> UnlockedItemDoors;

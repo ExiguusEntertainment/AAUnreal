@@ -15,6 +15,7 @@ ANativeWadScenery::ANativeWadScenery()
 
     Obstacle = CreateDefaultSubobject<UBoxComponent>(TEXT("Obstacle"));
     Obstacle->SetupAttachment(GetRootComponent());
+    Obstacle->SetAbsolute(false, true, false);
     Obstacle->SetCollisionResponseToAllChannels(ECR_Ignore);
     Obstacle->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
     Obstacle->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
@@ -53,6 +54,16 @@ void ANativeWadScenery::BeginPlay()
 {
     Super::BeginPlay();
     Random.Initialize(ThingId);
+}
+
+uint16 ANativeWadScenery::GetSourceAngle() const
+{
+    return uint16(FMath::RoundToInt(GetActorRotation().Yaw * (65536.0 / 360.0)));
+}
+
+void ANativeWadScenery::SetSourceAngle(uint16 Angle)
+{
+    SetActorRotation(FRotator(0, Angle * (360.0 / 65536.0), 0));
 }
 
 void ANativeWadScenery::UpdateElevation()

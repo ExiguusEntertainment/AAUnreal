@@ -8,6 +8,7 @@
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #include "TimerManager.h"
 #include "UObject/Package.h"
@@ -51,6 +52,15 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     Checkpoint.PendingPickupGenerators = PendingPickupGenerators;
     Checkpoint.FiredPickupGenerators = FiredPickupGenerators;
     Checkpoint.UnlockedItemDoors = UnlockedItemDoors;
+    Checkpoint.CreatureGenerators = CreatureGeneratorStates;
+    Checkpoint.PickupRevision = FWadLevelCheckpoint::CurrentPickupRevision;
+    for (const auto& [Id, Object] : ScriptObjects)
+    {
+        if (IsValid(Object))
+        {
+            Checkpoint.ScriptObjectAngles.Add(Id, Object->GetSourceAngle());
+        }
+    }
     Checkpoint.Hour = GetTimeOfDayHours();
     for (const FActivitySlide& Slide : ActivitySlides)
     {
@@ -79,7 +89,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     }
     for (TActorIterator<ANativeWadGuardian> Encounter(GetWorld()); Encounter; ++Encounter)
     {
-        if (!Encounter->Tags.IsEmpty())
+        if (!Encounter->IsHidden() && !Encounter->Tags.IsEmpty())
         {
             Checkpoint.Encounters.Add(Encounter->Tags[0], {Encounter->GetActorTransform(), Encounter->GetEncounterHealth()});
         }
@@ -94,6 +104,23 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
         return false;
     }
     InitializeTopology();
+    for (const auto& [Id, Angle] : Checkpoint.ScriptObjectAngles)
+    {
+        if (!IsValid(ScriptObjects.FindRef(Id)))
+        {
+            return false;
+        }
+    }
+    for (const auto& [Id, State] : Checkpoint.CreatureGenerators)
+    {
+        const FWadCreatureGenerator* Generator = CreatureGenerators.Find(Id);
+        if (!Generator || State.Released < 0 || State.Released > Generator->Creatures.Num()
+            || !FMath::IsFinite(State.Remaining) || State.Remaining < 0 || State.Remaining > Generator->Interval
+            || (State.Released < Generator->Creatures.Num()) != (State.Remaining > 0))
+        {
+            return false;
+        }
+    }
     for (const auto& [Id, Remaining] : Checkpoint.PendingPickupGenerators)
     {
         const FWadPickupGenerator* Generator = PickupGenerators.Find(Id);
@@ -195,7 +222,20 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     PendingPickupGenerators = Checkpoint.PendingPickupGenerators;
     FiredPickupGenerators = Checkpoint.FiredPickupGenerators;
     UnlockedItemDoors = Checkpoint.UnlockedItemDoors;
-    if (!ActivitySlides.IsEmpty() || !ActiveDoors.IsEmpty() || !PendingPickupGenerators.IsEmpty())
+    CreatureGeneratorStates = Checkpoint.CreatureGenerators;
+    for (const auto& [Id, Angle] : Checkpoint.ScriptObjectAngles)
+    {
+        ScriptObjects.FindChecked(Id)->SetSourceAngle(Angle);
+    }
+    for (const auto& [Id, Generator] : CreatureGenerators)
+    {
+        const int32 Released = CreatureGeneratorStates.FindRef(Id).Released;
+        for (int32 Index = 0; Index < Generator.Creatures.Num(); ++Index)
+        {
+            Generator.Creatures[Index]->SetSpawned(Index < Released);
+        }
+    }
+    if (!ActivitySlides.IsEmpty() || !ActiveDoors.IsEmpty() || !PendingPickupGenerators.IsEmpty() || HasPendingCreatureGenerators())
     {
         SetActorTickEnabled(true);
     }
@@ -229,7 +269,8 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     }
     for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item; ++Item)
     {
-        if (!Item->Tags.IsEmpty() && !DormantPickups.Contains(*Item) && !Checkpoint.RemainingPickups.Contains(Item->Tags[0]))
+        if (!Item->Tags.IsEmpty() && !DormantPickups.Contains(*Item) && !Checkpoint.RemainingPickups.Contains(Item->Tags[0])
+            && Item->GetCheckpointRevision() <= Checkpoint.PickupRevision)
         {
             Item->Destroy();
         }

@@ -73,6 +73,8 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     void Configure(ANativeWadLevel& Level, UStaticMesh* Plane, const FWadSceneryDefinition& InDefinition,
         int32 InSector, int32 InThingId);
+    uint16 GetSourceAngle() const;
+    void SetSourceAngle(uint16 Angle);
 
 private:
     virtual void BeginPlay() override;

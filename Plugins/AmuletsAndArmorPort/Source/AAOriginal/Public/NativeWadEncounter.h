@@ -77,6 +77,7 @@ public:
     bool IsDefeated() const { return Health == 0; }
     int32 GetEncounterHealth() const { return Health; }
     void RestoreEncounterHealth(int32 SavedHealth);
+    void SetSpawned(bool bSpawned);
     int32 GetBoltsFired() const { return BoltsFired; }
     int32 GetMeleeHits() const { return MeleeHits; }
     int32 GetRegeneratedHealth() const { return RegeneratedHealth; }
@@ -148,11 +149,12 @@ class AAORIGINAL_API ANativeWadPickup : public AActor
 public:
     ANativeWadPickup();
     virtual void Tick(float DeltaSeconds) override;
-    void Configure(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType);
+    void Configure(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType, int32 InCheckpointRevision = 0);
     void SetAvailable(bool bAvailable);
     bool IsAvailable() const { return !IsHidden(); }
     bool Collect(ANativeWadPlayer& Player);
     int32 GetItemType() const { return ItemType; }
+    int32 GetCheckpointRevision() const { return CheckpointRevision; }
 
 private:
     UPROPERTY(VisibleAnywhere)
@@ -163,4 +165,7 @@ private:
 
     UPROPERTY()
     int32 ItemType = 0;
+
+    UPROPERTY()
+    int32 CheckpointRevision = 0;
 };

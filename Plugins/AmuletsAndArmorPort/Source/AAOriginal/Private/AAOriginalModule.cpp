@@ -925,6 +925,15 @@ public:
             return true;
         }
 #if WITH_EDITOR
+        else if (FParse::Command(&Cmd, TEXT("AA.CREATECLASSICWADHUD")))
+        {
+            if (!SaveNativeWadHud(Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.CreateClassicWadHUD failed."));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Classic WAD HUD import finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.CREATENATIVEWADTOWN")))
         {
             if (!SaveNativeWadTown(Ar))
@@ -1069,7 +1078,9 @@ public:
                     || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload")
                     || Review == TEXT("churchknights") || Review == TEXT("churchjourney") || Review == TEXT("churchl20reload")
                     || Review == TEXT("churchscenery") || Review == TEXT("churchl20scenery")
-                    || Review == TEXT("churchl20exit") || Review == TEXT("churchl60reload"))
+                    || Review == TEXT("churchl20exit") || Review == TEXT("churchl60reload") || Review == TEXT("classichud")
+                    || Review == TEXT("churchl60puzzles") || Review == TEXT("churchl60relic")
+                    || Review == TEXT("churchl60return") || Review == TEXT("churchl60empty"))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }

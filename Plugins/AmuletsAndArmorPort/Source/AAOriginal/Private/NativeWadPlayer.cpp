@@ -452,8 +452,20 @@ void ANativeWadPlayer::CollectItem(int32 Type)
     CarriedItems.Add(Type);
     ShowInteractionMessage(Type == Berry ? TEXT("Picked up a berry")
         : Type == IronDagger ? TEXT("Picked up an iron dagger")
-        : Type == JugurthaJournal ? TEXT("Picked up Jugurtha's journal") : TEXT("Picked up an item"));
+        : Type == JugurthaJournal ? TEXT("Picked up Jugurtha's journal")
+        : Type == AndrewNecklace ? TEXT("Picked up the Necklace of Andrew") : TEXT("Picked up an item"));
     UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
+}
+
+void ANativeWadPlayer::RestoreWadVital(int32 Effect, int32 Amount)
+{
+    switch (Effect)
+    {
+    case 8: Water += FMath::Clamp(Amount, 0, MaxFood - Water); break;
+    case 9: Health += FMath::Clamp(Amount, 0, MaxHealth - Health); break;
+    case 10: Mana += FMath::Clamp(Amount, 0, MaxMana - Mana); break;
+    default: break;
+    }
 }
 
 void ANativeWadPlayer::AwardExperience(int32 Amount)

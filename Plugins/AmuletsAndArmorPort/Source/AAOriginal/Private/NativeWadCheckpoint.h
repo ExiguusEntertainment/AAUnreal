@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
+#include "NativeWadScript.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "NativeWadCheckpoint.generated.h"
 
@@ -71,6 +72,8 @@ struct FWadLevelCheckpoint
 {
     GENERATED_BODY()
 
+    static constexpr int32 CurrentPickupRevision = 1;
+
     UPROPERTY()
     TMap<int32, FVector2D> SectorHeights;
 
@@ -109,6 +112,15 @@ struct FWadLevelCheckpoint
 
     UPROPERTY()
     TSet<int32> UnlockedItemDoors;
+
+    UPROPERTY()
+    TMap<int32, uint16> ScriptObjectAngles;
+
+    UPROPERTY()
+    TMap<int32, FWadCreatureGeneratorState> CreatureGenerators;
+
+    UPROPERTY()
+    int32 PickupRevision = 0;
 
     UPROPERTY()
     double Hour = 12.0;

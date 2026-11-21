@@ -1,11 +1,13 @@
 #include "NativeWadLevel.h"
 
 #include "Components/AudioComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadScenery.h"
 #include "Sound/SoundAttenuation.h"
 #include "Sound/SoundWaveProcedural.h"
 #include "TimerManager.h"
@@ -187,6 +189,36 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
             break;
         case EWadScriptOperation::ActivateGenerator:
             ActivatePickupGenerator(Command.Target);
+            ActivateCreatureGenerator(Command.Target);
+            break;
+        case EWadScriptOperation::AddNumbers:
+        case EWadScriptOperation::SubtractNumbers:
+        case EWadScriptOperation::MultiplyNumbers:
+        {
+            const uint32 Left = Command.Left.bVariable ? ScriptVariables[Command.Left.Value] : Command.Left.Value;
+            const uint32 Right = Command.Right.bVariable ? ScriptVariables[Command.Right.Value] : Command.Right.Value;
+            ScriptVariables[Command.Target] = int32(Command.Operation == EWadScriptOperation::AddNumbers ? Left + Right
+                : Command.Operation == EWadScriptOperation::SubtractNumbers ? Left - Right : Left * Right);
+            break;
+        }
+        case EWadScriptOperation::ReadObjectAngle:
+            if (const ANativeWadScenery* Scenery = ScriptObjects.FindRef(Command.Target).Get())
+            {
+                ScriptVariables[Command.Value] = Scenery->GetSourceAngle();
+            }
+            break;
+        case EWadScriptOperation::SetObjectAngle:
+            if (ANativeWadScenery* Scenery = ScriptObjects.FindRef(Command.Target).Get())
+            {
+                const int32 Angle = Command.Left.bVariable ? ScriptVariables[Command.Left.Value] : Command.Left.Value;
+                Scenery->SetSourceAngle(uint16(Angle));
+            }
+            break;
+        case EWadScriptOperation::RestoreVitals:
+            if (ANativeWadPlayer* Pawn = Player.Get())
+            {
+                Pawn->RestoreWadVital(Command.Target, Command.Value);
+            }
             break;
         case EWadScriptOperation::CompareVariable:
         {
@@ -270,6 +302,65 @@ void ANativeWadLevel::TickPickupGenerators(float DeltaSeconds)
             FiredPickupGenerators.Add(Id);
             It.RemoveCurrent();
         }
+    }
+}
+
+void ANativeWadLevel::ActivateCreatureGenerator(int32 Id)
+{
+    if (const FWadCreatureGenerator* Generator = CreatureGenerators.Find(Id);
+        Generator && !CreatureGeneratorStates.Contains(Id))
+    {
+        CreatureGeneratorStates.Add(Id, {0, Generator->Interval});
+        SetActorTickEnabled(true);
+    }
+}
+
+bool ANativeWadLevel::HasPendingCreatureGenerators() const
+{
+    for (const auto& [Id, State] : CreatureGeneratorStates)
+    {
+        if (State.Remaining > 0.0f)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ANativeWadLevel::TickCreatureGenerators(float DeltaSeconds)
+{
+    for (auto& [Id, State] : CreatureGeneratorStates)
+    {
+        const FWadCreatureGenerator& Generator = CreatureGenerators.FindChecked(Id);
+        if (!Generator.Creatures.IsValidIndex(State.Released))
+        {
+            continue;
+        }
+        State.Remaining -= DeltaSeconds;
+        if (State.Remaining > 0.0f)
+        {
+            continue;
+        }
+        State.Remaining = Generator.Interval;
+        ANativeWadGuardian* Creature = Generator.Creatures[State.Released];
+        FVector Spawn = Creature->GetActorLocation();
+        const UCapsuleComponent* Capsule = Creature->GetCapsuleComponent();
+        Spawn.Z = GetActorLocation().Z + GetWalkingHeight(Generator.Sector) + Capsule->GetScaledCapsuleHalfHeight() + 2.0;
+        const FCollisionQueryParams Query(SCENE_QUERY_STAT(WadCreatureGenerator), false, Creature);
+        if (GetWorld()->OverlapBlockingTestByChannel(Spawn, FQuat::Identity, ECC_Pawn,
+            FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), Query))
+        {
+            continue;
+        }
+        Creature->SetActorLocation(Spawn, false, nullptr, ETeleportType::TeleportPhysics);
+        Creature->SetSpawned(true);
+        ++State.Released;
+        if (!Generator.Creatures.IsValidIndex(State.Released))
+        {
+            State.Remaining = 0.0f;
+        }
+        UE_LOG(LogTemp, Display, TEXT("WAD generator %d released %s (%d/%d)."), Id, *Creature->GetEncounterName(),
+            State.Released, Generator.Creatures.Num());
     }
 }
 

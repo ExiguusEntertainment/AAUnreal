@@ -8,6 +8,7 @@
 
 class UCameraComponent;
 class ANativeWadLevel;
+class UNativeWadHudData;
 
 UCLASS()
 class AAORIGINAL_API ANativeWadPlayer : public ACharacter
@@ -27,6 +28,7 @@ public:
     int32 GetHealth() const { return Health; }
     int32 GetMana() const { return Mana; }
     int32 GetFood() const { return Food; }
+    int32 GetWater() const { return Water; }
     int32 GetExperience() const { return Experience; }
     int32 GetEquippedWeapon() const;
     int32 GetSuccessfulCasts() const { return SuccessfulCasts; }
@@ -50,6 +52,7 @@ public:
     void ReceiveEncounterHit(int32 Damage);
     void ReceiveTrapPoison(int32 Damage);
     void ReceiveTrapParalysis();
+    void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
     void StartWadEarthquake(double Duration);
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
@@ -69,6 +72,7 @@ public:
     static constexpr float CapsuleHalfHeight = 27.0f;
 
 private:
+    friend class ANativeWadHUD;
     void MoveInViewDirection(float Forward, float Right);
     void UsePressed();
     void AttackPressed();
@@ -151,9 +155,24 @@ class ANativeWadHUD : public AHUD
     GENERATED_BODY()
 
 public:
+    ANativeWadHUD();
+    virtual void BeginPlay() override;
     virtual void DrawHUD() override;
-    void ClickInventory(const FVector2D& Position);
+    void ClickHUD(const FVector2D& Position);
     FVector2D InventorySlotCenter(int32 Slot) const;
+    bool HasClassicHud() const { return ClassicData != nullptr; }
+
+private:
+    friend class ANativeWadPlayer;
+    void DrawFallbackHUD(const ANativeWadPlayer& Player);
+    void ClickFallbackInventory(const FVector2D& Position);
+    FVector2D FallbackInventorySlotCenter(int32 Slot) const;
+
+    UPROPERTY()
+    TObjectPtr<UNativeWadHudData> ClassicData;
+
+    int32 InventoryPage = 0;
+    bool bStatistics = false;
 };
 
 UCLASS()

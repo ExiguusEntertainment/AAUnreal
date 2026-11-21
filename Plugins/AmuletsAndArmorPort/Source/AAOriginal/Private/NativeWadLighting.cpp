@@ -45,6 +45,16 @@ void ANativeWadLevel::BeginPlay()
             Entry.Value.Pickup->SetAvailable(false);
         }
     }
+    for (const auto& [Id, Generator] : CreatureGenerators)
+    {
+        for (ANativeWadGuardian* Creature : Generator.Creatures)
+        {
+            if (IsValid(Creature))
+            {
+                Creature->SetSpawned(false);
+            }
+        }
+    }
     if (DaySky)
     {
         DaySkyMaterial = DaySky->CreateDynamicMaterialInstance(0);

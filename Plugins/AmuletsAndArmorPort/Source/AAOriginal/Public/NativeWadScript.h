@@ -24,7 +24,25 @@ enum class EWadScriptOperation : uint8
     LaunchMissile,
     TeleportPlayer,
     IncrementVariable,
-    ActivateGenerator
+    ActivateGenerator,
+    AddNumbers,
+    SubtractNumbers,
+    MultiplyNumbers,
+    ReadObjectAngle,
+    SetObjectAngle,
+    RestoreVitals
+};
+
+USTRUCT()
+struct FWadScriptNumber
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    int32 Value = 0;
+
+    UPROPERTY()
+    bool bVariable = false;
 };
 
 USTRUCT()
@@ -55,6 +73,12 @@ struct FWadScriptCommand
 
     UPROPERTY()
     FIntVector Aim = FIntVector::ZeroValue;
+
+    UPROPERTY()
+    FWadScriptNumber Left;
+
+    UPROPERTY()
+    FWadScriptNumber Right;
 };
 
 USTRUCT()
@@ -76,6 +100,18 @@ struct FWadScriptActivity
 
     UPROPERTY()
     TArray<FWadScriptCommand> Commands;
+};
+
+USTRUCT()
+struct FWadCreatureGeneratorState
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    int32 Released = 0;
+
+    UPROPERTY()
+    float Remaining = 0.0f;
 };
 
 #if WITH_EDITOR

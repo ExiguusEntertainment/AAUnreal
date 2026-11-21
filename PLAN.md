@@ -184,7 +184,7 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 
 - Run `AA.ExportNativeWadPortReview TownTour <OutputPng> [ImageSize]` in standalone L22 with `?WadItems=200?WadReady=0?WadXP=2105?WadLevel=2?WadNextXP=36000`. Use `TownFailure` with the same start for the empty-handed case. Start `/Game/Maps/WadTown?WadLoad=NativeWadTownReview` in a fresh process and run `TownReload`. Use `TownStart` in a fresh town for the original first-quest launch.
 - The screenshots are in `Saved/Wad-L22-Town-Review.html`.
-- The Inn, Store, and Bank each have a separate original form. The town displays their original buttons. Those forms and the shared banner controls are follow-up work.
+- The Inn, Store, and Bank each have a separate original form. The town displays their original buttons. Those forms are follow-up work.
 
 ### Town scrolling and the Church of Andrew
 
@@ -212,11 +212,29 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 67. **Restore the original scenery placements.** Imported 102 placements in L25 and 82 in L20 from the source Things, including the churchyard trees and tombs, the L20 groves and columns, and the original furnishings and torches. The original object definitions supply sprite dimensions, viewing angles, animation timing, and mounting flags.
 68. **Check scenery collision in play.** First-person input stopped at L25's solid courtyard tree and crossed L20's passable rock. The native bolt collision sweep respected both objects' passability. The captures show the church grounds, L20 columns, and grove.
 69. **Open L20's authored exit.** Walking into sector 108 ran activity 12 from `S20.SRP`. It raised ceiling 87 from Z112 to Z190 in the authored three seconds and displayed the original exit message. The player crossed the open gate and followed Thing 138 in sector 131 to L60.
-70. **Import L60 and resume the active quest there.** Built all 258 sectors and 1,276 lines, the original spawn, 84 scenery placements, 25 knights, and startup activity 0 from `S60.SRP`. A fresh Unreal process restored the quest and the archived L20 gate from a checkpoint at L60's original spawn `(-3076, -3)`. L60's remaining puzzle activities, the Necklace of Andrew pickup, and quest turn-in are follow-up work.
+70. **Import L60 and resume the active quest there.** Built all 258 sectors and 1,276 lines, the original spawn, 84 scenery placements, 25 knights, and startup activity 0 from `S60.SRP`. A fresh Unreal process restored the quest and the archived L20 gate from a checkpoint at L60's original spawn `(-3076, -3)`.
 
 - The walkthrough stages the player at the original pressure-plate and gate approaches. The plate entry, gate crossing, and level transition use regular player movement.
 - Run `AA.ExportNativeWadPortReview ChurchScenery <OutputPng> [ImageSize]` in L25 and `ChurchL20Scenery` in L20. Use `ChurchL20Exit` in L20 with `?WadLoad=NativeWadChurchL20Review`, and `ChurchL60Reload` in a fresh L60 process with `?WadLoad=NativeWadChurchL60Review`.
 - The L25 knight combat and L20 timed-floor and trap replays still pass, along with all nine WAD regression tests. The screenshots are in `Saved/Wad-Scenery-and-L60-Review.html`.
+
+### Classic gameplay HUD
+
+- The native gameplay HUD uses the original `MAINBACK` frame, palette, `FontTiny`, potion frames, Priest rune buttons, item sprites, and the inventory and statistics panels. It appears at level entry, including on maps without scripted activities.
+- The banner reads live health, mana, food, water, carried weight, the ready hand, and queued runes. The original inventory grid and statistics panel display the current character. The remaining original banner forms are pending.
+- Numpad 7 opens the inventory. Tab releases the mouse for the banner buttons. Select an inventory item and click the ready-hand box to equip it. The USE and CAST buttons use the same gameplay handlers as their keyboard controls.
+- Run `AA.CreateClassicWadHUD` in Unreal Editor to regenerate the assets under `Content/WadInterface`. Run `AA.ExportNativeWadPortReview ClassicHud <OutputPng>` from a fresh standalone L301 game to capture the gameplay frame, inventory, statistics, and runes.
+- The L301 replay readied the dagger and cast Rejuvenate through the banner, spending 1,000 mana and restoring the player's 300 missing health. Town Hall scrolling and all nine WAD regression tests passed. The captures are in `Saved/Wad-Classic-HUD-Review.html`.
+
+### The Knights of Andrew quest completion
+
+71. **Restore L60's original puzzle activities.** Imported 19 activities from `S60.SRP` and four knight generators from `L60.GEN`. The replay worked the timed lift, entered the teleport and healing pool, turned all five statues from their pressure plates, and walked across a raised floor. Checkpoints carry statue angles, script state, moving sector heights, and generator progress.
+72. **Recover the Necklace of Andrew.** Imported the necklace from Thing 505 on the original pedestal. Walking onto the pedestal lowers the exit gate and activates the crossbowman generator. The replay collected the necklace with E and crossed the gate into the exit corridor.
+73. **Verify the Town Hall turn-in.** The original exit returns the player to Town Hall. Lady Marg takes the necklace and awards 20 gold. Returning empty-handed shows the original failure dialogue, awards zero gold, and leaves the pickup in the archived L60 state.
+74. **Replay the quest across the four maps and restart in L60.** Linked the Town Hall, L25, L20, L60, and return-to-Town segments through checkpoints. Fresh Unreal processes restored the solved statue crossing and later restored the necklace, open exit gate, and generator progress. The review stages the player at selected approaches and uses regular controls for the interactions, crossings, and map transitions.
+
+- Run `ChurchJourney` and `ChurchL20Exit` as above. Run `AA.ExportNativeWadPortReview ChurchL60Puzzles <OutputPng> [ImageSize]` in L60 with `?WadLoad=NativeWadChurchL60Review`. Run `ChurchL60Relic` and `ChurchL60Empty` from `NativeWadAndrewPuzzleReview`, then `ChurchL60Return` from `NativeWadAndrewRelicReview`.
+- All nine WAD regression tests passed. The classic HUD and both Town Hall outcomes are visible in `Saved/Wad-Andrew-Quest-Review.html`.
 
 ### Asset follow-ups
 

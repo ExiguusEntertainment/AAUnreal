@@ -48,6 +48,8 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "NativeWadEncounter.h"
+#include "NativeWadCheckpoint.h"
+#include "NativeWadHudData.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
@@ -708,9 +710,9 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L25") && !InstallL25Script(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L20") && !InstallL20Script(Actor, Map, WadPath, Output))
-            || (MapName == TEXT("L60") && !InstallL60Startup(Actor, Map, WadPath, Output))
             || (bChurchQuestMap && (!InstallChurchScenery(World, Actor, Map, Output)
-                || !InstallChurchEncounters(World, Actor, Map, Output)))
+                || !InstallChurchEncounters(World, Actor, Map, WadPath, Output)))
+            || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output))))
         {
@@ -851,10 +853,54 @@ struct FAAWadNativeImport
         return !bAssetError;
     }
 
-    static bool InstallL60Startup(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
+    bool InstallL60Script(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
     {
-        constexpr int32 EntryActivities[] = {0};
-        return InstallActivities(Actor, Map, WadPath, TEXT("S60.SRP"), EntryActivities, Output);
+        constexpr int32 EntryActivities[] = {0, 1, 3, 4, 5, 6, 7, 8, 21, 200, 201, 202};
+        if (!InstallActivities(Actor, Map, WadPath, TEXT("S60.SRP"), EntryActivities, Output))
+        {
+            return false;
+        }
+        Actor.ScriptObjects.Reset();
+        for (const FWadScriptActivity& Activity : Actor.ImportedActivities)
+        {
+            for (const FWadScriptCommand& Command : Activity.Commands)
+            {
+                if (Command.Operation == EWadScriptOperation::ActivateGenerator && !Actor.CreatureGenerators.Contains(Command.Target))
+                {
+                    return false;
+                }
+                if ((Command.Operation != EWadScriptOperation::ReadObjectAngle && Command.Operation != EWadScriptOperation::SetObjectAngle)
+                    || Actor.ScriptObjects.Contains(Command.Target))
+                {
+                    continue;
+                }
+                // Source object IDs are the 1-based Thing indices, including player starts.
+                const int32 ThingId = Command.Target - 1;
+                if (!Map.Things.IsValidIndex(ThingId) || Map.Things[ThingId].Type != 151)
+                {
+                    return false;
+                }
+                const FName Tag(*FString::Printf(TEXT("WAD Scenery Thing %d"), ThingId));
+                for (TActorIterator<ANativeWadScenery> Statue(&World); Statue; ++Statue)
+                {
+                    if (Statue->ActorHasTag(Tag))
+                    {
+                        Actor.ScriptObjects.Add(Command.Target, *Statue);
+                        break;
+                    }
+                }
+                if (!Actor.ScriptObjects.Contains(Command.Target))
+                {
+                    return false;
+                }
+            }
+        }
+        if (Actor.ScriptObjects.Num() != 5)
+        {
+            return false;
+        }
+        return InstallQuestPickup(World, Actor, Map, NativeWadRules::AndrewNecklace, TEXT("AndrewNecklace"),
+            TEXT("NECKLACE/NECKLACE.CPC"), TEXT("L60 Necklace of Andrew"), Output, FWadLevelCheckpoint::CurrentPickupRevision);
     }
 
     bool ImportSceneryDefinition(const FString& Resource, FWadSceneryDefinition& Definition)
@@ -1022,7 +1068,74 @@ struct FAAWadNativeImport
         return !bAssetError;
     }
 
-    bool InstallChurchEncounters(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    static bool InstallL60Generators(UWorld& World, ANativeWadLevel& Actor, const FString& WadPath, const FWadEncounterProfile& Profile,
+        TFunctionRef<void(ANativeWadGuardian&)> Configure, FOutputDevice& Output)
+    {
+        TArray<FString> Lines;
+        if (!FFileHelper::LoadFileToStringArray(Lines, *FPaths::ChangeExtension(WadPath, TEXT("GEN"))))
+        {
+            return false;
+        }
+        Actor.CreatureGenerators.Reset();
+        for (const FString& Line : Lines)
+        {
+            const int32 Comment = Line.Find(TEXT(";"));
+            const FString Payload = Comment == INDEX_NONE ? Line : Line.Left(Comment);
+            TArray<FString> Words;
+            Payload.ParseIntoArrayWS(Words);
+            if (Words.IsEmpty())
+            {
+                continue;
+            }
+            int32 Fields[10];
+            if (Words.Num() != 11 || Words[0] != TEXT("G"))
+            {
+                return false;
+            }
+            for (int32 Index = 0; Index < UE_ARRAY_COUNT(Fields); ++Index)
+            {
+                if (!FDefaultValueHelper::ParseInt(Words[Index + 1], Fields[Index]))
+                {
+                    return false;
+                }
+            }
+            // L60 has finite, initially inactive crossbowman generators with fixed intervals.
+            if (Fields[0] != NativeWadRules::ChurchFootKnight || Fields[3] < 0 || Fields[3] > MAX_uint16
+                || Fields[4] <= 0 || Fields[5] != 0 || Fields[8] != 0 || Fields[9] <= 0 || Fields[9] > 40)
+            {
+                return false;
+            }
+            const FVector2D XY(Fields[1], Fields[2]);
+            const int32 Sector = Actor.FindWadSector(XY);
+            if (Sector == INDEX_NONE)
+            {
+                return false;
+            }
+            const int32 Id = Actor.CreatureGenerators.Num();
+            FWadCreatureGenerator& Generator = Actor.CreatureGenerators.Add(Id);
+            Generator.Sector = Sector;
+            Generator.Interval = Fields[4];
+            const FVector Position(XY, Actor.GetWalkingHeight(Sector) + Profile.CollisionHalfHeight + 2.0);
+            const FRotator Rotation(0, Fields[3] * (360.0 / 65536.0), 0);
+            for (int32 Index = 0; Index < Fields[9]; ++Index)
+            {
+                const FString Label = FString::Printf(TEXT("L60 Generator %d Knight %d"), Id, Index);
+                ANativeWadGuardian* Knight = ImportTaggedActor<ANativeWadGuardian>(World, Position, Rotation, *Label);
+                if (!Knight)
+                {
+                    return false;
+                }
+                Knight->SetActorLocationAndRotation(Position, Rotation);
+                Configure(*Knight);
+                Knight->SetSpawned(false);
+                Generator.Creatures.Add(Knight);
+            }
+            Output.Logf(TEXT("Imported L60 knight generator %d with %d releases at %.0fs intervals."), Id, Fields[9], Generator.Interval);
+        }
+        return Actor.CreatureGenerators.Num() == 4;
+    }
+
+    bool InstallChurchEncounters(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
     {
         using namespace NativeWadRules;
         auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
@@ -1063,6 +1176,10 @@ struct FAAWadNativeImport
             Profile.MeleeRange = bMounted ? 75.0f : 60.0f;
             Profile.VisionHalfAngle = bMounted ? 67.5f : 90.0f;
             Profile.bKeepsBoltDistance = true;
+            const auto Configure = [&](ANativeWadGuardian& Knight)
+            {
+                Knight.Configure(Plane, Standing, Down, Attack, Hurt, Bolt, Profile);
+            };
             int32 Count = 0;
             for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
             {
@@ -1084,21 +1201,33 @@ struct FAAWadNativeImport
                 {
                     return false;
                 }
-                Knight->Configure(Plane, Standing, Down, Attack, Hurt, Bolt, Profile);
+                Configure(*Knight);
                 ++Count;
             }
             Output.Logf(TEXT("Imported %d authored %s placements (thing type %d)."), Count, *Profile.Name, Type);
+            if (!bMounted && FPaths::GetBaseFilename(WadPath).Equals(TEXT("L60"), ESearchCase::IgnoreCase)
+                && !InstallL60Generators(World, Actor, WadPath, Profile, Configure, Output))
+            {
+                Output.Log(TEXT("Could not import the authored L60 knight generators."));
+                return false;
+            }
         }
         return !bAssetError;
     }
 
     bool InstallL22Journal(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
     {
-        constexpr int32 JournalType = NativeWadRules::JugurthaJournal;
-        const int32 Index = Map.Things.IndexOfByPredicate([](const FWadThing& Thing) { return Thing.Type == JournalType; });
+        return InstallQuestPickup(World, Actor, Map, NativeWadRules::JugurthaJournal, TEXT("JugurthasJournal"),
+            TEXT("BOOK/BOOK.CPC"), TEXT("L22 Jugurtha Journal"), Output);
+    }
+
+    bool InstallQuestPickup(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, int32 Type,
+        const TCHAR* Asset, const TCHAR* Picture, const TCHAR* Label, FOutputDevice& Output, int32 CheckpointRevision = 0)
+    {
+        const int32 Index = Map.Things.IndexOfByPredicate([Type](const FWadThing& Thing) { return Thing.Type == Type; });
         if (!Map.Things.IsValidIndex(Index))
         {
-            Output.Log(TEXT("The source L22 journal was not found."));
+            Output.Logf(TEXT("The source pickup for %s was not found."), Label);
             return false;
         }
         const FWadThing& Thing = Map.Things[Index];
@@ -1108,19 +1237,18 @@ struct FAAWadNativeImport
             return false;
         }
         auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        auto* Image = SpriteMaterial(TEXT("JugurthasJournal"), TEXT("BOOK/BOOK.CPC"));
+        auto* Image = SpriteMaterial(Asset, Picture);
         if (!Plane || !Image)
         {
             return false;
         }
-        auto* Journal = ImportSliceThing<ANativeWadPickup>(World, Map, Index, Map.Sectors[Sector].FloorHeight + 12.0,
-            TEXT("L22 Jugurtha Journal"));
-        if (!Journal)
+        auto* Pickup = ImportSliceThing<ANativeWadPickup>(World, Map, Index, Map.Sectors[Sector].FloorHeight + 12.0, Label);
+        if (!Pickup)
         {
             return false;
         }
-        Journal->Configure(Plane, Image, JournalType);
-        Output.Logf(TEXT("Imported Jugurtha's journal from L22 thing %d in sector %d."), Index, Sector);
+        Pickup->Configure(Plane, Image, Type, CheckpointRevision);
+        Output.Logf(TEXT("Imported %s from Thing %d in sector %d."), Label, Index, Sector);
         return true;
     }
 
@@ -1252,6 +1380,13 @@ struct FAAWadNativeImport
     template<class T>
     static T* ImportSliceThing(UWorld& World, const FDoomWadMapData& Map, int32 ThingId, double CenterZ, const TCHAR* Name)
     {
+        const FWadThing& Thing = Map.Things[ThingId];
+        return ImportTaggedActor<T>(World, FVector(Thing.X, Thing.Y, CenterZ), FRotator(0, Thing.Angle * 45.0, 0), Name);
+    }
+
+    template<class T>
+    static T* ImportTaggedActor(UWorld& World, const FVector& Position, const FRotator& Rotation, const TCHAR* Name)
+    {
         const FName Tag(Name);
         for (TActorIterator<T> Actor(&World); Actor; ++Actor)
         {
@@ -1261,11 +1396,9 @@ struct FAAWadNativeImport
                 return *Actor;
             }
         }
-        const FWadThing& Thing = Map.Things[ThingId];
-        const FVector Position(Thing.X, Thing.Y, CenterZ);
         FActorSpawnParameters Params;
         Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        T* Actor = World.SpawnActor<T>(Position, FRotator(0, Thing.Angle * 45.0, 0), Params);
+        T* Actor = World.SpawnActor<T>(Position, Rotation, Params);
         if (Actor)
         {
             Actor->Tags.Add(Tag);
@@ -2077,9 +2210,10 @@ namespace
             && Quest.Maps[0] == FCString::Atoi(*Fields.FindRef(TEXT("main.firstmap")));
     }
 
-    UTexture2D* SaveTownTexture(FAAWadNativeImport& Import, const FString& Name, FIntPoint Size, const TArray<FColor>& Pixels)
+    UTexture2D* SaveInterfaceTexture(FAAWadNativeImport& Import, const TCHAR* Folder, const FString& Name,
+        FIntPoint Size, const TArray<FColor>& Pixels)
     {
-        UTexture2D* Texture = Import.FindOrCreateAsset<UTexture2D>(TEXT("Town"), TEXT("T_") + Name);
+        UTexture2D* Texture = Import.FindOrCreateAsset<UTexture2D>(Folder, TEXT("T_") + Name);
         if (Texture)
         {
             Texture->Source.Init(Size.X, Size.Y, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
@@ -2096,7 +2230,7 @@ namespace
         return Texture;
     }
 
-    bool ImportTownFont(FAAWadNativeImport& Import, const FString& Source, const TCHAR* Name, FWadTownFont& Out)
+    bool ImportInterfaceFont(FAAWadNativeImport& Import, const TCHAR* Folder, const FString& Source, const TCHAR* Name, FWadTownFont& Out)
     {
         constexpr int32 Header = 5;
         constexpr int32 Glyphs = 256;
@@ -2129,7 +2263,7 @@ namespace
                 }
             }
         }
-        Out.Atlas = SaveTownTexture(Import, Name, FIntPoint(Width, Columns * Out.Height), Pixels);
+        Out.Atlas = SaveInterfaceTexture(Import, Folder, Name, FIntPoint(Width, Columns * Out.Height), Pixels);
         return Out.Atlas != nullptr;
     }
 
@@ -2167,7 +2301,7 @@ namespace
         TArray<FColor> Pixels;
         const auto AddPicture = [&](const FString& Name)
         {
-            UTexture2D* Texture = SaveTownTexture(Import, Name, Size, Pixels);
+            UTexture2D* Texture = SaveInterfaceTexture(Import, TEXT("Town"), Name, Size, Pixels);
             if (Texture)
             {
                 Content->Pictures.Add(FName(*Name), Texture);
@@ -2195,8 +2329,8 @@ namespace
             }
         }
         const FString Fonts = Original / TEXT("Resources/ArtFinal/FONTS");
-        if (Content->Quests.IsEmpty() || !ImportTownFont(Import, Fonts, TEXT("MEDIUM"), Content->Medium)
-            || !ImportTownFont(Import, Fonts, TEXT("TINY"), Content->Tiny))
+        if (Content->Quests.IsEmpty() || !ImportInterfaceFont(Import, TEXT("Town"), Fonts, TEXT("MEDIUM"), Content->Medium)
+            || !ImportInterfaceFont(Import, TEXT("Town"), Fonts, TEXT("TINY"), Content->Tiny))
         {
             Output.Log(TEXT("Town needs the authored quest data and original fonts."));
             return nullptr;
@@ -2206,6 +2340,111 @@ namespace
             Content->Quests.Num(), Content->Pictures.Num());
         return Content;
     }
+}
+
+bool SaveNativeWadHud(FOutputDevice& Output)
+{
+    constexpr const TCHAR* Folder = TEXT("Graphics");
+    FAAWadNativeImport Import;
+    Import.AssetRoot = TEXT("/Game/WadInterface");
+    auto* Data = Import.FindOrCreateAsset<UNativeWadHudData>(Folder, TEXT("ClassicHud"));
+    const FString Fonts = FPaths::ProjectDir() /
+        TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/FONTS");
+    if (!Data || !LoadWadInterfacePalette(Data->Palette)
+        || !ImportInterfaceFont(Import, Folder, Fonts, TEXT("TINY"), Data->Tiny))
+    {
+        return false;
+    }
+    TArray<FString> Pictures = {
+        TEXT("UI/3DUI/MAINBACK"), TEXT("UI/3DUI/INVBAR3"), TEXT("UI/3DUI/STABAR"), TEXT("UI/3DUI/SMPORT04"),
+        TEXT("UI/3DUI/RUNBUT12"), TEXT("UI/3DUI/RUNBUT13"), TEXT("UI/3DUI/RUDBUT12"), TEXT("UI/3DUI/RUDBUT13")
+    };
+    for (int32 Frame = 0; Frame < 8; ++Frame)
+    {
+        Pictures.Add(FString::Printf(TEXT("UI/3DUI/POTION%d"), Frame));
+    }
+    Data->Pictures.Reset();
+    FIntPoint Size;
+    TArray<FColor> Pixels;
+    for (const FString& Picture : Pictures)
+    {
+        if (!LoadWadInterfacePicture(Picture, Size, Pixels))
+        {
+            Output.Logf(TEXT("Could not read classic HUD art %s."), *Picture);
+            return false;
+        }
+        const FString Name = FPaths::GetCleanFilename(Picture);
+        if (Name == TEXT("STABAR"))
+        {
+            if (Size != FIntPoint(111, 152))
+            {
+                Output.Log(TEXT("The classic statistics art has unexpected dimensions."));
+                return false;
+            }
+            // BAN00003.FRM replaces the demonstration text inside these fields.
+            const struct { int32 X; int32 Y; int32 Width; } Fields[] = {
+                {5, 16, 99}, {90, 26, 14}, {90, 36, 14}, {90, 46, 14}, {90, 56, 14},
+                {90, 66, 14}, {90, 76, 14}, {90, 86, 14}, {31, 102, 73}, {31, 112, 73},
+                {54, 128, 50}, {54, 138, 50}
+            };
+            for (const auto& Field : Fields)
+            {
+                for (int32 Row = Field.Y + 1; Row < Field.Y + 7; ++Row)
+                {
+                    FColor* Start = Pixels.GetData() + Row * Size.X + Field.X + 1;
+                    const FColor Background = *Start;
+                    for (int32 Column = 0; Column < Field.Width - 1; ++Column)
+                    {
+                        Start[Column] = Background;
+                    }
+                }
+            }
+        }
+        UTexture2D* Texture = SaveInterfaceTexture(Import, Folder, Name, Size, Pixels);
+        if (!Texture)
+        {
+            return false;
+        }
+        Data->Pictures.Add(FName(*Name), Texture);
+    }
+    // Source object definitions give weights in tenths of a kilogram.
+    const struct { int32 Type; int32 Weight; const TCHAR* Sprite; } Items[] = {
+        {NativeWadRules::IronDagger, 5, TEXT("DAGGER/DAGGER.CPC")},
+        {NativeWadRules::Berry, 1, TEXT("BERI/BERI.CPC")},
+        {NativeWadRules::ChurchKey, 1, TEXT("KEY2/KEY2.CPC")},
+        {NativeWadRules::FeatherfallPotion, 2, TEXT("POTION17/POTION17.CPC")},
+        {NativeWadRules::JugurthaJournal, 1, TEXT("BOOK/BOOK.CPC")},
+        {958, 1, TEXT("NECKLACE/NECKLACE.CPC")},
+    };
+    Data->Items.Reset();
+    Data->ItemWeights.Reset();
+    for (const auto& Item : Items)
+    {
+        if (!LoadWadSprite(Item.Sprite, Size, Pixels))
+        {
+            Output.Logf(TEXT("Could not read classic HUD item art %s."), Item.Sprite);
+            return false;
+        }
+        UTexture2D* Texture = SaveInterfaceTexture(Import, Folder, FString::Printf(TEXT("Item%d"), Item.Type), Size, Pixels);
+        if (!Texture)
+        {
+            return false;
+        }
+        Data->Items.Add(Item.Type, Texture);
+        Data->ItemWeights.Add(Item.Type, Item.Weight);
+    }
+    Import.QueueSave(*Data);
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    {
+        if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension()))
+        {
+            return false;
+        }
+    }
+    Output.Logf(TEXT("Saved classic WAD HUD with %d pictures, %d item icons and FontTiny."),
+        Data->Pictures.Num(), Data->Items.Num());
+    return true;
 }
 
 bool SaveNativeWadTown(FOutputDevice& Output)

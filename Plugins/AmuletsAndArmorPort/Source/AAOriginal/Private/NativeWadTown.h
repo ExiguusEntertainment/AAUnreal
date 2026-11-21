@@ -5,6 +5,7 @@
 #include "NativeWadTown.generated.h"
 
 class UTexture2D;
+class UCanvas;
 
 USTRUCT()
 struct FWadTownQuest
@@ -55,6 +56,10 @@ struct FWadTownFont
     UPROPERTY()
     int32 Height = 0;
 };
+
+void DrawWadBitmapText(UCanvas& Canvas, const FWadTownFont& Font, TConstArrayView<FColor> Palette,
+    const FString& Text, FVector2D Origin, double Scale, int32 Width, int32 Rows, int32 Scroll,
+    bool bCenter, uint8 Ink);
 
 UCLASS()
 class UNativeWadTownData : public UDataAsset

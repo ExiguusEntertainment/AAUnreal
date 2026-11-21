@@ -197,6 +197,14 @@ void ANativeWadGuardian::RestoreEncounterHealth(int32 SavedHealth)
     }
 }
 
+void ANativeWadGuardian::SetSpawned(bool bSpawned)
+{
+    SetActorHiddenInGame(!bSpawned);
+    SetActorEnableCollision(bSpawned);
+    SetActorTickEnabled(bSpawned);
+    GetCharacterMovement()->SetComponentTickEnabled(bSpawned);
+}
+
 void ANativeWadGuardian::FireBolt(ANativeWadPlayer& Player)
 {
     const FVector Start = GetActorLocation();
@@ -286,12 +294,13 @@ ANativeWadPickup::ANativeWadPickup()
     Sprite->SetupAttachment(HitTarget);
 }
 
-void ANativeWadPickup::Configure(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType)
+void ANativeWadPickup::Configure(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType, int32 InCheckpointRevision)
 {
     const FVector Scale = InType == IronDagger ? FVector(0.25, 0.25, 0.25) : FVector(0.10, 0.13, 0.13);
     SetSprite(*Sprite, Plane, Image, Scale.Y);
     Sprite->SetRelativeScale3D(Scale);
     ItemType = InType;
+    CheckpointRevision = InCheckpointRevision;
 }
 
 void ANativeWadPickup::Tick(float DeltaSeconds)

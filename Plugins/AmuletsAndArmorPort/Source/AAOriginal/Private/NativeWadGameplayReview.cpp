@@ -464,11 +464,17 @@ namespace
     };
 
     enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll };
-    enum class EL25Review { None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload };
+    enum class EL25Review
+    {
+        None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload,
+        L60Puzzles, L60Relic, L60Return, L60Empty
+    };
     constexpr const TCHAR* L25KeySlot = TEXT("NativeWadChurchKeyReview");
     constexpr const TCHAR* L25DoorSlot = TEXT("NativeWadChurchDoorReview");
     constexpr const TCHAR* L20ReviewSlot = TEXT("NativeWadChurchL20Review");
     constexpr const TCHAR* L60ReviewSlot = TEXT("NativeWadChurchL60Review");
+    constexpr const TCHAR* AndrewPuzzleSlot = TEXT("NativeWadAndrewPuzzleReview");
+    constexpr const TCHAR* AndrewRelicSlot = TEXT("NativeWadAndrewRelicReview");
     constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
     enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
 
@@ -585,6 +591,10 @@ namespace
         bool bJumpStarted = false;
         bool bRavineReview = false;
         bool bAmbientReview = false;
+        bool bClassicHudReview = false;
+        int32 AndrewPlateIndex = 0;
+        int32 AndrewPlateTurns = 0;
+        int32 AndrewStartingGold = 0;
         bool bL22TrapReview = false;
         bool bLiftCheckpointReview = false;
         bool bLiftReload = false;
@@ -877,6 +887,118 @@ namespace
             }
             CaptureFrames = 0;
             bSaved = IFileManager::Get().FileExists(*Image);
+            return true;
+        }
+
+        bool TickClassicHud(ANativeWadPlayer& Player)
+        {
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            APlayerController* Controller = Cast<APlayerController>(Player.GetController());
+            ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Hud || !Hud->HasClassicHud())
+            {
+                return Finish(&Player, TEXT("the native game did not load the classic HUD asset"));
+            }
+            const auto Click = [&](FVector2D Point)
+            {
+                int32 Width = 0;
+                int32 Height = 0;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale);
+            };
+            const auto Capture = [&](const TCHAR* Name)
+            {
+                bool bSaved = false;
+                return CaptureTownFrame(Name, bSaved) ? (bSaved ? 1 : -1) : 0;
+            };
+            switch (NextPoint)
+            {
+            case 0:
+                if (!Player.GetCarriedItems().IsEmpty() || Player.GetExperience() != 0)
+                {
+                    return Finish(&Player, TEXT("the classic HUD baseline needs a fresh character"));
+                }
+                if (const int32 Result = Capture(TEXT("exploring")); Result != 0)
+                {
+                    if (Result < 0)
+                    {
+                        return Finish(&Player, TEXT("could not capture the classic frame at the original spawn"));
+                    }
+                    Player.ReceiveEncounterHit(300);
+                    Player.CollectItem(NativeWadRules::IronDagger);
+                    Player.CollectItem(NativeWadRules::Berry);
+                    Press(Player, EKeys::NumPadSeven);
+                    ++NextPoint;
+                }
+                break;
+            case 1:
+                if (!Player.IsInventoryOpen())
+                {
+                    return Finish(&Player, TEXT("the inventory key did not open the original inventory panel"));
+                }
+                Hud->ClickHUD(Hud->InventorySlotCenter(Player.GetCarriedItems().Find(NativeWadRules::IronDagger)));
+                Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
+                if (Player.GetReadyItem() != NativeWadRules::IronDagger)
+                {
+                    return Finish(&Player, TEXT("the classic inventory and ready hand hit targets could not equip the dagger"));
+                }
+                ++NextPoint;
+                break;
+            case 2:
+                if (const int32 Result = Capture(TEXT("inventory")); Result != 0)
+                {
+                    if (Result < 0)
+                    {
+                        return Finish(&Player, TEXT("could not capture the classic inventory"));
+                    }
+                    Click({47, 161});
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (const int32 Result = Capture(TEXT("statistics")); Result != 0)
+                {
+                    if (Result < 0)
+                    {
+                        return Finish(&Player, TEXT("could not capture the classic statistics"));
+                    }
+                    Click({309, 9});
+                    if (Player.IsInventoryOpen())
+                    {
+                        return Finish(&Player, TEXT("the original close button did not dismiss the banner"));
+                    }
+                    Press(Player, EKeys::Tab);
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                Click({272, 174});
+                Click({289, 174});
+                if (Player.GetRunes() != TEXT("45"))
+                {
+                    return Finish(&Player, TEXT("the original rune hit targets did not build the spell"));
+                }
+                ++NextPoint;
+                break;
+            case 5:
+                if (const int32 Result = Capture(TEXT("runes")); Result != 0)
+                {
+                    const int32 Mana = Player.GetMana();
+                    Click({249, 188});
+                    if (Result < 0 || Player.GetMana() >= Mana || !Player.GetRunes().IsEmpty())
+                    {
+                        return Finish(&Player, TEXT("the original Cast button did not spend mana and clear the runes"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the classic HUD at the L301 spawn, inventory and ready hand, rune buttons and Cast action."));
+                    return Finish(&Player);
+                }
+                break;
+            }
             return true;
         }
 
@@ -1886,12 +2008,395 @@ namespace
                 || Finish(&Player, bSaved ? nullptr : TEXT("could not capture the L60 column hall"));
         }
 
+        bool TickL60Puzzles(UWorld& Current, ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            struct FPlate
+            {
+                int32 Sector, Object, Turns;
+                FVector2D Approach, Inside;
+            };
+            const FPlate Plates[] = {
+                {231, 297, 2, {2191, 1056}, {2234, 1056}},
+                {230, 293, 1, {1775, 1696}, {1818, 1696}},
+                {233, 294, 2, {2447, 1600}, {2490, 1600}},
+                {234, 295, 3, {3119, 1856}, {3162, 1856}},
+                {232, 296, 1, {2863, 1056}, {2906, 1056}},
+            };
+            constexpr int32 Stair[] = {226, 228, 229, 171, 144, 141, 166};
+            constexpr int32 OpenZ[] = {40, 0, -40, 67, 67, 67, 67};
+            const auto* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            FVector2D Lift = FVector2D::ZeroVector;
+            if (!Travel || Travel->Quest.Active != 1 || Travel->Quest.ResumeMaps.FindRef(1) != 60
+                || !Level.GetSectorSurfaceHeights(225, Lift))
+            {
+                return Finish(&Player, TEXT("the L60 review needs the active Knights of Andrew quest"));
+            }
+            const double Now = Current.GetTimeSeconds();
+            FName Relic(TEXT("L60 Necklace of Andrew"));
+            bool bSaved = false;
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                FWadLevelCheckpoint Snapshot;
+                const auto* Controller = Player.GetController<APlayerController>();
+                const auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+                if (!Hud || !Hud->HasClassicHud() || !Player.HasRestoredWadCheckpoint()
+                    || Lift.X != 64.0 || !Level.WriteCheckpoint(Snapshot, true)
+                    || Snapshot.ScriptObjectAngles.Num() != 5 || !Snapshot.RemainingPickups.Contains(Relic)
+                    || !PlaceReviewPlayer(Level, Player, {2658, 366}))
+                {
+                    return Finish(&Player, TEXT("L60 did not load the original setup and newly imported necklace"));
+                }
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {2666, 411, -12});
+                    Press(Player, EKeys::E);
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Now - StageTime >= 3.10)
+                {
+                    if (!FMath::IsNearlyEqual(Lift.X, -50.0, 0.1))
+                    {
+                        return Finish(&Player, TEXT("E on L60 line 1130 did not lower the authored lift"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (Now - StageTime >= 9.10)
+                {
+                    if (!FMath::IsNearlyEqual(Lift.X, 64.0, 0.1) || !PlaceReviewPlayer(Level, Player, {2659, 230}))
+                    {
+                        return Finish(&Player, TEXT("L60 lift did not finish its nine-second cycle"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L60's authored E switch lowers floor 225 to Z-50 and returns it to Z64."));
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (FVector2D(Player.GetActorLocation()).Equals({1408, -1086}, 6.0))
+                {
+                    Stop(Player);
+                    Player.ReceiveEncounterHit(FMath::Clamp(Player.GetHealth() - 1, 0, 100));
+                    const FVector2D Approach = Plates[0].Approach;
+                    if (!PlaceReviewPlayer(Level, Player, Approach))
+                    {
+                        return Finish(&Player, TEXT("the original statue approach was missing"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L60 sector 135 teleports the player to (1408, -1086)."));
+                    ++NextPoint;
+                }
+                else if (WalkTo(Player, {2659, 170}))
+                {
+                    return Finish(&Player, TEXT("the L60 teleport did not run on entering its sector"));
+                }
+                break;
+            case 5:
+            {
+                if (Player.GetHealth() != Player.GetMaxHealth()
+                    || !Player.GetInteractionMessage().Contains(TEXT("The enchanted waters have healed you.")))
+                {
+                    return Finish(&Player, TEXT("the lower pools did not run the original healing activity"));
+                }
+                const auto& Plate = Plates[AndrewPlateIndex];
+                Aim(Player, FVector(Plate.Inside, Player.GetPawnViewLocation().Z));
+                if (CaptureTownFrame(TEXT("statue-plate"), bSaved))
+                {
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture the statue puzzle"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            }
+            case 6:
+            {
+                const FPlate& Plate = Plates[AndrewPlateIndex];
+                if (WalkTo(Player, Plate.Inside))
+                {
+                    if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) != Plate.Sector)
+                    {
+                        return Finish(&Player, TEXT("the walk did not enter its authored statue plate"));
+                    }
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            }
+            case 7:
+                if (Now - StageTime >= 1.05)
+                {
+                    constexpr uint16 Initial[] = {32768, 0, 32768, 16384, 49152};
+                    const FPlate& Plate = Plates[AndrewPlateIndex];
+                    FWadLevelCheckpoint Snapshot;
+                    ++AndrewPlateTurns;
+                    const uint16 Expected = uint16(Initial[AndrewPlateIndex] + 16384 * AndrewPlateTurns);
+                    if (!Level.WriteCheckpoint(Snapshot, true) || !Snapshot.ScriptObjectAngles.Contains(Plate.Object)
+                        || Snapshot.ScriptObjectAngles.FindRef(Plate.Object) != Expected
+                        || Snapshot.Variables[10 + AndrewPlateIndex] != Expected / 16384)
+                    {
+                        return Finish(&Player, TEXT("the L60 plate did not rotate its original statue by a quarter turn"));
+                    }
+                    if (AndrewPlateTurns == Plate.Turns)
+                    {
+                        ++AndrewPlateIndex;
+                        AndrewPlateTurns = 0;
+                    }
+                    if (AndrewPlateIndex == UE_ARRAY_COUNT(Plates))
+                    {
+                        if (Snapshot.Variables[16] != 10)
+                        {
+                            return Finish(&Player, TEXT("the original statue combination did not solve the puzzle"));
+                        }
+                        ++NextPoint;
+                    }
+                    else
+                    {
+                        if (Snapshot.Variables[16] == 10 || !PlaceReviewPlayer(Level, Player, Plates[AndrewPlateIndex].Approach))
+                        {
+                            return Finish(&Player, TEXT("an incorrect statue combination opened a crossing"));
+                        }
+                        --NextPoint;
+                    }
+                }
+                break;
+            case 8:
+                if (Now - StageTime >= 3.2)
+                {
+                    for (int32 Index = 0; Index < UE_ARRAY_COUNT(Stair); ++Index)
+                    {
+                        FVector2D Heights;
+                        if (!Level.GetSectorSurfaceHeights(Stair[Index], Heights) || Heights.X != OpenZ[Index])
+                        {
+                            return Finish(&Player, TEXT("the solved puzzle did not raise each crossing and stair to source height"));
+                        }
+                    }
+                    if (!PlaceReviewPlayer(Level, Player, {2420, 1846}))
+                    {
+                        return Finish(&Player, TEXT("could not reach the raised crossing approach"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 9:
+                if (WalkTo(Player, {2543, 1846}))
+                {
+                    Aim(Player, {2330, 1846, Player.GetPawnViewLocation().Z - 24});
+                    ++NextPoint;
+                }
+                break;
+            case 10:
+                if (CaptureTownFrame(TEXT("raised-crossing"), bSaved))
+                {
+                    if (!bSaved || !Player.SaveWadCheckpoint(AndrewPuzzleSlot))
+                    {
+                        return Finish(&Player, TEXT("could not save the solved statue checkpoint"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified all five L60 plates through movement and crossed the raised floor into a saved checkpoint."));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickAndrewTown(ANativeWadPlayer& Player)
+        {
+            const bool bSuccess = L25Review == EL25Review::L60Return;
+            const UNativeWadTravelState* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            const UNativeWadTownData* Content = NativeWadTown::FindContent(*Player.GetWorld());
+            if (!Travel || !Content || !Content->Quests.IsValidIndex(1))
+            {
+                return Finish(&Player, TEXT("Town could not find The Knights of Andrew"));
+            }
+            if (Travel->ArrivingFromMap != 0)
+            {
+                return true;
+            }
+            const FWadQuestProgress& Quest = Travel->Quest;
+            const FWadTownQuest& Andrew = Content->Quests[1];
+            const FWadLevelCheckpoint* L60 = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L60"));
+            if (Quest.Active != INDEX_NONE || Quest.ResultQuest != 1 || Quest.bSucceeded != bSuccess || !Quest.bShowResult
+                || Quest.Gold != AndrewStartingGold + (bSuccess ? 20 : 0) || Quest.ResumeMaps.Contains(1)
+                || Player.GetItemCount(NativeWadRules::AndrewNecklace) != 0 || !Player.HasCompletedWadLevel(TEXT("L60"))
+                || !L60 || L60->SectorHeights.FindRef(247).X != 290.0 || !L60->CreatureGenerators.Contains(3)
+                || L60->RemainingPickups.Contains(TEXT("L60 Necklace of Andrew")) == bSuccess
+                || !Andrew.Success.Contains(TEXT("With necklace in hand"))
+                || !Andrew.Failure.Contains(TEXT("You wonder if there ever was a necklace"))
+                || !Andrew.TurnInMessage.Contains(TEXT("Lady Marg takes the necklace."))
+                || Andrew.GoldMessage != TEXT("Lady Marg gives you 20 gold!"))
+            {
+                return Finish(&Player, TEXT("Town did not show the imported dialogue or apply the authored quest outcome"));
+            }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            if (!bArrivalCaptured)
+            {
+                bArrivalCaptured = true;
+                StageTime = Now;
+                NextPoint = 0;
+            }
+            if (Now - StageTime < 0.5)
+            {
+                return true;
+            }
+            if (NextPoint == 1)
+            {
+                // Move from the completion notice to Lady Marg's turn-in page.
+                Press(Player, EKeys::Enter);
+                ++NextPoint;
+                return true;
+            }
+            bool bSaved = false;
+            const TCHAR* Image = NextPoint == 2 ? TEXT("town-turn-in") : NextPoint == 3 ? TEXT("town-reward")
+                : bSuccess ? TEXT("town-success") : TEXT("town-failure");
+            if (CaptureTownFrame(Image, bSaved))
+            {
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("could not capture the Knights of Andrew quest outcome"));
+                }
+                if (bSuccess && NextPoint < 3)
+                {
+                    Press(Player, EKeys::Enter);
+                    ++NextPoint;
+                    return true;
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified The Knights of Andrew town result. Success=%d, gold reward=%d."),
+                    bSuccess, Quest.Gold - AndrewStartingGold);
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickL60Relic(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            const bool bResume = L25Review == EL25Review::L60Return;
+            const bool bEmpty = L25Review == EL25Review::L60Empty;
+            const auto* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            FVector2D Gate = FVector2D::ZeroVector;
+            if (!Travel || Travel->Quest.Active != 1 || !Level.GetSectorSurfaceHeights(247, Gate))
+            {
+                return Finish(&Player, TEXT("the L60 exit review needs its saved active quest"));
+            }
+            bool bSaved = false;
+            const FVector2D Walkway[] = {{4001, 3561}, {3900, 3561}, {3660, 3561}, {3550, 3561},
+                {3441, 3561}, {3441, 3625}, {3427, 3664}};
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                FWadLevelCheckpoint Snapshot;
+                if (!Player.HasRestoredWadCheckpoint() || !Level.WriteCheckpoint(Snapshot, true)
+                    || Snapshot.Variables[16] != 10 || Snapshot.ScriptObjectAngles.Num() != 5
+                    || Snapshot.SectorHeights.FindRef(141).X != 67.0
+                    || Player.GetItemCount(NativeWadRules::AndrewNecklace) != int32(bResume))
+                {
+                    return Finish(&Player, TEXT("L60 did not restore the solved statues and expected inventory"));
+                }
+                AndrewStartingGold = Travel->Quest.Gold;
+                if (bResume)
+                {
+                    if (Gate.X != 290.0 || !Snapshot.CreatureGenerators.Contains(3)
+                        || Level.FindWadSector(FVector2D(Player.GetActorLocation())) != 245)
+                    {
+                        return Finish(&Player, TEXT("L60 did not restore the opened exit and necklace checkpoint"));
+                    }
+                    NextPoint = 5;
+                    break;
+                }
+                if (Gate.X != 416.0 || !PlaceReviewPlayer(Level, Player, {3975, 3518}))
+                {
+                    return Finish(&Player, TEXT("could not reach the original necklace pedestal approach"));
+                }
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (WalkTo(Player, {4034, 3535}))
+                {
+                    if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) != 204)
+                    {
+                        return Finish(&Player, TEXT("the player did not step onto the original necklace pedestal"));
+                    }
+                    Aim(Player, {4020, 3516, 330});
+                    if (!bEmpty)
+                    {
+                        Press(Player, EKeys::E);
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Player.GetItemCount(NativeWadRules::AndrewNecklace) != (bEmpty ? 0 : 1))
+                {
+                    return Finish(&Player, TEXT("the original Necklace of Andrew pickup did not respond to E"));
+                }
+                if (Gate.X == 290.0 && CaptureTownFrame(TEXT("necklace-pedestal"), bSaved))
+                {
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture the necklace pedestal and opened gate"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (WalkTo(Player, Walkway[AndrewPlateIndex]) && ++AndrewPlateIndex == UE_ARRAY_COUNT(Walkway))
+                {
+                    if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) != 245)
+                    {
+                        return Finish(&Player, TEXT("walking through the original exit gate did not reach the corridor"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (bEmpty)
+                {
+                    ++NextPoint;
+                }
+                else if (Player.GetCharacterMovement()->IsMovingOnGround() && Player.SaveWadCheckpoint(AndrewRelicSlot))
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Saved the Necklace of Andrew after crossing the authored L60 exit gate."));
+                    return Finish(&Player);
+                }
+                break;
+            case 5:
+                if (WalkTo(Player, {3383, 3708}))
+                {
+                    ++NextPoint;
+                }
+                break;
+            case 6:
+                if (WalkTo(Player, {3328, 3714}))
+                {
+                    return Finish(&Player, TEXT("the authored L60 teleporter did not return to Town Hall"));
+                }
+                break;
+            }
+            return true;
+        }
+
         bool TickL25(UWorld& Current, ANativeWadPlayer& Player)
         {
             if (HeldKey)
             {
                 SendKey(Player, HeldKey.GetValue(), IE_Released);
                 HeldKey.Reset();
+            }
+            if ((L25Review == EL25Review::L60Return || L25Review == EL25Review::L60Empty)
+                && Current.GetAuthGameMode<ANativeWadTownGameMode>())
+            {
+                return TickAndrewTown(Player);
             }
             const TActorIterator<ANativeWadLevel> Level(&Current);
             if (!Level || Player.GetHealth() <= 0
@@ -1909,6 +2414,10 @@ namespace
             case EL25Review::L20Scenery: return TickChurchScenery(Current, **Level, Player);
             case EL25Review::L20Exit: return TickL20Exit(Current, **Level, Player);
             case EL25Review::L60Reload: return TickL60Reload(Current, **Level, Player);
+            case EL25Review::L60Puzzles: return TickL60Puzzles(Current, **Level, Player);
+            case EL25Review::L60Relic:
+            case EL25Review::L60Return:
+            case EL25Review::L60Empty: return TickL60Relic(**Level, Player);
             default: return TickL25Key(**Level, Player);
             }
         }
@@ -2088,7 +2597,7 @@ namespace
             {
                 const int32 Button = Player.GetSelectedInventorySlot() == Slot ? INDEX_NONE : Slot;
                 // Drive the same screen-space hit test used by a mouse click, including in offscreen runs.
-                HUD->ClickInventory(HUD->InventorySlotCenter(Button));
+                HUD->ClickHUD(HUD->InventorySlotCenter(Button));
             }
             return false;
         }
@@ -3425,6 +3934,10 @@ namespace
             {
                 return true;
             }
+            if (bClassicHudReview)
+            {
+                return TickClassicHud(*Player);
+            }
             if (TownReview != ETownReview::None)
             {
                 return TickTown(*Current, *Player);
@@ -3757,6 +4270,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : Mode == TEXT("churchjourney") ? EL25Review::Exit : Mode == TEXT("churchl20reload") ? EL25Review::L20Reload
         : Mode == TEXT("churchscenery") ? EL25Review::Scenery : Mode == TEXT("churchl20scenery") ? EL25Review::L20Scenery
         : Mode == TEXT("churchl20exit") ? EL25Review::L20Exit : Mode == TEXT("churchl60reload") ? EL25Review::L60Reload
+        : Mode == TEXT("churchl60puzzles") ? EL25Review::L60Puzzles : Mode == TEXT("churchl60relic") ? EL25Review::L60Relic
+        : Mode == TEXT("churchl60return") ? EL25Review::L60Return : Mode == TEXT("churchl60empty") ? EL25Review::L60Empty
         : EL25Review::None;
     const ETownReview TownReview = Mode == TEXT("towntour") ? ETownReview::Tour : Mode == TEXT("townfailure") ? ETownReview::Failure
         : Mode == TEXT("townreload") || L25Review == EL25Review::Exit ? ETownReview::Reload
@@ -3767,14 +4282,15 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
     const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
     const bool bAmbient = Mode == TEXT("ambient");
+    const bool bClassicHud = Mode == TEXT("classichud");
     const bool bL22Journey = Mode == TEXT("l31tol22");
     const bool bL22Trap = Mode == TEXT("l22trap");
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
     const bool bDoorReload = Mode == TEXT("doorreload");
     const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bStartsInL20 ? TEXT("L20")
-        : L25Review == EL25Review::L60Reload ? TEXT("L60")
-        : L25Review != EL25Review::None ? TEXT("L25") : bAmbient ? TEXT("L301")
+        : L25Review >= EL25Review::L60Reload ? TEXT("L60")
+        : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
         : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");
@@ -3790,6 +4306,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->StartTime = FPlatformTime::Seconds();
     Review->Size = ImageSize;
     Review->bAmbientReview = bAmbient;
+    Review->bClassicHudReview = bClassicHud;
     Review->bRavineReview = Mode == TEXT("ravine") || bL22Journey;
     Review->bL22Journey = bL22Journey;
     Review->bL22TrapReview = bL22Trap;

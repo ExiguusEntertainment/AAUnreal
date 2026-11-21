@@ -18,6 +18,7 @@ namespace
         case FeatherfallPotion: return TEXT("Potion of Featherfalling");
         case JugurthaJournal: return TEXT("Jugurtha's journal");
         case ChurchKey: return TEXT("Church key");
+        case AndrewNecklace: return TEXT("Necklace of Andrew");
         default: return Type > 0 ? TEXT("Item") : TEXT("Empty");
         }
     }
@@ -123,18 +124,18 @@ void ANativeWadPlayer::ConsumeBerry()
 
 void ANativeWadPlayer::ClickPressed()
 {
-    if (bInventoryOpen)
+    if (!bMouseLook)
     {
         if (APlayerController* LocalPlayer = Cast<APlayerController>(GetController()))
         {
             FVector2D Cursor;
             if (ANativeWadHUD* HUD = Cast<ANativeWadHUD>(LocalPlayer->GetHUD()); HUD && LocalPlayer->GetMousePosition(Cursor.X, Cursor.Y))
             {
-                HUD->ClickInventory(Cursor);
+                HUD->ClickHUD(Cursor);
             }
         }
     }
-    else if (bMouseLook)
+    else
     {
         UseReadyHand();
     }
@@ -144,6 +145,13 @@ void ANativeWadPlayer::ToggleInventory()
 {
     bInventoryOpen = !bInventoryOpen;
     SelectedInventorySlot = INDEX_NONE;
+    if (const APlayerController* LocalPlayer = Cast<APlayerController>(GetController()))
+    {
+        if (ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>())
+        {
+            HUD->bStatistics = false;
+        }
+    }
     if (bInventoryOpen)
     {
         bRestoreLookAfterInventory = bMouseLook;
@@ -226,12 +234,12 @@ void ANativeWadPlayer::RuneBackspace()
     }
 }
 
-FVector2D ANativeWadHUD::InventorySlotCenter(int32 Slot) const
+FVector2D ANativeWadHUD::FallbackInventorySlotCenter(int32 Slot) const
 {
     return InventoryBox(GetOwningPlayerController(), Slot).GetCenter();
 }
 
-void ANativeWadHUD::ClickInventory(const FVector2D& Position)
+void ANativeWadHUD::ClickFallbackInventory(const FVector2D& Position)
 {
     ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     if (!Player || !Player->IsInventoryOpen())
@@ -254,14 +262,9 @@ void ANativeWadHUD::ClickInventory(const FVector2D& Position)
     }
 }
 
-void ANativeWadHUD::DrawHUD()
+void ANativeWadHUD::DrawFallbackHUD(const ANativeWadPlayer& FallbackPlayer)
 {
-    Super::DrawHUD();
-    const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
-    if (!Canvas || !Player || !Player->ShouldShowEncounterHUD())
-    {
-        return;
-    }
+    const ANativeWadPlayer* Player = &FallbackPlayer;
     const FLinearColor Ink(0.94, 0.91, 0.83);
     const FLinearColor Panel(0.045, 0.052, 0.065, 0.95);
     const FLinearColor Selected(0.20, 0.28, 0.38, 0.98);

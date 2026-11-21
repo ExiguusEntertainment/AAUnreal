@@ -25,10 +25,9 @@ namespace
             return true;
         }
 
-        bool Literal(int32& Value)
+        bool ReadLiteral(uint32 Tag, int32& Value)
         {
-            uint32 Tag = 0;
-            if (!Unsigned(1, Tag) || Tag > 2)
+            if (Tag > 2)
             {
                 return false;
             }
@@ -38,6 +37,33 @@ namespace
                 return false;
             }
             Value = Tag == 0 ? int8(Raw) : Tag == 1 ? int16(Raw) : int32(Raw);
+            return true;
+        }
+
+        bool Literal(int32& Value)
+        {
+            uint32 Tag;
+            return Unsigned(1, Tag) && ReadLiteral(Tag, Value);
+        }
+
+        bool Number(FWadScriptNumber& Value)
+        {
+            uint32 Tag;
+            if (!Unsigned(1, Tag))
+            {
+                return false;
+            }
+            if (Tag != 4)
+            {
+                return ReadLiteral(Tag, Value.Value);
+            }
+            uint32 Index;
+            if (!Unsigned(2, Index) || Index >= 256)
+            {
+                return false;
+            }
+            Value.Value = int32(Index);
+            Value.bVariable = true;
             return true;
         }
 
@@ -122,6 +148,43 @@ namespace
                     return false;
                 }
                 break;
+            case 5:
+            case 6:
+            case 7:
+                Command.Operation = Opcode == 5 ? EWadScriptOperation::AddNumbers
+                    : Opcode == 6 ? EWadScriptOperation::SubtractNumbers : EWadScriptOperation::MultiplyNumbers;
+                if (!Reader.TaggedByte(4, Command.Target) || !Reader.Number(Command.Left) || !Reader.Number(Command.Right))
+                {
+                    return false;
+                }
+                break;
+            case 27:
+            case 28:
+            {
+                int32 Attribute;
+                // OBJECT_SCRIPT_ATTR_ANGLE is the only object attribute used by the L60 statues.
+                if (!Reader.Literal(Command.Target) || Command.Target <= 0 || !Reader.Literal(Attribute) || Attribute != 9)
+                {
+                    return false;
+                }
+                if (Opcode == 27)
+                {
+                    Command.Operation = EWadScriptOperation::SetObjectAngle;
+                    if (!Reader.Number(Command.Left))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    Command.Operation = EWadScriptOperation::ReadObjectAngle;
+                    if (!Reader.TaggedByte(4, Command.Value))
+                    {
+                        return false;
+                    }
+                }
+                break;
+            }
             case 57:
                 Command.Operation = EWadScriptOperation::ActivateGenerator;
                 if (!Reader.Literal(Command.Target) || Command.Target < 0)
@@ -224,6 +287,11 @@ namespace
                 {
                     Command.Operation = EWadScriptOperation::Earthquake;
                     Command.Ticks = Args[1];
+                }
+                else if (Opcode == 52 && Args[0] >= 8 && Args[0] <= 10 && Args[1] == 0 && Args[2] == 0 && Args[3] > 0)
+                {
+                    Command.Operation = EWadScriptOperation::RestoreVitals;
+                    Command.Value = Args[3];
                 }
                 else if (Opcode == 54 && (Args[0] == 4011 || Args[0] == 4015 || Args[0] == 4016
                     || Args[0] == NativeWadRules::PiercingCrossbowBolt) && Args[7] > 0)

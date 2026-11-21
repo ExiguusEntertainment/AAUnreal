@@ -91,7 +91,7 @@ namespace
         int32 Width = 0;
     };
 
-    TArray<FTownTextLine> WrapTownText(const FString& Text, const FWadTownFont& Font, int32 MaxWidth)
+    TArray<FTownTextLine> WrapTownText(const FString& Text, const FWadTownFont& Font, int32 MaxWidth, uint8 Ink = TextBrown)
     {
         // MESSAGE.C maps the form's ^nnn markers to entries in GAME.PAL.
         constexpr uint8 Colors[] = {0,31,16,160,164,144,148,211,82,128,132,177,182,34,36,38,40,42,
@@ -100,7 +100,7 @@ namespace
         FTownTextLine* Line = &Lines.AddDefaulted_GetRef();
         TArray<FTownGlyph> Word;
         int32 WordWidth = 0;
-        uint8 Color = TextBrown;
+        uint8 Color = Ink;
         const auto FinishWord = [&]
         {
             if (Line->Width && Line->Width + WordWidth > MaxWidth)
@@ -119,7 +119,7 @@ namespace
                 && FChar::IsDigit(Text[Index + 2]) && FChar::IsDigit(Text[Index + 3]))
             {
                 const int32 Marker = (Text[Index + 1] - '0') * 100 + (Text[Index + 2] - '0') * 10 + Text[Index + 3] - '0';
-                Color = Marker < UE_ARRAY_COUNT(Colors) ? Colors[Marker] : TextBrown;
+                Color = Marker < UE_ARRAY_COUNT(Colors) ? Colors[Marker] : Ink;
                 Index += 3;
             }
             else if (Char == '\n')
@@ -184,29 +184,7 @@ namespace
         void Text(const FString& Value, const FWadTownFont& Font, int32 X, int32 Y,
             int32 Width, int32 Rows = 1, int32 Scroll = 0, bool bCenter = false) const
         {
-            if (!Font.Atlas || Font.Widths.Num() != 256 || Font.Height <= 0 || Data.Palette.Num() != 256)
-            {
-                return;
-            }
-            const TArray<FTownTextLine> Lines = WrapTownText(Value, Font, Width);
-            const int32 First = FMath::Clamp(Scroll, 0, FMath::Max(0, Lines.Num() - Rows));
-            for (int32 LineIndex = First; LineIndex < FMath::Min(Lines.Num(), First + Rows); ++LineIndex)
-            {
-                const FTownTextLine& Line = Lines[LineIndex];
-                int32 PenX = bCenter ? X + (Width - Line.Width) / 2 : X;
-                for (const FTownGlyph& Ch : Line.Glyphs)
-                {
-                    const int32 DrawWidth = FMath::Min(int32(Font.Widths[Ch.Glyph]), GlyphWidth);
-                    if (Ch.Glyph != ' ' && DrawWidth > 0)
-                    {
-                        const FVector2D UV(double(Ch.Glyph % AtlasColumns) / AtlasColumns, double(Ch.Glyph / AtlasColumns) / AtlasColumns);
-                        const FVector2D UVEnd = UV + FVector2D(double(DrawWidth) / (AtlasColumns * GlyphWidth), 1.0 / AtlasColumns);
-                        Tile(*Font.Atlas, PenX, Y + (LineIndex - First) * Font.Height, FVector2D(DrawWidth, Font.Height),
-                            FLinearColor::FromSRGBColor(Data.Palette[Ch.PaletteIndex]), UV, UVEnd);
-                    }
-                    PenX += Font.Widths[Ch.Glyph];
-                }
-            }
+            DrawWadBitmapText(Canvas, Font, Data.Palette, Value, Layout.At(X, Y), Layout.Scale, Width, Rows, Scroll, bCenter, TextBrown);
         }
     };
 
@@ -528,6 +506,38 @@ void ANativeWadTownHUD::ClickAction(const FVector2D& Position)
     else if (Clicked(InnButton)) { OpenService(TEXT("Inn")); }
     else if (Clicked(StoreButton)) { OpenService(TEXT("Store")); }
     else if (Clicked(BankButton)) { OpenService(TEXT("Bank")); }
+}
+
+void DrawWadBitmapText(UCanvas& Canvas, const FWadTownFont& Font, TConstArrayView<FColor> Palette,
+    const FString& Text, FVector2D Origin, double Scale, int32 Width, int32 Rows, int32 Scroll,
+    bool bCenter, uint8 Ink)
+{
+    if (!Font.Atlas || !Font.Atlas->GetResource() || Font.Widths.Num() != 256 || Font.Height <= 0 || Palette.Num() != 256)
+    {
+        return;
+    }
+    const TArray<FTownTextLine> Lines = WrapTownText(Text, Font, Width, Ink);
+    const int32 First = FMath::Clamp(Scroll, 0, FMath::Max(0, Lines.Num() - Rows));
+    for (int32 LineIndex = First; LineIndex < FMath::Min(Lines.Num(), First + Rows); ++LineIndex)
+    {
+        const FTownTextLine& Line = Lines[LineIndex];
+        int32 PenX = bCenter ? (Width - Line.Width) / 2 : 0;
+        for (const FTownGlyph& Ch : Line.Glyphs)
+        {
+            const int32 DrawWidth = FMath::Min(int32(Font.Widths[Ch.Glyph]), GlyphWidth);
+            if (Ch.Glyph != ' ' && DrawWidth > 0)
+            {
+                const FVector2D UV(double(Ch.Glyph % AtlasColumns) / AtlasColumns, double(Ch.Glyph / AtlasColumns) / AtlasColumns);
+                const FVector2D UVEnd = UV + FVector2D(double(DrawWidth) / (AtlasColumns * GlyphWidth), 1.0 / AtlasColumns);
+                FCanvasTileItem Item(Origin + FVector2D(PenX, (LineIndex - First) * Font.Height) * Scale,
+                    Font.Atlas->GetResource(), FVector2D(DrawWidth, Font.Height) * Scale, UV, UVEnd,
+                    FLinearColor::FromSRGBColor(Palette[Ch.PaletteIndex]));
+                Item.BlendMode = SE_BLEND_Translucent;
+                Canvas.DrawItem(Item);
+            }
+            PenX += Font.Widths[Ch.Glyph];
+        }
+    }
 }
 
 void ANativeWadTownHUD::DrawHUD()
