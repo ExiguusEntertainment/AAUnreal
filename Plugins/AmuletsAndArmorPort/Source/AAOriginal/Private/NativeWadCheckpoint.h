@@ -76,7 +76,9 @@ struct FWadLevelCheckpoint
 {
     GENERATED_BODY()
 
-    static constexpr int32 CurrentPickupRevision = 1;
+    static constexpr int32 AndrewNecklaceRevision = 1;
+    static constexpr int32 ElmoreKeysRevision = 2;
+    static constexpr int32 CurrentPickupRevision = ElmoreKeysRevision;
 
     UPROPERTY()
     TMap<int32, FVector2D> SectorHeights;
@@ -119,6 +121,9 @@ struct FWadLevelCheckpoint
 
     UPROPERTY()
     TSet<int32> UnlockedItemDoors;
+
+    UPROPERTY()
+    TSet<int32> ScriptLockedDoors;
 
     UPROPERTY()
     TMap<int32, uint16> ScriptObjectAngles;

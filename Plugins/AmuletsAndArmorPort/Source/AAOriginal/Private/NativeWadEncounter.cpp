@@ -257,7 +257,14 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
     if (GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility,
         FCollisionShape::MakeSphere(5.0f), Query))
     {
-        if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(Hit.GetActor()))
+        if (Effect == EWadBoltEffect::LockDoor)
+        {
+            if (ANativeWadLevel* Level = ScriptTrap.Get())
+            {
+                Level->LockScriptDoorsNear(FVector2D(Hit.ImpactPoint));
+            }
+        }
+        else if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(Hit.GetActor()))
         {
             switch (Effect)
             {
@@ -269,6 +276,8 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
                 break;
             case EWadBoltEffect::Damage:
                 Player->ReceiveEncounterHit(Damage);
+                break;
+            case EWadBoltEffect::LockDoor:
                 break;
             }
         }

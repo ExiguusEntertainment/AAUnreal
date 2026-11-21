@@ -162,6 +162,20 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
         case EWadScriptOperation::ChangeSideTexture:
             SetActivityWallTexture(Command.Target, FName(*Command.Text));
             break;
+        case EWadScriptOperation::ToggleWallSwitch:
+        {
+            const bool bDown = ScriptVariables[Command.Value] == 0;
+            ScriptVariables[Command.Value] = bDown ? 1 : 0;
+            SetActivityWallTexture(Command.Target, FName(*(bDown ? Command.SwitchDownTexture : Command.Text)));
+            const int32 Next = bDown ? Command.SwitchDownActivity : Command.SwitchUpActivity;
+            if (Next != INDEX_NONE)
+            {
+                Activity = Next;
+                Script = FindWadActivity(Activity);
+                Index = -1;
+            }
+            break;
+        }
         case EWadScriptOperation::AddJournalPage:
             if (UTexture2D* Image = ActivityJournalPages.FindRef(Command.Target))
             {
@@ -604,10 +618,16 @@ int32 ANativeWadLevel::CountPlayingAmbientEmitters(int32 Sound) const
 void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
 {
     const EWadBoltEffect Effect = Command.Target == 4015 ? EWadBoltEffect::Poison
-        : Command.Target == 4016 ? EWadBoltEffect::Paralyze : EWadBoltEffect::Damage;
+        : Command.Target == 4016 ? EWadBoltEffect::Paralyze
+        : Command.Target == 4012 ? EWadBoltEffect::LockDoor : EWadBoltEffect::Damage;
     const int32 Damage = Effect == EWadBoltEffect::Poison ? PoisonMissileDamage
+        : Command.Target == 4005 ? 750 : Command.Target == 4006 ? 1000
         : Command.Target == NativeWadRules::PiercingCrossbowBolt ? NativeWadRules::ChurchBoltDamage : 100;
-    UMaterialInterface* Art = Command.Target == 4015 ? ScriptMissileArt.Get() : ScriptMissileMaterials.FindRef(Command.Target).Get();
+    UMaterialInterface* Art = ScriptMissileMaterials.FindRef(Command.Target).Get();
+    if (!Art && Command.Target == 4015)
+    {
+        Art = ScriptMissileArt.Get();
+    }
     const FVector Start = GetActorTransform().TransformPosition(FVector(Command.Position));
     const FVector Destination = GetActorTransform().TransformPosition(FVector(Command.Aim));
     const FVector Direction = (Destination - Start).GetSafeNormal();

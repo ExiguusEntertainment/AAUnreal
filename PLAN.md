@@ -259,6 +259,17 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - All nine WAD regression tests passed. The encounter and travel screenshots are in `Saved/Wad-Lighthouse-Review.html`.
 - L34's Shadow and Lich encounters remain to be ported.
 
+### The reservoir and the Orb of Defense
+
+83. **Take the original cave exit from L151.** Restored the previous campaign checkpoint, collected Key 5 from Thing 223, opened door 48, and crossed Thing 84 into L152 at its original spawn. A separate older lift checkpoint resumed its pending timer and completed two lift cycles after the pickup update.
+84. **Import L152 and activate the reservoir mechanism.** Imported 72 sectors, 306 lines, and all three script activities. Collected Key 6 and pressed the hidden switch to lower floor 27 from Z24 to Z-476. Sector 69 fired its five lock missiles and locked door 70. Thing 266 took the player to L153 with both earlier keys and the archived L152 state.
+85. **Import L153 and recover the Orb of Defense.** Imported 225 sectors, 1,340 lines, all 34 script activities, four key doors, and the two local keys. The replay reopened the western gate, verified the vault rejected an incorrect combination, waited through its two-second reset, and entered the vault after solving the correct combination. It collected and saved the original orb from Thing 206.
+86. **Complete Elmore's Retreat at Town Hall.** A fresh Unreal process restored the saved orb and carried it through L153's return teleporter. Captain Argus took the orb and awarded 150,000 experience. The same exit reached the original failure outcome when used empty-handed and awarded no experience.
+
+- The replay uses regular controls from staged approaches. Run `ElmoreL151Exit` from `NativeWadElmoreL151Review`, then `ElmoreL152` and `ElmoreL153Puzzles` from the arrival checkpoints. Run `ElmoreOrb` and `ElmoreOrbEmpty` from `NativeWadElmoreVaultReview`, and `ElmoreOrbReturn` from `NativeWadElmoreOrbReview`.
+- All nine WAD regression tests passed. Vault, orb, and Town Hall screenshots are in `Saved/Wad-Orb-of-Defense-Review.html`.
+- Elmore's encounter in L152, the Gargoyles in L153, and a continuous walkthrough through all four key doors remain to be verified or ported.
+
 ### Asset follow-ups
 
 - [ ] Find the original `MARBGRAY` texture and restore it to the L30 import. The supplied `PICS.RES` lacks it, so the affected lower wall bands use the default material when exposed. Check a raised floor at sector 147 after restoring the art.
@@ -268,6 +279,7 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - [ ] Restore `MARBLE1` and `MARBGRAY` in L60 when the source textures are available. The import uses the default material on the affected surfaces.
 - [ ] Restore `ASHWALL2` and `AASHITTY` in L64 and `MARBGRAY` in L65. Find authored sound samples 5, 1508, and 1510 referenced by their scripts.
 - [ ] Restore `STARTAN3` and `AASHITTY` in L34 when the source textures are available.
+- [ ] Find L153's authored sound sample 15. The supplied sound archive also lacks L151's sample 1514, so reimport preserves any lift sample already embedded in the native map.
 
 ## 2026-04-11 Review Findings
 

@@ -976,10 +976,12 @@ public:
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
             const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
-            if (WadPath.IsEmpty() || MapName.IsEmpty() || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName)
-                || !SaveNativeWadGameplay(InWorld, WadPath, Ar))
+            const FString Mode = FParse::Token(Cmd, false);
+            const bool bPickupsOnly = Mode.Equals(TEXT("Pickups"), ESearchCase::IgnoreCase);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || (!Mode.IsEmpty() && !bPickupsOnly)
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !SaveNativeWadGameplay(InWorld, WadPath, Ar, bPickupsOnly))
             {
-                UE_LOG(LogTemp, Error, TEXT("AA.ImportWadGameplay failed. Usage: AA.ImportWadGameplay <WadPath> <MapName>"));
+                UE_LOG(LogTemp, Error, TEXT("AA.ImportWadGameplay failed. Usage: AA.ImportWadGameplay <WadPath> <MapName> [Pickups]"));
             }
             UE_LOG(LogTemp, Display, TEXT("Native WAD gameplay import finished"));
             return true;
@@ -1084,7 +1086,9 @@ public:
                     || Review == TEXT("elmorelaunch") || Review == TEXT("elmorel64") || Review == TEXT("elmorel64reload")
                     || Review == TEXT("elmorel65") || Review == TEXT("elmorel65reload")
                     || Review == TEXT("elmorecombat64") || Review == TEXT("elmorecombat65")
-                    || Review == TEXT("elmorel65exit") || Review == TEXT("elmorel34") || Review == TEXT("elmorel151reload"))
+                    || Review == TEXT("elmorel65exit") || Review == TEXT("elmorel34") || Review == TEXT("elmorel151reload")
+                    || Review == TEXT("elmorel151exit") || Review == TEXT("elmorel152") || Review == TEXT("elmorel153puzzles")
+                    || Review == TEXT("elmoreorb") || Review == TEXT("elmoreorbreturn") || Review == TEXT("elmoreorbempty"))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }

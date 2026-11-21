@@ -33,6 +33,11 @@ namespace NativeWadRules
     inline constexpr int32 JugurthaJournal = 957;
     inline constexpr int32 ChurchKey = 258;
     inline constexpr int32 AndrewNecklace = 958;
+    inline constexpr int32 OrbOfDefense = 954;
+    inline constexpr int32 ElmoreKey3 = 259;
+    inline constexpr int32 ElmoreKey5 = 261;
+    inline constexpr int32 ElmoreKey6 = 262;
+    inline constexpr int32 ElmoreKey8 = 264;
     inline constexpr int32 ChurchMountedKnight = 1008;
     inline constexpr int32 ChurchFootKnight = 1009;
     inline constexpr int32 GrayCrossbowBolt = 886;

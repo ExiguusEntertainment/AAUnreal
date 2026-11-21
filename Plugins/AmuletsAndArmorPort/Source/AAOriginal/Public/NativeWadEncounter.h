@@ -15,7 +15,8 @@ enum class EWadBoltEffect : uint8
 {
     Damage,
     Poison,
-    Paralyze
+    Paralyze,
+    LockDoor
 };
 
 USTRUCT()

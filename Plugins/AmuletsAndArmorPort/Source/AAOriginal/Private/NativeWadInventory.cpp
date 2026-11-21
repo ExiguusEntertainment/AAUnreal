@@ -19,6 +19,11 @@ namespace
         case JugurthaJournal: return TEXT("Jugurtha's journal");
         case ChurchKey: return TEXT("Church key");
         case AndrewNecklace: return TEXT("Necklace of Andrew");
+        case OrbOfDefense: return TEXT("Orb of Defense");
+        case ElmoreKey3: return TEXT("Key 3");
+        case ElmoreKey5: return TEXT("Key 5");
+        case ElmoreKey6: return TEXT("Key 6");
+        case ElmoreKey8: return TEXT("Key 8");
         default: return Type > 0 ? TEXT("Item") : TEXT("Empty");
         }
     }

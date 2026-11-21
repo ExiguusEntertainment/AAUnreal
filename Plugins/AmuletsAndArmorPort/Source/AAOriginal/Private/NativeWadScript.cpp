@@ -224,6 +224,18 @@ namespace
                     return false;
                 }
                 break;
+            case 62:
+                Command.Operation = EWadScriptOperation::ToggleWallSwitch;
+                if (!Reader.TaggedByte(4, Command.Value) || !Reader.Literal(Command.Target)
+                    || Command.Target < 0 || Command.Target >= SideCount
+                    || !Reader.String(Command.Text) || Command.Text.IsEmpty() || Command.Text.Len() > 8
+                    || !Reader.String(Command.SwitchDownTexture) || Command.SwitchDownTexture.IsEmpty() || Command.SwitchDownTexture.Len() > 8
+                    || !Reader.Literal(Command.SwitchUpActivity) || Command.SwitchUpActivity < INDEX_NONE
+                    || !Reader.Literal(Command.SwitchDownActivity) || Command.SwitchDownActivity < INDEX_NONE)
+                {
+                    return false;
+                }
+                break;
             case 21:
                 Command.Operation = EWadScriptOperation::Wait;
                 if (!Reader.Literal(Command.Ticks) || Command.Ticks <= 0)
@@ -302,7 +314,8 @@ namespace
                     Command.Operation = EWadScriptOperation::RestoreVitals;
                     Command.Value = Args[3];
                 }
-                else if (Opcode == 54 && (Args[0] == 4011 || Args[0] == 4015 || Args[0] == 4016
+                else if (Opcode == 54 && (Args[0] == 4005 || Args[0] == 4006 || Args[0] == 4011 || Args[0] == 4012
+                    || Args[0] == 4015 || Args[0] == 4016
                     || Args[0] == NativeWadRules::PiercingCrossbowBolt) && Args[7] > 0)
                 {
                     Command.Operation = EWadScriptOperation::LaunchMissile;
@@ -484,6 +497,14 @@ bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> A
             if (Command.CompletionActivity != INDEX_NONE)
             {
                 Queue.AddUnique(Command.CompletionActivity);
+            }
+            if (Command.SwitchUpActivity != INDEX_NONE)
+            {
+                Queue.AddUnique(Command.SwitchUpActivity);
+            }
+            if (Command.SwitchDownActivity != INDEX_NONE)
+            {
+                Queue.AddUnique(Command.SwitchDownActivity);
             }
             if (Command.Operation == EWadScriptOperation::Call || Command.Operation == EWadScriptOperation::Jump
                 || Command.Operation == EWadScriptOperation::IfFlag)

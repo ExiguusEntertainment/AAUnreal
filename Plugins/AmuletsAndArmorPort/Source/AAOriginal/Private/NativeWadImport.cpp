@@ -707,9 +707,11 @@ struct FAAWadNativeImport
         }
         const FString MapName = FPaths::GetBaseFilename(WadPath).ToUpper();
         const bool bChurchQuestMap = MapName == TEXT("L25") || MapName == TEXT("L20") || MapName == TEXT("L60");
-        const bool bRetreatMap = MapName == TEXT("L64") || MapName == TEXT("L65") || MapName == TEXT("L34");
+        const bool bRetreatMap = MapName == TEXT("L64") || MapName == TEXT("L65") || MapName == TEXT("L34")
+            || MapName == TEXT("L152") || MapName == TEXT("L153");
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
-            || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
+            || (MapName == TEXT("L151") && (!InstallL151Slice(World, Actor, Map, WadPath, Output)
+                || !InstallL151Key(World, Actor, Map, Output)))
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L531") && !InstallL531Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
@@ -720,6 +722,14 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
             || (bRetreatMap && (!InstallRetreatScript(Actor, Map, WadPath, MapName, Output)
                 || !InstallRetreatEncounters(World, Actor, Map, Output)))
+            || (MapName == TEXT("L152") && !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("ElmoreKey6"),
+                    TEXT("KEY6/KEY6.CPC"), TEXT("L152 Key 6"), Output, FWadLevelCheckpoint::ElmoreKeysRevision))
+            || (MapName == TEXT("L153") && (!InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("ElmoreKey3"),
+                    TEXT("KEY3/KEY3.CPC"), TEXT("L153 Key 3"), Output)
+                || !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey8, TEXT("ElmoreKey8"),
+                    TEXT("KEY8/KEY8.CPC"), TEXT("L153 Key 8"), Output)
+                || !InstallQuestPickup(World, Actor, Map, NativeWadRules::OrbOfDefense, TEXT("OrbOfDefense"),
+                    TEXT("ORB5/ORB5.CPC"), TEXT("L153 Orb of Defense"), Output)))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output))))
         {
@@ -738,10 +748,15 @@ struct FAAWadNativeImport
         constexpr int32 L64Entries[] = {0, 1, 2, 3, 4, 201};
         constexpr int32 L65Entries[] = {0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 201, 202, 203, 204};
         constexpr int32 L34Entries[] = {0, 1, 2, 3, 4, 5, 200, 202, 203};
+        constexpr int32 L152Entries[] = {0, 1, 2};
+        constexpr int32 L153Entries[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+            20, 21, 22, 24, 25, 26, 27, 29};
         // Some script IDs are absent from the shipped SOUNDS.RES. Import any that a complete archive provides.
-        constexpr int32 UnavailableSounds[] = {5, 1508, 1510};
+        constexpr int32 UnavailableSounds[] = {5, 15, 1508, 1510};
         const TConstArrayView<int32> Entries = MapName == TEXT("L64") ? TConstArrayView<int32>(L64Entries)
-            : MapName == TEXT("L65") ? TConstArrayView<int32>(L65Entries) : TConstArrayView<int32>(L34Entries);
+            : MapName == TEXT("L65") ? TConstArrayView<int32>(L65Entries)
+            : MapName == TEXT("L152") ? TConstArrayView<int32>(L152Entries)
+            : MapName == TEXT("L153") ? TConstArrayView<int32>(L153Entries) : TConstArrayView<int32>(L34Entries);
         const FString ScriptName = TEXT("S") + MapName.Mid(1) + TEXT(".SRP");
         if (!InstallActivities(Actor, Map, WadPath, *ScriptName, Entries, Output, UnavailableSounds))
         {
@@ -749,6 +764,21 @@ struct FAAWadNativeImport
         }
         Actor.ActivityWallMaterials.Reset();
         Actor.ActivityJournalPages.Reset();
+        auto& OpaqueParent = Parents[uint8(EWadWallBlend::Opaque)];
+        if (!OpaqueParent)
+        {
+            OpaqueParent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/AAReview/M_AANativeOpaque.M_AANativeOpaque"));
+        }
+        const auto InstallWallTexture = [&](int32 Side, const FString& Name)
+        {
+            if (!OpaqueParent || !Actor.FindActivitySideBand(Side) || !Texture(Name))
+            {
+                Output.Logf(TEXT("Could not install texture %s for scripted sidedef %d."), *Name, Side);
+                return false;
+            }
+            Actor.ActivityWallMaterials.Add(FName(*Name), Material(Name, EWadWallBlend::Opaque));
+            return true;
+        };
         for (FWadScriptActivity& Activity : Actor.ImportedActivities)
         {
             for (FWadScriptCommand& Command : Activity.Commands)
@@ -756,13 +786,31 @@ struct FAAWadNativeImport
                 if (Command.Operation == EWadScriptOperation::SetSwitch || Command.Operation == EWadScriptOperation::ChangeSideTexture)
                 {
                     Command.Operation = EWadScriptOperation::ChangeSideTexture;
-                    const FName Name(*Command.Text);
-                    if (!Actor.FindActivitySideBand(Command.Target) || !Texture(Command.Text))
+                    if (!InstallWallTexture(Command.Target, Command.Text))
                     {
-                        Output.Logf(TEXT("Could not install texture %s for scripted sidedef %d."), *Command.Text, Command.Target);
                         return false;
                     }
-                    Actor.ActivityWallMaterials.Add(Name, Material(Command.Text, EWadWallBlend::Opaque));
+                }
+                else if (Command.Operation == EWadScriptOperation::ToggleWallSwitch)
+                {
+                    if (!InstallWallTexture(Command.Target, Command.Text)
+                        || !InstallWallTexture(Command.Target, Command.SwitchDownTexture))
+                    {
+                        return false;
+                    }
+                }
+                else if (Command.Operation == EWadScriptOperation::LaunchMissile && !Actor.ScriptMissileMaterials.Contains(Command.Target))
+                {
+                    const TCHAR* Resource = Command.Target == 4005 ? TEXT("MISSILE6/1.CPC") : Command.Target == 4006 ? TEXT("MISSILE7/1.CPC")
+                        : Command.Target == 4012 ? TEXT("MISSIL13/1.CPC") : Command.Target == 4015 ? TEXT("MISSIL16/1.CPC") : nullptr;
+                    Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+                    UMaterialInterface* Image = Resource ? SpriteMaterial(FString::Printf(TEXT("Missile%d"), Command.Target), Resource) : nullptr;
+                    if (!Actor.ScriptMissileMesh || !Image)
+                    {
+                        Output.Logf(TEXT("Could not install art for scripted missile %d."), Command.Target);
+                        return false;
+                    }
+                    Actor.ScriptMissileMaterials.Add(Command.Target, Image);
                 }
                 else if (Command.Operation == EWadScriptOperation::AddJournalPage)
                 {
@@ -958,7 +1006,7 @@ struct FAAWadNativeImport
             return false;
         }
         return InstallQuestPickup(World, Actor, Map, NativeWadRules::AndrewNecklace, TEXT("AndrewNecklace"),
-            TEXT("NECKLACE/NECKLACE.CPC"), TEXT("L60 Necklace of Andrew"), Output, FWadLevelCheckpoint::CurrentPickupRevision);
+            TEXT("NECKLACE/NECKLACE.CPC"), TEXT("L60 Necklace of Andrew"), Output, FWadLevelCheckpoint::AndrewNecklaceRevision);
     }
 
     bool ImportSceneryDefinition(const FString& Resource, FWadSceneryDefinition& Definition)
@@ -1384,6 +1432,13 @@ struct FAAWadNativeImport
             TEXT("BOOK/BOOK.CPC"), TEXT("L22 Jugurtha Journal"), Output);
     }
 
+    bool InstallL151Key(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        Actor.InitializeTopology();
+        return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey5, TEXT("ElmoreKey5"),
+            TEXT("KEY5/KEY5.CPC"), TEXT("L151 Key 5"), Output, FWadLevelCheckpoint::ElmoreKeysRevision);
+    }
+
     bool InstallQuestPickup(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, int32 Type,
         const TCHAR* Asset, const TCHAR* Picture, const TCHAR* Label, FOutputDevice& Output, int32 CheckpointRevision = 0)
     {
@@ -1711,12 +1766,19 @@ struct FAAWadNativeImport
         constexpr int32 MageThing = 31;
         constexpr int32 PotionThing = 224;
         constexpr int32 EntryActivities[] = {0, 1};
+        constexpr int32 LiftSound = 1514;
+        const int32 UnavailableSounds[] = {LiftSound};
+        const FWadSoundSample ExistingLiftSound = Actor.ActivitySounds.FindRef(LiftSound);
         if (!Map.Sectors.IsValidIndex(31) || Map.Sectors[31].Type != 1 || !Map.Things.IsValidIndex(PotionThing)
             || Map.Things[MageThing].Type != 3002 || Map.Things[PotionThing].Type != NativeWadRules::FeatherfallPotion
-            || !InstallActivities(Actor, Map, WadPath, TEXT("S151.SRP"), EntryActivities, Output))
+            || !InstallActivities(Actor, Map, WadPath, TEXT("S151.SRP"), EntryActivities, Output, UnavailableSounds))
         {
             Output.Log(TEXT("Unable to install the L151 lift and encounter."));
             return false;
+        }
+        if (!Actor.ActivitySounds.Contains(LiftSound) && !ExistingLiftSound.UnsignedSamples.IsEmpty())
+        {
+            Actor.ActivitySounds.Add(LiftSound, ExistingLiftSound);
         }
         auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         UMaterial* Stand = SpriteMaterial(TEXT("GaisericMagician"), TEXT("PHIL/PHIL01.CPC"));
@@ -2210,7 +2272,7 @@ bool SaveNativeWadDoors(UWorld* World, FOutputDevice& Output)
     return FAAWadNativeImport::UpdateSavedDoors(*World, *Map, Output);
 }
 
-bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice& Output)
+bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice& Output, bool bPickupsOnly)
 {
     const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
     if (!World || World->WorldType != EWorldType::Editor || !Map || !World->GetOutermost()->GetName().StartsWith(TEXT("/Game/")))
@@ -2218,9 +2280,25 @@ bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice&
         return false;
     }
     ANativeWadLevel* Actor = FAAWadNativeImport::FindMatchingLevel(*World, *Map);
+    if (!Actor)
+    {
+        return false;
+    }
     FAAWadNativeImport Import;
     Import.AssetRoot = World->GetOutermost()->GetName() + TEXT("_Assets");
-    if (!Actor || !Import.InstallGameplay(*World, *Actor, *Map, WadPath, Output))
+    if (bPickupsOnly)
+    {
+        if (!FPaths::GetBaseFilename(WadPath).Equals(TEXT("L151"), ESearchCase::IgnoreCase))
+        {
+            Output.Log(TEXT("The Pickups update is supported for L151."));
+            return false;
+        }
+        if (!Import.InstallL151Key(*World, *Actor, *Map, Output))
+        {
+            return false;
+        }
+    }
+    else if (!Import.InstallGameplay(*World, *Actor, *Map, WadPath, Output))
     {
         return false;
     }
@@ -2580,6 +2658,11 @@ bool SaveNativeWadHud(FOutputDevice& Output)
         {NativeWadRules::FeatherfallPotion, 2, TEXT("POTION17/POTION17.CPC")},
         {NativeWadRules::JugurthaJournal, 1, TEXT("BOOK/BOOK.CPC")},
         {958, 1, TEXT("NECKLACE/NECKLACE.CPC")},
+        {NativeWadRules::OrbOfDefense, 1, TEXT("ORB5/ORB5.CPC")},
+        {NativeWadRules::ElmoreKey3, 1, TEXT("KEY3/KEY3.CPC")},
+        {NativeWadRules::ElmoreKey5, 1, TEXT("KEY5/KEY5.CPC")},
+        {NativeWadRules::ElmoreKey6, 1, TEXT("KEY6/KEY6.CPC")},
+        {NativeWadRules::ElmoreKey8, 1, TEXT("KEY8/KEY8.CPC")},
     };
     Data->Items.Reset();
     Data->ItemWeights.Reset();

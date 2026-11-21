@@ -469,7 +469,8 @@ namespace
     {
         None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload,
         L60Puzzles, L60Relic, L60Return, L60Empty, ElmoreLaunch, ElmoreL64, ElmoreL64Reload, ElmoreL65, ElmoreL65Reload,
-        ElmoreCombat64, ElmoreCombat65, ElmoreL65Exit, ElmoreL34, ElmoreL151Reload
+        ElmoreCombat64, ElmoreCombat65, ElmoreL65Exit, ElmoreL34, ElmoreL151Reload,
+        ElmoreL151Exit, ElmoreL152, ElmoreL153Puzzles, ElmoreOrb, ElmoreOrbReturn, ElmoreOrbEmpty
     };
     constexpr const TCHAR* L25KeySlot = TEXT("NativeWadChurchKeyReview");
     constexpr const TCHAR* L25DoorSlot = TEXT("NativeWadChurchDoorReview");
@@ -484,6 +485,10 @@ namespace
     constexpr const TCHAR* ElmoreTeleporterSlot = TEXT("NativeWadElmoreTeleportReview");
     constexpr const TCHAR* ElmoreL34Slot = TEXT("NativeWadElmoreL34Review");
     constexpr const TCHAR* ElmoreL151Slot = TEXT("NativeWadElmoreL151Review");
+    constexpr const TCHAR* ElmoreL152Slot = TEXT("NativeWadElmoreL152Review");
+    constexpr const TCHAR* ElmoreL153Slot = TEXT("NativeWadElmoreL153Review");
+    constexpr const TCHAR* ElmoreVaultSlot = TEXT("NativeWadElmoreVaultReview");
+    constexpr const TCHAR* ElmoreOrbSlot = TEXT("NativeWadElmoreOrbReview");
     constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
     enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
 
@@ -3064,6 +3069,423 @@ namespace
             return true;
         }
 
+        bool TickElmoreMountainExit(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D CaveDoor;
+            if (!Player.HasRestoredWadCheckpoint() || !Level.GetSectorSurfaceHeights(48, CaveDoor))
+            {
+                return Finish(&Player, TEXT("the L151 cave needs its original checkpoint and exit door"));
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (!PlaceReviewPlayer(Level, Player, {2624, 3051}))
+                {
+                    return Finish(&Player, TEXT("could not reach the original L151 key"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {2586, 3051, -52});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Player.GetItemCount(NativeWadRules::ElmoreKey5) != 1 || !PlaceReviewPlayer(Level, Player, {2624, 4204}))
+                {
+                    return Finish(&Player, TEXT("could not collect Key 5 from the old checkpoint or reach the cave"));
+                }
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {2624, 4256, 9});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (CaveDoor.Y - CaveDoor.X >= 58 && WalkTo(Player, {2624, 4336}))
+                {
+                    return Finish(&Player, TEXT("the authored L151 cave exit did not lead to L152"));
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickElmoreReservoir(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D Gate;
+            if (!Player.HasRestoredWadCheckpoint() || !Level.GetSectorSurfaceHeights(27, Gate))
+            {
+                return Finish(&Player, TEXT("the L152 reservoir needs its saved arrival and movable floor"));
+            }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            switch (NextPoint)
+            {
+            case 0:
+                if (Gate.X != 24 || !PlaceReviewPlayer(Level, Player, {-422, -130}))
+                {
+                    return Finish(&Player, TEXT("could not reach L152's original key approach"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-388, -130, 140});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Player.GetItemCount(NativeWadRules::ElmoreKey6) != 1 || !PlaceReviewPlayer(Level, Player, {-568, -152}))
+                {
+                    return Finish(&Player, TEXT("could not collect Key 6 or reach the L152 hidden switch"));
+                }
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-531.5, -134, 77});
+                    Press(Player, EKeys::E);
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Now - StageTime > 0.65)
+                {
+                    FWadLevelCheckpoint State;
+                    if (Gate.X != -476 || !Level.WriteCheckpoint(State, true) || State.ActivityWallTextures.FindRef(478) != TEXT("SWIT1U")
+                        || !PlaceReviewPlayer(Level, Player, {-350, -574}))
+                    {
+                        return Finish(&Player, TEXT("L152 line 305 did not lower the reservoir's floor"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L152's hidden switch lowers floor 27 from Z24 to Z-476."));
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 5:
+                if (Now - StageTime > 7.2)
+                {
+                    FWadLevelCheckpoint State;
+                    if (Level.GetScriptMissileCount(4012) != 5 || !Level.WriteCheckpoint(State, true) || !State.ScriptLockedDoors.Contains(70)
+                        || !PlaceReviewPlayer(Level, Player, {-25, -94}))
+                    {
+                        return Finish(&Player, TEXT("L152's delayed five-shot volley did not lock the authored door"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L152 sector 69 fires five lock missiles and locks door 70."));
+                    ++NextPoint;
+                }
+                break;
+            case 6:
+                if (WalkTo(Player, {-16, -250}))
+                {
+                    return Finish(&Player, TEXT("the original L152 exit marker did not lead to L153"));
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickElmoreVault(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D West, Vault;
+            if (!Player.HasRestoredWadCheckpoint() || !Level.GetSectorSurfaceHeights(218, West)
+                || !Level.GetSectorSurfaceHeights(202, Vault))
+            {
+                return Finish(&Player, TEXT("the L153 review needs the original combination gates"));
+            }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            FWadLevelCheckpoint State;
+            bool bSaved = false;
+            switch (NextPoint)
+            {
+            case 0:
+                if (West.Y != 200 || Vault.X != 0 || !PlaceReviewPlayer(Level, Player, {1823, -793}))
+                {
+                    return Finish(&Player, TEXT("the original L153 combination puzzle starts incorrectly"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (WalkTo(Player, {1823, -853}))
+                {
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Now - StageTime > 2.15)
+                {
+                    if (West.Y != -16 || !PlaceReviewPlayer(Level, Player, {1840, -2035}))
+                    {
+                        return Finish(&Player, TEXT("the L153 plate did not close the western gate"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {1840, -2064, 0});
+                    Press(Player, EKeys::E);
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Now - StageTime > 2.15)
+                {
+                    if (West.Y != 200 || !Level.WriteCheckpoint(State, true) || State.Variables[16] != 0
+                        || State.ActivityWallTextures.FindRef(1759) != TEXT("SWIT1D") || !PlaceReviewPlayer(Level, Player, {4394, -16}))
+                    {
+                        return Finish(&Player, TEXT("L153's original west bank combination did not reopen the gate"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L153's west switch bank reopens ceiling 218 after its plate closes it."));
+                    ++NextPoint;
+                }
+                break;
+            case 5:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {4432, -16, -110});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 6:
+                if (!Level.WriteCheckpoint(State, true) || State.Variables[19] != 1 || Vault.X != 0
+                    || State.ActivityWallTextures.FindRef(1487) != TEXT("SWIT1U"))
+                {
+                    return Finish(&Player, TEXT("an incorrect orb bank combination changed the vault floor"));
+                }
+                Press(Player, EKeys::E);
+                ++NextPoint;
+                break;
+            case 7:
+                if (!Level.WriteCheckpoint(State, true) || State.Variables[19] != 0
+                    || State.ActivityWallTextures.FindRef(1487) != TEXT("SWIT1D"))
+                {
+                    return Finish(&Player, TEXT("the L153 orb switch did not toggle back to its original texture"));
+                }
+                // The incorrect combination locks the vault for the authored two-second reset.
+                if (State.Variables[23] == 0)
+                {
+                    if (!PlaceReviewPlayer(Level, Player, {4394, -240}))
+                    {
+                        return Finish(&Player, TEXT("could not reach the L153 vault switch approach"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 8:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {4432, -240, -112});
+                    Press(Player, EKeys::E);
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 9:
+                if (Now - StageTime > 2.15)
+                {
+                    if (Vault.X != -148 || !Level.WriteCheckpoint(State, true) || State.Variables[21] != 1
+                        || State.ActivityWallTextures.FindRef(1516) != TEXT("SWIT1U") || !PlaceReviewPlayer(Level, Player, {4394, -160}))
+                    {
+                        return Finish(&Player, TEXT("the original L153 orb combination did not open the vault"));
+                    }
+                    Aim(Player, {4510, -160, -108});
+                    ++NextPoint;
+                }
+                break;
+            case 10:
+                if (CaptureTownFrame(TEXT("vault-open"), bSaved))
+                {
+                    if (!bSaved || !Player.SaveWadCheckpoint(ElmoreVaultSlot))
+                    {
+                        return Finish(&Player, TEXT("could not save the solved L153 vault"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L153 rejects the wrong switch combination and opens the vault with the authored combination."));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickElmoreOrb(ANativeWadLevel& Level, ANativeWadPlayer& Player, const UNativeWadTravelState& Travel)
+        {
+            const bool bCollect = L25Review == EL25Review::ElmoreOrb;
+            const bool bReturn = L25Review == EL25Review::ElmoreOrbReturn;
+            const int32 Orb = NativeWadRules::OrbOfDefense;
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                FWadLevelCheckpoint State;
+                if (!Player.HasRestoredWadCheckpoint() || !Level.WriteCheckpoint(State, true)
+                    || State.SectorHeights.FindRef(202).X != -148 || State.Variables[21] != 1
+                    || Player.GetItemCount(Orb) != int32(bReturn))
+                {
+                    return Finish(&Player, TEXT("L153 did not restore the solved bank and expected orb inventory"));
+                }
+                if (!bCollect)
+                {
+                    ExperienceBeforeTravel = Player.GetExperience();
+                    AndrewStartingGold = Travel.Quest.Gold;
+                    if (!PlaceReviewPlayer(Level, Player, {832, -204}))
+                    {
+                        return Finish(&Player, TEXT("could not reach L153's original return teleporter approach"));
+                    }
+                }
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (!bCollect)
+                {
+                    if (WalkTo(Player, {832, -282}))
+                    {
+                        return Finish(&Player, TEXT("the original L153 exit did not return to Town Hall"));
+                    }
+                    break;
+                }
+                NextPoint += WalkTo(Player, {4485, -160}) ? 1 : 0;
+                break;
+            case 2:
+                NextPoint += WalkTo(Player, {4612, -164}) ? 1 : 0;
+                break;
+            case 3:
+                if (WalkTo(Player, {4612, -291}))
+                {
+                    Aim(Player, {4612, -330, -136});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+            {
+                bool bSaved = false;
+                if (Player.GetItemCount(Orb) != 1)
+                {
+                    return Finish(&Player, TEXT("E did not collect the original Orb of Defense"));
+                }
+                if (CaptureTownFrame(TEXT("orb-picked-up"), bSaved))
+                {
+                    if (!bSaved || !Player.SaveWadCheckpoint(ElmoreOrbSlot))
+                    {
+                        return Finish(&Player, TEXT("could not save the Orb of Defense checkpoint"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified entry through the solved L153 gate and collection of the Orb of Defense."));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            }
+            return true;
+        }
+
+        bool TickElmoreOrbTown(ANativeWadPlayer& Player, const UNativeWadTravelState& Travel)
+        {
+            const bool bSuccess = L25Review == EL25Review::ElmoreOrbReturn;
+            const auto* Content = NativeWadTown::FindContent(*Player.GetWorld());
+            if (Travel.ArrivingFromMap != 0)
+            {
+                return true;
+            }
+            const FWadQuestProgress& Quest = Travel.Quest;
+            const FWadLevelCheckpoint* L153 = Travel.VisitedLevels.Find(TEXT("/Game/Maps/L153"));
+            if (!Content || !Content->Quests.IsValidIndex(2) || Quest.Active != INDEX_NONE || Quest.ResultQuest != 2
+                || Quest.bSucceeded != bSuccess || !Quest.bShowResult || Quest.ResumeMaps.Contains(2)
+                || Quest.Gold != AndrewStartingGold || Player.GetExperience() != ExperienceBeforeTravel + (bSuccess ? 150000 : 0)
+                || Player.GetItemCount(NativeWadRules::OrbOfDefense) != 0 || !Player.HasCompletedWadLevel(TEXT("L153"))
+                || !L153 || L153->RemainingPickups.Contains(TEXT("L153 Orb of Defense")) == bSuccess)
+            {
+                return Finish(&Player, TEXT("Town Hall did not apply the original Orb of Defense quest outcome"));
+            }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            if (!bArrivalCaptured)
+            {
+                StageTime = Now;
+                bArrivalCaptured = true;
+            }
+            bool bSaved = false;
+            if (Now - StageTime > 0.5 && CaptureTownFrame(bSuccess ? TEXT("town-success") : TEXT("town-empty"), bSaved))
+            {
+                UE_LOG(LogTemp, Display, TEXT("Verified Elmore's Retreat Town Hall result. Success=%d, experience reward=%d."),
+                    bSuccess, Player.GetExperience() - ExperienceBeforeTravel);
+                return Finish(&Player, bSaved ? nullptr : TEXT("could not capture the original Elmore result"));
+            }
+            return true;
+        }
+
+        bool TickElmoreFinal(UWorld& Current, ANativeWadPlayer& Player, const UNativeWadTravelState& Travel)
+        {
+            if (Current.GetAuthGameMode<ANativeWadTownGameMode>())
+            {
+                return TickElmoreOrbTown(Player, Travel);
+            }
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || Player.GetHealth() <= 0 || Travel.Quest.Active != 2
+                || !Travel.JournalPages.Contains(423) || !Travel.JournalPages.Contains(424))
+            {
+                return Finish(&Player, TEXT("the Elmore finale lost the player, quest or journal"));
+            }
+            const FString Map = Current.GetMapName();
+            const bool bArrivedL152 = L25Review == EL25Review::ElmoreL151Exit && Map.EndsWith(TEXT("L152"));
+            const bool bArrivedL153 = L25Review == EL25Review::ElmoreL152 && Map.EndsWith(TEXT("L153"));
+            if (bArrivedL152 || bArrivedL153)
+            {
+                const FVector2D Spawn = bArrivedL152 ? FVector2D(1484, 2315) : FVector2D(1596, 2544);
+                bool bSaved = false;
+                if (!FVector2D(Player.GetActorLocation()).Equals(Spawn, 4) || Travel.Quest.ResumeMaps.FindRef(2) != (bArrivedL152 ? 152 : 153))
+                {
+                    return Finish(&Player, TEXT("the Elmore handoff lost its authored spawn or active quest"));
+                }
+                if (Player.GetItemCount(NativeWadRules::ElmoreKey5) != 1
+                    || (bArrivedL153 && Player.GetItemCount(NativeWadRules::ElmoreKey6) != 1))
+                {
+                    return Finish(&Player, TEXT("the Elmore handoff lost a key needed by the L153 doors"));
+                }
+                if (bArrivedL153)
+                {
+                    const auto* SavedL152 = Travel.VisitedLevels.Find(TEXT("/Game/Maps/L152"));
+                    if (!SavedL152 || SavedL152->SectorHeights.FindRef(27).X != -476 || !SavedL152->ScriptLockedDoors.Contains(70))
+                    {
+                        return Finish(&Player, TEXT("the L153 handoff did not archive L152's reservoir and locked door"));
+                    }
+                }
+                if (CaptureTownFrame(bArrivedL152 ? TEXT("l152-arrival") : TEXT("l153-arrival"), bSaved))
+                {
+                    if (!bSaved || !Player.SaveWadCheckpoint(bArrivedL152 ? ElmoreL152Slot : ElmoreL153Slot))
+                    {
+                        return Finish(&Player, TEXT("could not save the original Elmore map handoff"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("%s"), bArrivedL152 ? TEXT("Verified L151 Thing 84 takes the active quest to L152.")
+                        : TEXT("Verified L152 Thing 266 takes the active quest and reservoir state to L153."));
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            switch (L25Review)
+            {
+            case EL25Review::ElmoreL151Exit: return TickElmoreMountainExit(**Level, Player);
+            case EL25Review::ElmoreL152: return TickElmoreReservoir(**Level, Player);
+            case EL25Review::ElmoreL153Puzzles: return TickElmoreVault(**Level, Player);
+            default: return TickElmoreOrb(**Level, Player, Travel);
+            }
+        }
+
         bool TickL25(UWorld& Current, ANativeWadPlayer& Player)
         {
             if (HeldKey)
@@ -3074,6 +3496,12 @@ namespace
                     SendKey(Player, EKeys::LeftAlt, IE_Released);
                 }
                 HeldKey.Reset();
+            }
+            if (L25Review >= EL25Review::ElmoreL151Exit)
+            {
+                const auto* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+                return Travel ? TickElmoreFinal(Current, Player, *Travel)
+                    : Finish(&Player, TEXT("the Elmore finale lost its campaign state"));
             }
             if (L25Review == EL25Review::ElmoreCombat64 || L25Review == EL25Review::ElmoreCombat65)
             {
@@ -5009,6 +5437,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : Mode == TEXT("elmorecombat64") ? EL25Review::ElmoreCombat64 : Mode == TEXT("elmorecombat65") ? EL25Review::ElmoreCombat65
         : Mode == TEXT("elmorel65exit") ? EL25Review::ElmoreL65Exit : Mode == TEXT("elmorel34") ? EL25Review::ElmoreL34
         : Mode == TEXT("elmorel151reload") ? EL25Review::ElmoreL151Reload
+        : Mode == TEXT("elmorel151exit") ? EL25Review::ElmoreL151Exit : Mode == TEXT("elmorel152") ? EL25Review::ElmoreL152
+        : Mode == TEXT("elmorel153puzzles") ? EL25Review::ElmoreL153Puzzles : Mode == TEXT("elmoreorb") ? EL25Review::ElmoreOrb
+        : Mode == TEXT("elmoreorbreturn") ? EL25Review::ElmoreOrbReturn : Mode == TEXT("elmoreorbempty") ? EL25Review::ElmoreOrbEmpty
         : EL25Review::None;
     const ETownReview TownReview = Mode == TEXT("towntour") ? ETownReview::Tour : Mode == TEXT("townfailure") ? ETownReview::Failure
         : Mode == TEXT("townreload") || L25Review == EL25Review::Exit ? ETownReview::Reload
@@ -5027,6 +5458,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bDoorReload = Mode == TEXT("doorreload");
     const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bStartsInL20 ? TEXT("L20")
+        : L25Review >= EL25Review::ElmoreL153Puzzles ? TEXT("L153") : L25Review == EL25Review::ElmoreL152 ? TEXT("L152")
+        : L25Review == EL25Review::ElmoreL151Exit ? TEXT("L151")
         : L25Review == EL25Review::ElmoreL151Reload ? TEXT("L151") : L25Review == EL25Review::ElmoreL34 ? TEXT("L34")
         : L25Review == EL25Review::ElmoreCombat64 ? TEXT("L64")
         : L25Review >= EL25Review::ElmoreL65 ? TEXT("L65")

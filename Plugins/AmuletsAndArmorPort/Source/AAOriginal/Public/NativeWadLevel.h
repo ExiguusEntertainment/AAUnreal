@@ -249,6 +249,7 @@ public:
     int32 GetScriptMissileCount(int32 Type) const { return ScriptMissilesByType.FindRef(Type); }
     int32 GetScriptMissilesBlocked() const { return ScriptMissilesBlocked; }
     void CountBlockedScriptMissile() { ++ScriptMissilesBlocked; }
+    void LockScriptDoorsNear(const FVector2D& Impact);
     bool WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDiscardProjectiles = false) const;
     bool RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint);
 
@@ -357,6 +358,7 @@ private:
     TMap<int32, float> PendingPickupGenerators;
     TSet<int32> FiredPickupGenerators;
     TSet<int32> UnlockedItemDoors;
+    TSet<int32> ScriptLockedDoors;
 
     UPROPERTY()
     TObjectPtr<UMaterialInterface> ScriptMissileArt;

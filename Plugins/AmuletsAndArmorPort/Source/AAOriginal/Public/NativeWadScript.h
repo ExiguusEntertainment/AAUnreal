@@ -32,7 +32,8 @@ enum class EWadScriptOperation : uint8
     SetObjectAngle,
     RestoreVitals,
     ChangeSideTexture,
-    AddJournalPage
+    AddJournalPage,
+    ToggleWallSwitch
 };
 
 USTRUCT()
@@ -72,6 +73,15 @@ struct FWadScriptCommand
 
     UPROPERTY()
     FString Text;
+
+    UPROPERTY()
+    FString SwitchDownTexture;
+
+    UPROPERTY()
+    int32 SwitchUpActivity = INDEX_NONE;
+
+    UPROPERTY()
+    int32 SwitchDownActivity = INDEX_NONE;
 
     UPROPERTY()
     FIntVector Position = FIntVector::ZeroValue;

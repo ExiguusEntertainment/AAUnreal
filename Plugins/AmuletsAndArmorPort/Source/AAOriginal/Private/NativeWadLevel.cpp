@@ -86,6 +86,14 @@ bool ANativeWadLevel::UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player)
         return false;
     }
     const FAAWadNativeDoor& Door = Doors[*Index];
+    if (ScriptLockedDoors.Contains(Sector))
+    {
+        if (Player)
+        {
+            Player->ShowInteractionMessage(TEXT("Door is locked."));
+        }
+        return false;
+    }
     if (Door.bRequiresUnlock && !UnlockedItemDoors.Contains(Sector))
     {
         if (!Player)
@@ -112,6 +120,30 @@ bool ANativeWadLevel::UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player)
     }
     SetActorTickEnabled(true);
     return true;
+}
+
+void ANativeWadLevel::LockScriptDoorsNear(const FVector2D& Impact)
+{
+    InitializeTopology();
+    constexpr double Radius = 40.0;
+    const FVector2D Point(GetActorTransform().InverseTransformPosition(FVector(Impact, GetActorLocation().Z)));
+    for (const FAAWadNativeLine& Line : Lines)
+    {
+        const FVector2D Start(Vertices[Line.Endpoints.X]);
+        const FVector2D End(Vertices[Line.Endpoints.Y]);
+        if (FVector2D::DistSquared(Point, FMath::ClosestPointOnSegment2D(Point, Start, End)) > FMath::Square(Radius))
+        {
+            continue;
+        }
+        for (const int32 Side : {Line.Sides.X, Line.Sides.Y})
+        {
+            const int32 Sector = Sides.IsValidIndex(Side) ? Sides[Side].Sector : INDEX_NONE;
+            if (DoorBySector.Contains(Sector))
+            {
+                ScriptLockedDoors.Add(Sector);
+            }
+        }
+    }
 }
 
 bool ANativeWadLevel::UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, ANativeWadPlayer* Player)
