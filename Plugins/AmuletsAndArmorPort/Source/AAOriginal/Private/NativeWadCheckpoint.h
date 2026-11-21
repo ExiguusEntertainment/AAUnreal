@@ -6,6 +6,8 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "NativeWadCheckpoint.generated.h"
 
+class UTexture2D;
+
 USTRUCT()
 struct FWadSavedEncounter
 {
@@ -37,6 +39,8 @@ struct FWadSavedSlide
     bool bCeiling = false;
     UPROPERTY()
     bool bPauseOnCrush = false;
+    UPROPERTY()
+    int32 CompletionActivity = INDEX_NONE;
 };
 
 USTRUCT()
@@ -79,6 +83,9 @@ struct FWadLevelCheckpoint
 
     UPROPERTY()
     TMap<int32, bool> Switches;
+
+    UPROPERTY()
+    TMap<int32, FName> ActivityWallTextures;
 
     UPROPERTY()
     TMap<int32, int32> LightLevels;
@@ -196,6 +203,9 @@ public:
     FWadQuestProgress Quest;
 
     UPROPERTY()
+    TMap<int32, TSoftObjectPtr<UTexture2D>> JournalPages;
+
+    UPROPERTY()
     bool bTown = false;
 };
 
@@ -208,5 +218,6 @@ public:
     TMap<FString, FWadLevelCheckpoint> VisitedLevels;
     TSet<FString> CompletedLevels;
     FWadQuestProgress Quest;
+    TMap<int32, TSoftObjectPtr<UTexture2D>> JournalPages;
     int32 ArrivingFromMap = 0;
 };

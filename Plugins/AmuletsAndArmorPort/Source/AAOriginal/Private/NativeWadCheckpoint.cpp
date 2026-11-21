@@ -48,6 +48,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
         Checkpoint.Flags.Add(Flag);
     }
     Checkpoint.Switches = ActivitySwitchStates;
+    Checkpoint.ActivityWallTextures = ActivityWallTextures;
     Checkpoint.LightLevels = LightOverrides;
     Checkpoint.PendingPickupGenerators = PendingPickupGenerators;
     Checkpoint.FiredPickupGenerators = FiredPickupGenerators;
@@ -65,7 +66,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     for (const FActivitySlide& Slide : ActivitySlides)
     {
         Checkpoint.Slides.Add({Slide.Sector, Slide.From, Slide.To, Slide.Duration, Slide.Elapsed,
-            Slide.bCeiling, Slide.bPauseOnCrush});
+            Slide.bCeiling, Slide.bPauseOnCrush, Slide.CompletionActivity});
     }
     for (const auto& [DoorIndex, State] : ActiveDoors)
     {
@@ -150,7 +151,15 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
         FVector2D HeightsAtSave;
         if (!GetSectorSurfaceHeights(Slide.Sector, HeightsAtSave) || !FMath::IsFinite(Slide.From) || !FMath::IsFinite(Slide.To)
             || !FMath::IsFinite(Slide.Duration) || !FMath::IsFinite(Slide.Elapsed)
-            || Slide.Duration <= 0.0 || Slide.Elapsed < 0.0 || Slide.Elapsed > Slide.Duration)
+            || Slide.Duration <= 0.0 || Slide.Elapsed < 0.0 || Slide.Elapsed > Slide.Duration
+            || (Slide.CompletionActivity != INDEX_NONE && !FindWadActivity(Slide.CompletionActivity)))
+        {
+            return false;
+        }
+    }
+    for (const auto& [Side, Texture] : Checkpoint.ActivityWallTextures)
+    {
+        if (!FindActivitySideBand(Side) || !ActivityWallMaterials.Contains(Texture))
         {
             return false;
         }
@@ -200,7 +209,8 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     ActivitySlides.Reset();
     for (const FWadSavedSlide& Slide : Checkpoint.Slides)
     {
-        ActivitySlides.Add({Slide.Sector, Slide.From, Slide.To, Slide.Duration, Slide.Elapsed, Slide.bCeiling, Slide.bPauseOnCrush});
+        ActivitySlides.Add({Slide.Sector, Slide.From, Slide.To, Slide.Duration, Slide.Elapsed,
+            Slide.bCeiling, Slide.bPauseOnCrush, Slide.CompletionActivity});
     }
     ActiveDoors.Reset();
     for (const auto& [Sector, State] : Checkpoint.Doors)
@@ -242,6 +252,10 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     for (const auto& [Side, bUp] : Checkpoint.Switches)
     {
         SetActivitySwitch(Side, bUp);
+    }
+    for (const auto& [Side, Texture] : Checkpoint.ActivityWallTextures)
+    {
+        SetActivityWallTexture(Side, Texture);
     }
     FMemory::Memcpy(ScriptVariables, Checkpoint.Variables.GetData(), sizeof(ScriptVariables));
     for (int32 Index = 0; Index < UE_ARRAY_COUNT(ScriptFlags); ++Index)
@@ -309,6 +323,7 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
         Save->VisitedLevels = Travel->VisitedLevels;
         Save->CompletedLevels = Travel->CompletedLevels;
         Save->Quest = Travel->Quest;
+        Save->JournalPages = Travel->JournalPages;
     }
     if (!UGameplayStatics::SaveGameToSlot(Save, Slot.IsEmpty() ? UNativeWadCheckpoint::Slot : Slot, 0))
     {
@@ -366,6 +381,7 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
         Travel->VisitedLevels = Save->VisitedLevels;
         Travel->CompletedLevels = Save->CompletedLevels;
         Travel->Quest = Save->Quest;
+        Travel->JournalPages = Save->JournalPages;
         Travel->ArrivingFromMap = 0;
     }
     bCheckpointRestored = true;

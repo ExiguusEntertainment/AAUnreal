@@ -78,6 +78,7 @@ public:
 
 private:
     virtual void BeginPlay() override;
+    void InitializeMount();
     void UpdateElevation();
     void SetView(int32 Frame, int32 Angle);
 

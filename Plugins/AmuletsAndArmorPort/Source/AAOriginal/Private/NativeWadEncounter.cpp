@@ -6,6 +6,7 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "NativeWadBillboard.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 
@@ -23,11 +24,13 @@ namespace
         Sprite.SetAffectDistanceFieldLighting(false);
     }
 
-    void FacePlayer(UStaticMeshComponent& Sprite, const ANativeWadPlayer& Player)
+    void FacePlayer(UStaticMeshComponent& Sprite)
     {
-        const FVector Facing = (Player.GetActorLocation() - Sprite.GetComponentLocation()).GetSafeNormal2D();
-        const FVector Right = FVector::CrossProduct(FVector::UpVector, Facing);
-        Sprite.SetWorldRotation(FRotationMatrix::MakeFromXY(Right, -FVector::UpVector).Rotator());
+        const APlayerController* Controller = Sprite.GetWorld()->GetFirstPlayerController();
+        if (Controller && Controller->GetViewTarget())
+        {
+            NativeWadBillboard::FaceView(Sprite, *Controller);
+        }
     }
 }
 
@@ -83,7 +86,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         return;
     }
-    FacePlayer(*Sprite, *Player);
+    FacePlayer(*Sprite);
     if (IsDefeated())
     {
         return;
@@ -275,10 +278,7 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
         return;
     }
     SetActorLocation(End);
-    if (const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerCharacter(this, 0)))
-    {
-        FacePlayer(*Sprite, *Player);
-    }
+    FacePlayer(*Sprite);
 }
 
 ANativeWadPickup::ANativeWadPickup()
@@ -306,10 +306,7 @@ void ANativeWadPickup::Configure(UStaticMesh* Plane, UMaterialInterface* Image, 
 void ANativeWadPickup::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    if (const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerCharacter(this, 0)))
-    {
-        FacePlayer(*Sprite, *Player);
-    }
+    FacePlayer(*Sprite);
 }
 
 void ANativeWadPickup::SetAvailable(bool bAvailable)

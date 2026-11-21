@@ -62,8 +62,12 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "UObject/SavePackage.h"
 #include "WadSurfaceTextures.h"
 
+struct FAAWadNativeImport;
+
 namespace
 {
+    UTexture2D* SaveInterfaceTexture(FAAWadNativeImport& Import, const TCHAR* Folder, const FString& Name,
+        FIntPoint Size, const TArray<FColor>& Pixels);
     constexpr EObjectFlags AssetFlags = RF_Public | RF_Standalone | RF_Transactional;
     constexpr float SlabThickness = 10.0f;
     constexpr float WallMeshSize = 128.0f;
@@ -703,6 +707,7 @@ struct FAAWadNativeImport
         }
         const FString MapName = FPaths::GetBaseFilename(WadPath).ToUpper();
         const bool bChurchQuestMap = MapName == TEXT("L25") || MapName == TEXT("L20") || MapName == TEXT("L60");
+        const bool bRetreatMap = MapName == TEXT("L64") || MapName == TEXT("L65");
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && !InstallL151Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L301") && !InstallL301Encounter(World, Actor, Map, WadPath, Output))
@@ -710,9 +715,10 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L25") && !InstallL25Script(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L20") && !InstallL20Script(Actor, Map, WadPath, Output))
-            || (bChurchQuestMap && (!InstallChurchScenery(World, Actor, Map, Output)
-                || !InstallChurchEncounters(World, Actor, Map, WadPath, Output)))
+            || ((bChurchQuestMap || bRetreatMap) && !InstallScenery(World, Actor, Map, bRetreatMap, Output))
+            || (bChurchQuestMap && !InstallChurchEncounters(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
+            || (bRetreatMap && !InstallRetreatScript(Actor, Map, WadPath, MapName, Output))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output))))
         {
@@ -723,6 +729,55 @@ struct FAAWadNativeImport
         Settings->Modify();
         Settings->DefaultGameMode = ANativeWadGameMode::StaticClass();
         return true;
+    }
+
+    bool InstallRetreatScript(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        const FString& MapName, FOutputDevice& Output)
+    {
+        constexpr int32 L64Entries[] = {0, 1, 2, 3, 4, 201};
+        constexpr int32 L65Entries[] = {0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 201, 202, 203, 204};
+        // Some script IDs are absent from the shipped SOUNDS.RES. Import any that a complete archive provides.
+        constexpr int32 UnavailableSounds[] = {5, 1508, 1510};
+        const bool bL64 = MapName == TEXT("L64");
+        if (!InstallActivities(Actor, Map, WadPath, bL64 ? TEXT("S64.SRP") : TEXT("S65.SRP"),
+            bL64 ? TConstArrayView<int32>(L64Entries) : TConstArrayView<int32>(L65Entries), Output, UnavailableSounds))
+        {
+            return false;
+        }
+        Actor.ActivityWallMaterials.Reset();
+        Actor.ActivityJournalPages.Reset();
+        for (FWadScriptActivity& Activity : Actor.ImportedActivities)
+        {
+            for (FWadScriptCommand& Command : Activity.Commands)
+            {
+                if (Command.Operation == EWadScriptOperation::SetSwitch || Command.Operation == EWadScriptOperation::ChangeSideTexture)
+                {
+                    Command.Operation = EWadScriptOperation::ChangeSideTexture;
+                    const FName Name(*Command.Text);
+                    if (!Actor.FindActivitySideBand(Command.Target) || !Texture(Command.Text))
+                    {
+                        Output.Logf(TEXT("Could not install texture %s for scripted sidedef %d."), *Command.Text, Command.Target);
+                        return false;
+                    }
+                    Actor.ActivityWallMaterials.Add(Name, Material(Command.Text, EWadWallBlend::Opaque));
+                }
+                else if (Command.Operation == EWadScriptOperation::AddJournalPage)
+                {
+                    const FString Name = FString::Printf(TEXT("NOTE%04d"), Command.Target);
+                    FIntPoint Size;
+                    TArray<FColor> Pixels;
+                    UTexture2D* Page = LoadWadInterfacePicture(TEXT("UI/NOTES/") + Name, Size, Pixels)
+                        ? SaveInterfaceTexture(*this, TEXT("Journal"), Name, Size, Pixels) : nullptr;
+                    if (!Page)
+                    {
+                        Output.Logf(TEXT("Could not import the original journal page %s."), *Name);
+                        return false;
+                    }
+                    Actor.ActivityJournalPages.Add(Command.Target, Page);
+                }
+            }
+        }
+        return !bAssetError;
     }
 
     static bool InstallL531Script(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath, FOutputDevice& Output)
@@ -1013,7 +1068,7 @@ struct FAAWadNativeImport
         return true;
     }
 
-    bool InstallChurchScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    bool InstallScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, bool bRetreat, FOutputDevice& Output)
     {
         // These are fixed scenery types from OBJS.FL. Pickup, encounter and script types have their own importers.
         static const TMap<int32, FString> Resources = {
@@ -1024,6 +1079,10 @@ struct FAAWadNativeImport
             {296, TEXT("CANDSTK1")}, {669, TEXT("FNTN")}, {3104, TEXT("DEAD01")}, {4071, TEXT("TREE1")},
             {4072, TEXT("TREE2")}, {4074, TEXT("TREE4")}, {4076, TEXT("TREE6")}, {4077, TEXT("TREE7")},
             {4078, TEXT("TREE8")}, {4083, TEXT("TORCH2")}
+        };
+        static const TMap<int32, FString> RetreatResources = {
+            {14, TEXT("BARREL1")}, {15, TEXT("BARREL3")}, {18, TEXT("ROCK_1")}, {25, TEXT("SWPPLT03")},
+            {65, TEXT("SKULL")}, {72, TEXT("STONE")}, {124, TEXT("STAL5")}, {4079, TEXT("TREE9")}
         };
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         if (!Plane)
@@ -1037,6 +1096,10 @@ struct FAAWadNativeImport
         {
             const FWadThing& Thing = Map.Things[Id];
             const FString* Resource = Resources.Find(Thing.Type);
+            if (!Resource && bRetreat)
+            {
+                Resource = RetreatResources.Find(Thing.Type);
+            }
             if (!Resource)
             {
                 continue;
@@ -1408,7 +1471,7 @@ struct FAAWadNativeImport
     }
 
     static bool InstallActivities(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
-        const TCHAR* ScriptName, TConstArrayView<int32> EntryActivities, FOutputDevice& Output)
+        const TCHAR* ScriptName, TConstArrayView<int32> EntryActivities, FOutputDevice& Output, TConstArrayView<int32> UnavailableSounds = {})
     {
         FString ScriptPath = FPaths::GetPath(WadPath) / ScriptName;
         if (!FPaths::FileExists(ScriptPath))
@@ -1421,7 +1484,7 @@ struct FAAWadNativeImport
             Output.Logf(TEXT("Failed to import WAD activities from %s."), *ScriptPath);
             return false;
         }
-        if (!ImportWadSounds(FPaths::GetPath(ScriptPath) / TEXT("SOUNDS.RES"), Activities, Actor.ActivitySounds, Output))
+        if (!ImportWadSounds(FPaths::GetPath(ScriptPath) / TEXT("SOUNDS.RES"), Activities, Actor.ActivitySounds, Output, UnavailableSounds))
         {
             Output.Log(TEXT("Failed to import the sound samples used by the WAD script."));
             return false;
@@ -2357,7 +2420,9 @@ bool SaveNativeWadHud(FOutputDevice& Output)
     }
     TArray<FString> Pictures = {
         TEXT("UI/3DUI/MAINBACK"), TEXT("UI/3DUI/INVBAR3"), TEXT("UI/3DUI/STABAR"), TEXT("UI/3DUI/SMPORT04"),
-        TEXT("UI/3DUI/RUNBUT12"), TEXT("UI/3DUI/RUNBUT13"), TEXT("UI/3DUI/RUDBUT12"), TEXT("UI/3DUI/RUDBUT13")
+        TEXT("UI/3DUI/RUNBUT12"), TEXT("UI/3DUI/RUNBUT13"), TEXT("UI/3DUI/RUDBUT12"), TEXT("UI/3DUI/RUDBUT13"),
+        TEXT("UI/3DUI/JNLBAR"), TEXT("UI/3DUI/RWND"), TEXT("UI/3DUI/FFWD"),
+        TEXT("UI/COMMON/LTARROW"), TEXT("UI/COMMON/RTARROW"), TEXT("UI/COMMON/CLOSEWIN")
     };
     for (int32 Frame = 0; Frame < 8; ++Frame)
     {

@@ -149,7 +149,7 @@ void ANativeWadPlayer::ToggleInventory()
     {
         if (ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>())
         {
-            HUD->bStatistics = false;
+            HUD->Form = ANativeWadHUD::EForm::Inventory;
         }
     }
     if (bInventoryOpen)

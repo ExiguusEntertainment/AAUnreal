@@ -208,13 +208,21 @@ namespace
                 }
                 break;
             case 13:
-                Command.Operation = EWadScriptOperation::SetSwitch;
                 if (!Reader.Literal(Command.Target) || Command.Target < 0 || Command.Target >= SideCount
-                    || !Reader.String(Command.Text) || (Command.Text != TEXT("SWIT1U") && Command.Text != TEXT("SWIT1D")))
+                    || !Reader.String(Command.Text) || Command.Text.IsEmpty() || Command.Text.Len() > 8)
                 {
                     return false;
                 }
+                Command.Operation = (Command.Text == TEXT("SWIT1U") || Command.Text == TEXT("SWIT1D"))
+                    ? EWadScriptOperation::SetSwitch : EWadScriptOperation::ChangeSideTexture;
                 Command.Value = Command.Text == TEXT("SWIT1U") ? 1 : 0;
+                break;
+            case 65:
+                Command.Operation = EWadScriptOperation::AddJournalPage;
+                if (!Reader.Literal(Command.Target) || Command.Target < 0 || Command.Target > 9999)
+                {
+                    return false;
+                }
                 break;
             case 21:
                 Command.Operation = EWadScriptOperation::Wait;
@@ -247,7 +255,7 @@ namespace
             case 64:
             {
                 int32 Args[5];
-                if (!Reader.Literals(Args) || Args[0] < 0 || Args[0] >= SectorCount || Args[3] <= 0 || Args[4] != -1)
+                if (!Reader.Literals(Args) || Args[0] < 0 || Args[0] >= SectorCount || Args[3] <= 0 || Args[4] < INDEX_NONE)
                 {
                     return false;
                 }
@@ -257,6 +265,7 @@ namespace
                 Command.Target = Args[0];
                 Command.Value = Args[2];
                 Command.Ticks = Args[3];
+                Command.CompletionActivity = Args[4];
                 break;
             }
             case 12:
@@ -327,7 +336,7 @@ namespace
 }
 
 bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& Activities,
-    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output)
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output, TConstArrayView<int32> UnavailableSounds)
 {
     TSet<int32> Required;
     for (const FWadScriptActivity& Activity : Activities)
@@ -340,11 +349,11 @@ bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& 
             }
         }
     }
-    return ImportWadSoundSamples(Filename, MoveTemp(Required), Sounds, Output);
+    return ImportWadSoundSamples(Filename, MoveTemp(Required), Sounds, Output, UnavailableSounds);
 }
 
 bool ImportWadSoundSamples(const FString& Filename, TSet<int32> Required,
-    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output)
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output, TConstArrayView<int32> UnavailableSounds)
 {
     Sounds.Reset();
     if (Required.IsEmpty())
@@ -392,6 +401,13 @@ bool ImportWadSoundSamples(const FString& Filename, TSet<int32> Required,
         Required.Remove(Id);
     }
     Output.Logf(TEXT("Imported %d authored sound samples from %s."), Sounds.Num(), *Filename);
+    for (int32 Id : UnavailableSounds)
+    {
+        if (Required.Remove(Id))
+        {
+            Output.Logf(TEXT("The supplied sound archive lacks authored script sample %d."), Id);
+        }
+    }
     return Required.IsEmpty();
 }
 
@@ -465,6 +481,10 @@ bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> A
         }
         for (const FWadScriptCommand& Command : Activity.Commands)
         {
+            if (Command.CompletionActivity != INDEX_NONE)
+            {
+                Queue.AddUnique(Command.CompletionActivity);
+            }
             if (Command.Operation == EWadScriptOperation::Call || Command.Operation == EWadScriptOperation::Jump
                 || Command.Operation == EWadScriptOperation::IfFlag)
             {

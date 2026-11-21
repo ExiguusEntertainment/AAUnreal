@@ -30,7 +30,9 @@ enum class EWadScriptOperation : uint8
     MultiplyNumbers,
     ReadObjectAngle,
     SetObjectAngle,
-    RestoreVitals
+    RestoreVitals,
+    ChangeSideTexture,
+    AddJournalPage
 };
 
 USTRUCT()
@@ -49,6 +51,9 @@ USTRUCT()
 struct FWadScriptCommand
 {
     GENERATED_BODY()
+
+    UPROPERTY()
+    int32 CompletionActivity = INDEX_NONE;
 
     UPROPERTY()
     EWadScriptOperation Operation = EWadScriptOperation::Wait;
@@ -118,7 +123,7 @@ struct FWadCreatureGeneratorState
 bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> ActivityIds, int32 SectorCount,
     int32 SideCount, TArray<FWadScriptActivity>& Out, FOutputDevice& Output);
 bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& Activities,
-    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output);
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output, TConstArrayView<int32> UnavailableSounds = {});
 bool ImportWadSoundSamples(const FString& Filename, TSet<int32> Required,
-    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output);
+    TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output, TConstArrayView<int32> UnavailableSounds = {});
 #endif

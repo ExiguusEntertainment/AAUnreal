@@ -3,8 +3,11 @@
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/GameInstance.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
@@ -156,6 +159,18 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
         case EWadScriptOperation::SetSwitch:
             SetActivitySwitch(Command.Target, Command.Value != 0);
             break;
+        case EWadScriptOperation::ChangeSideTexture:
+            SetActivityWallTexture(Command.Target, FName(*Command.Text));
+            break;
+        case EWadScriptOperation::AddJournalPage:
+            if (UTexture2D* Image = ActivityJournalPages.FindRef(Command.Target))
+            {
+                if (auto* Travel = UGameInstance::GetSubsystem<UNativeWadTravelState>(GetGameInstance()))
+                {
+                    Travel->JournalPages.Add(Command.Target, Image);
+                }
+            }
+            break;
         case EWadScriptOperation::Wait:
             ScheduleScriptContinuation(Activity, Index + 1, Player, Command.Ticks / TicksPerSecond);
             return;
@@ -168,7 +183,7 @@ void ANativeWadLevel::RunWadScriptCommands(int32 Activity, int32 StartCommand, T
         case EWadScriptOperation::SlideFloor:
         case EWadScriptOperation::SlideCeiling:
             StartActivitySlide(Command.Target, Command.Value, Command.Ticks,
-                Command.Operation == EWadScriptOperation::SlideCeiling, Command.bPauseOnCrush);
+                Command.Operation == EWadScriptOperation::SlideCeiling, Command.bPauseOnCrush, Command.CompletionActivity);
             break;
         case EWadScriptOperation::Block:
             if (ScriptVariables[Command.Target] != 0)
@@ -378,7 +393,8 @@ void ANativeWadLevel::ScheduleScriptContinuation(int32 Activity, int32 NextComma
     }), Delay, false);
 }
 
-void ANativeWadLevel::StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush)
+void ANativeWadLevel::StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling,
+    bool bPauseOnCrush, int32 CompletionActivity)
 {
     FVector2D HeightsAtStart;
     if (!GetSectorSurfaceHeights(Sector, HeightsAtStart))
@@ -388,12 +404,13 @@ void ANativeWadLevel::StartActivitySlide(int32 Sector, double Target, int32 Tick
     const double From = bCeiling ? HeightsAtStart.Y : HeightsAtStart.X;
     ActivitySlides.RemoveAll([Sector, bCeiling](const FActivitySlide& Slide)
         { return Slide.Sector == Sector && Slide.bCeiling == bCeiling; });
-    ActivitySlides.Add({Sector, From, Target, Ticks / TicksPerSecond, 0.0, bCeiling, bPauseOnCrush});
+    ActivitySlides.Add({Sector, From, Target, Ticks / TicksPerSecond, 0.0, bCeiling, bPauseOnCrush, CompletionActivity});
     SetActorTickEnabled(true);
 }
 
 void ANativeWadLevel::TickActivitySlides(float DeltaSeconds)
 {
+    TArray<int32, TInlineAllocator<4>> CompletedActivities;
     for (int32 Index = ActivitySlides.Num() - 1; Index >= 0; --Index)
     {
         FActivitySlide& Slide = ActivitySlides[Index];
@@ -409,26 +426,51 @@ void ANativeWadLevel::TickActivitySlides(float DeltaSeconds)
         Slide.Elapsed = Age;
         if (Age >= Slide.Duration)
         {
+            if (Slide.CompletionActivity != INDEX_NONE)
+            {
+                CompletedActivities.Add(Slide.CompletionActivity);
+            }
             ActivitySlides.RemoveAtSwap(Index);
         }
     }
+    for (int32 Activity : CompletedActivities)
+    {
+        RunWadActivity(Activity, Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerPawn(this, 0)));
+    }
+}
+
+UStaticMeshComponent* ANativeWadLevel::FindActivitySideBand(int32 SideIndex) const
+{
+    if (!Sides.IsValidIndex(SideIndex))
+    {
+        return nullptr;
+    }
+    for (const EWadWallBand Candidate : {EWadWallBand::Middle, EWadWallBand::Lower, EWadWallBand::Upper})
+    {
+        if (UStaticMeshComponent* Mesh = Sides[SideIndex].Bands[uint8(Candidate)])
+        {
+            return Mesh;
+        }
+    }
+    return nullptr;
 }
 
 void ANativeWadLevel::SetActivitySwitch(int32 SideIndex, bool bUp)
 {
-    if (!Sides.IsValidIndex(SideIndex))
+    if (UStaticMeshComponent* Mesh = FindActivitySideBand(SideIndex))
     {
-        return;
+        ActivitySwitchStates.Add(SideIndex, bUp);
+        Mesh->SetMaterial(0, bUp ? ActivitySwitchUp : ActivitySwitchDown);
     }
-    for (const EWadWallBand Band : {EWadWallBand::Middle, EWadWallBand::Lower, EWadWallBand::Upper})
+}
+
+void ANativeWadLevel::SetActivityWallTexture(int32 SideIndex, FName Texture)
+{
+    UMaterialInterface* Material = ActivityWallMaterials.FindRef(Texture);
+    if (UStaticMeshComponent* Mesh = FindActivitySideBand(SideIndex); Mesh && Material)
     {
-        UStaticMeshComponent* Mesh = Sides[SideIndex].Bands[uint8(Band)];
-        if (Mesh)
-        {
-            ActivitySwitchStates.Add(SideIndex, bUp);
-            Mesh->SetMaterial(0, bUp ? ActivitySwitchUp : ActivitySwitchDown);
-            return;
-        }
+        ActivityWallTextures.Add(SideIndex, Texture);
+        Mesh->SetMaterial(0, Material);
     }
 }
 

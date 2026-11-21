@@ -236,6 +236,18 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - Run `ChurchJourney` and `ChurchL20Exit` as above. Run `AA.ExportNativeWadPortReview ChurchL60Puzzles <OutputPng> [ImageSize]` in L60 with `?WadLoad=NativeWadChurchL60Review`. Run `ChurchL60Relic` and `ChurchL60Empty` from `NativeWadAndrewPuzzleReview`, then `ChurchL60Return` from `NativeWadAndrewRelicReview`.
 - All nine WAD regression tests passed. The classic HUD and both Town Hall outcomes are visible in `Saved/Wad-Andrew-Quest-Review.html`.
 
+### Elmore's Retreat and scenery facing
+
+75. **Launch Elmore's Retreat from Town Hall.** Continued from the completed Knights of Andrew checkpoint. The original quest selector and briefing led to L64's authored spawn. Startup activity 0 granted journal pages 423 and 424, which appear in the original journal frame.
+76. **Import L64 and restore its mechanisms.** Built 363 native sectors and placed 117 scenery objects. The replay used the original pressure plate and wall switch. After a restart the lift finished returning and reset both switch faces. Both flood activities moved the sectors to their authored heights.
+77. **Take L64's authored exit into L65.** Walking into the sector for Thing 227 reached L65's spawn at `(-852, 2282)` with the active quest, journal and archived L64 state.
+78. **Import L65 and prove its first teleporter.** Built 183 native sectors and placed 84 scenery objects. Line 847 enabled the sector 115 teleporter. Reload restored the destination at `(1628, 2370)` and its switch state. The replay inspected the floor barrel and hanging brazier from two player views.
+
+- Floor scenery turns horizontally around its bottom center. Hanging scenery turns around its top center. Both follow their authored mounting surface, including moving sectors. The displayed sprite can change frames without moving that point.
+- The replay stages the player near selected mechanisms and uses regular movement and use inputs for the tested switches, crossings, and map transitions. Start `ElmoreLaunch` in Town Hall from `NativeWadAndrewTownReview`, which `ChurchL60Return` writes. Then use `ElmoreL64`, `ElmoreL64Reload`, `ElmoreL65`, and `ElmoreL65Reload` with the checkpoints from each preceding mode.
+- The captures are in `Saved/Wad-Elmore-Retreat-Review.html`.
+- The map imports cover L64 and L65 scenery and mechanisms. Barbarian encounters and the rest of the route through L65 are subsequent work.
+
 ### Asset follow-ups
 
 - [ ] Find the original `MARBGRAY` texture and restore it to the L30 import. The supplied `PICS.RES` lacks it, so the affected lower wall bands use the default material when exposed. Check a raised floor at sector 147 after restoring the art.
@@ -243,6 +255,7 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - [ ] Restore `MARBGRAY` in L22. The import uses the default material for the affected surfaces.
 - [ ] Restore `AASHITTY` in L25 when the source texture is available. The native import uses the default material for that surface.
 - [ ] Restore `MARBLE1` and `MARBGRAY` in L60 when the source textures are available. The import uses the default material on the affected surfaces.
+- [ ] Restore `ASHWALL2` and `AASHITTY` in L64 and `MARBGRAY` in L65. Find authored sound samples 5, 1508, and 1510 referenced by their scripts.
 
 ## 2026-04-11 Review Findings
 

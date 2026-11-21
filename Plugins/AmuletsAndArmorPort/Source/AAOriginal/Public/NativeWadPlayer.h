@@ -171,8 +171,13 @@ private:
     UPROPERTY()
     TObjectPtr<UNativeWadHudData> ClassicData;
 
+    UPROPERTY()
+    TObjectPtr<UTexture2D> JournalImage;
+
+    enum class EForm : uint8 { Inventory, Statistics, Journal };
+    EForm Form = EForm::Inventory;
     int32 InventoryPage = 0;
-    bool bStatistics = false;
+    int32 JournalPage = 0;
 };
 
 UCLASS()

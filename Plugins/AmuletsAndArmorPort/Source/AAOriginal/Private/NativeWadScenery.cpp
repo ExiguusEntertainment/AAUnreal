@@ -3,14 +3,15 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
-#include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "NativeWadBillboard.h"
 #include "NativeWadLevel.h"
 #include "NativeWadRules.h"
 
 ANativeWadScenery::ANativeWadScenery()
 {
     PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.TickGroup = TG_PostUpdateWork;
     SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Anchor")));
 
     Obstacle = CreateDefaultSubobject<UBoxComponent>(TEXT("Obstacle"));
@@ -24,6 +25,7 @@ ANativeWadScenery::ANativeWadScenery()
 
     Sprite = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Sprite"));
     Sprite->SetupAttachment(GetRootComponent());
+    Sprite->SetAbsolute(false, true, false);
     Sprite->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     Sprite->SetCastShadow(false);
     Sprite->SetCanEverAffectNavigation(false);
@@ -38,22 +40,19 @@ void ANativeWadScenery::Configure(ANativeWadLevel& Level, UStaticMesh* Plane, co
     Sector = InSector;
     ThingId = InThingId;
 
-    const double HalfHeight = Definition.Frames[0].Views[0].Size.Y * 0.5;
-    Obstacle->SetBoxExtent(FVector(Definition.Radius, Definition.Radius, HalfHeight));
-    Obstacle->SetRelativeLocation(FVector(0.0, 0.0, HalfHeight));
-    Obstacle->SetWorldRotation(FRotator::ZeroRotator);
-    Obstacle->SetCollisionEnabled(Definition.bPassable ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryOnly);
-
     Sprite->SetStaticMesh(Plane);
-    Sprite->SetRelativeRotation(FRotator(0, 90, 90));
-    SetView(0, 0);
-    UpdateElevation();
+    Sprite->SetWorldRotation(FRotator(0, 90, 90));
+    InitializeMount();
 }
 
 void ANativeWadScenery::BeginPlay()
 {
     Super::BeginPlay();
     Random.Initialize(ThingId);
+    if (!Definition.Frames.IsEmpty())
+    {
+        InitializeMount();
+    }
 }
 
 uint16 ANativeWadScenery::GetSourceAngle() const
@@ -66,6 +65,18 @@ void ANativeWadScenery::SetSourceAngle(uint16 Angle)
     SetActorRotation(FRotator(0, Angle * (360.0 / 65536.0), 0));
 }
 
+void ANativeWadScenery::InitializeMount()
+{
+    const double HalfHeight = Definition.Frames[0].Views[0].Size.Y * 0.5;
+    Obstacle->SetBoxExtent(FVector(Definition.Radius, Definition.Radius, HalfHeight));
+    Obstacle->SetRelativeLocation(FVector(0, 0, Definition.bHanging ? -HalfHeight : HalfHeight));
+    Obstacle->SetWorldRotation(FRotator::ZeroRotator);
+    Obstacle->SetCollisionEnabled(Definition.bPassable ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryOnly);
+    Sprite->SetAbsolute(false, true, false);
+    SetView(0, 0);
+    UpdateElevation();
+}
+
 void ANativeWadScenery::UpdateElevation()
 {
     FVector2D Heights;
@@ -75,12 +86,13 @@ void ANativeWadScenery::UpdateElevation()
     }
     const double Height = Definition.Frames[0].Views[0].Size.Y;
     const double Floor = Definition.bStaysAboveLiquid ? Heights.X : WadLevel->GetWalkingHeight(Sector);
-    const double Bottom = Definition.bHanging ? Heights.Y - Height
+    const double Mount = Definition.bHanging ? Heights.Y
         : FMath::Max(Floor, FMath::Min(Floor + (Definition.bRaised ? 32.0 : 0.0), Heights.Y - Height));
-    if (!FMath::IsNearlyEqual(GetActorLocation().Z, Bottom))
+    const double WorldZ = WadLevel->GetActorLocation().Z + Mount;
+    if (!FMath::IsNearlyEqual(GetActorLocation().Z, WorldZ))
     {
         FVector Location = GetActorLocation();
-        Location.Z = Bottom;
+        Location.Z = WorldZ;
         SetActorLocation(Location);
     }
 }
@@ -91,7 +103,8 @@ void ANativeWadScenery::SetView(int32 Frame, int32 Angle)
     const double Width = View.bMirrored ? -View.Size.X : View.Size.X;
     Sprite->SetMaterial(0, View.Material);
     Sprite->SetRelativeScale3D(FVector(Width * 0.01, View.Size.Y * 0.01, 1.0));
-    Sprite->SetRelativeLocation(FVector(0.0, 0.0, View.Size.Y * 0.5));
+    const double HalfHeight = View.Size.Y * 0.5;
+    Sprite->SetRelativeLocation(FVector(0, 0, Definition.bHanging ? -HalfHeight : HalfHeight));
     CurrentFrame = Frame;
     CurrentAngle = Angle;
 }
@@ -106,8 +119,7 @@ void ANativeWadScenery::Tick(float DeltaSeconds)
 
     UpdateElevation();
     const APlayerController* Controller = GetWorld()->GetFirstPlayerController();
-    const APawn* Pawn = Controller ? Controller->GetPawn() : nullptr;
-    if (!Pawn)
+    if (!Controller || !Controller->GetViewTarget())
     {
         return;
     }
@@ -140,13 +152,11 @@ void ANativeWadScenery::Tick(float DeltaSeconds)
         }
     }
 
-    const FVector Facing = (Pawn->GetPawnViewLocation() - GetActorLocation()).GetSafeNormal2D();
+    const FVector Facing = NativeWadBillboard::FaceView(*Sprite, *Controller);
     if (Facing.IsNearlyZero())
     {
         return;
     }
-    const FVector Right = FVector::CrossProduct(FVector::UpVector, Facing);
-    Sprite->SetWorldRotation(FRotationMatrix::MakeFromXY(Right, -FVector::UpVector).Rotator());
     const int32 Views = Definition.Frames[Frame].Views.Num();
     const double Step = 360.0 / Views;
     const double RelativeYaw = FRotator::ClampAxis(GetActorRotation().Yaw - Facing.Rotation().Yaw);

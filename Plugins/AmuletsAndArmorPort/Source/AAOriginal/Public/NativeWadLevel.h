@@ -18,6 +18,7 @@ class ANativeWadPickup;
 class ANativeWadGuardian;
 class ANativeWadScenery;
 class UStaticMesh;
+class UTexture2D;
 struct FWadLevelCheckpoint;
 
 USTRUCT()
@@ -280,9 +281,11 @@ private:
     bool RunWadActivity(int32 Activity, ANativeWadPlayer* Player = nullptr);
     void RunWadScriptCommands(int32 Activity, int32 StartCommand, TWeakObjectPtr<ANativeWadPlayer> Player, int32& Budget);
     void ScheduleScriptContinuation(int32 Activity, int32 NextCommand, TWeakObjectPtr<ANativeWadPlayer> Player, float Delay);
-    void StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush);
+    void StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush, int32 CompletionActivity);
     void TickActivitySlides(float DeltaSeconds);
     void SetActivitySwitch(int32 Side, bool bUp);
+    void SetActivityWallTexture(int32 Side, FName Texture);
+    UStaticMeshComponent* FindActivitySideBand(int32 Side) const;
     void PlayActivitySound(const FWadScriptCommand& Command);
     void LaunchActivityMissile(const FWadScriptCommand& Command);
     void TickSurfaceScroll(float DeltaSeconds);
@@ -298,6 +301,7 @@ private:
         double Elapsed;
         bool bCeiling;
         bool bPauseOnCrush;
+        int32 CompletionActivity;
     };
 
     struct FPendingScriptDelay
@@ -319,6 +323,12 @@ private:
 
     UPROPERTY()
     TMap<int32, FWadSoundSample> ActivitySounds;
+
+    UPROPERTY()
+    TMap<FName, TObjectPtr<UMaterialInterface>> ActivityWallMaterials;
+
+    UPROPERTY()
+    TMap<int32, TObjectPtr<UTexture2D>> ActivityJournalPages;
 
     UPROPERTY()
     TArray<FWadAmbientEmitter> AmbientEmitters;
@@ -355,6 +365,7 @@ private:
     TMap<int32, TObjectPtr<UMaterialInterface>> ScriptMissileMaterials;
 
     TMap<int32, bool> ActivitySwitchStates;
+    TMap<int32, FName> ActivityWallTextures;
     TArray<FActivitySlide> ActivitySlides;
     TMap<uint64, FPendingScriptDelay> PendingScriptDelays;
     uint64 NextScriptDelay = 0;

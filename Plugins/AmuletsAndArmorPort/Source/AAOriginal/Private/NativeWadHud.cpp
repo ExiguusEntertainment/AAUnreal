@@ -1,9 +1,11 @@
 #include "NativeWadPlayer.h"
 
 #include "Engine/Canvas.h"
+#include "Engine/GameInstance.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "NativeWadCheckpoint.h"
 #include "NativeWadHudData.h"
 #include "TextureResource.h"
 #include "UObject/ConstructorHelpers.h"
@@ -21,11 +23,22 @@ namespace
     const FBox2D CastButton({240, 181}, {259, 196});
     const FBox2D InventoryButton({5, 155}, {21, 168});
     const FBox2D StatisticsButton({39, 155}, {55, 168});
+    const FBox2D JournalButton({22, 183}, {38, 196});
     const FBox2D Close({304, 4}, {315, 15});
     const FBox2D PreviousPage({267, 129}, {277, 137});
     const FBox2D NextPage({277, 129}, {287, 137});
     const FBox2D RuneFour({265, 169}, {281, 182});
     const FBox2D RuneFive({282, 169}, {298, 182});
+
+    struct FJournalButton
+    {
+        const TCHAR* Picture;
+        int32 X;
+        int32 Pages;
+    };
+    constexpr FJournalButton JournalButtons[] = {
+        {TEXT("RWND"), 214, -5}, {TEXT("LTARROW"), 224, -1}, {TEXT("RTARROW"), 296, 1}, {TEXT("FFWD"), 306, 5}
+    };
 
     struct FHudLayout
     {
@@ -228,25 +241,17 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
         return;
     }
     const FVector2D Point = (Position - Layout.Origin) / Layout.Scale;
-    if (InventoryButton.IsInside(Point))
+    const auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
+    if (InventoryButton.IsInside(Point) || StatisticsButton.IsInside(Point) || (bHasJournal && JournalButton.IsInside(Point)))
     {
-        if (bStatistics && Player->IsInventoryOpen())
-        {
-            bStatistics = false;
-        }
-        else
+        const EForm Requested = InventoryButton.IsInside(Point) ? EForm::Inventory
+            : StatisticsButton.IsInside(Point) ? EForm::Statistics : EForm::Journal;
+        if (!Player->IsInventoryOpen() || Form == Requested)
         {
             Player->ToggleInventory();
         }
-        return;
-    }
-    if (StatisticsButton.IsInside(Point))
-    {
-        if (!Player->IsInventoryOpen() || bStatistics)
-        {
-            Player->ToggleInventory();
-        }
-        bStatistics = Player->IsInventoryOpen();
+        Form = Player->IsInventoryOpen() ? Requested : EForm::Inventory;
         return;
     }
     if (!Player->IsInventoryOpen())
@@ -274,7 +279,19 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
         Player->ToggleInventory();
         return;
     }
-    if (bStatistics)
+    if (Form == EForm::Journal)
+    {
+        for (const FJournalButton& Button : JournalButtons)
+        {
+            if (bHasJournal && FBox2D({double(Button.X), 129}, {double(Button.X + 9), 137}).IsInside(Point))
+            {
+                JournalPage = FMath::Clamp(JournalPage + Button.Pages, 0, Travel->JournalPages.Num() - 1);
+                break;
+            }
+        }
+        return;
+    }
+    if (Form == EForm::Statistics)
     {
         return;
     }
@@ -374,9 +391,11 @@ void ANativeWadHUD::DrawHUD()
 
     // Keep the original labels visible, with the forms beyond the current port greyed out.
     const FLinearColor Disabled(0, 0, 0, 0.55);
+    const auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
     for (int32 Index = 1; Index < 9; ++Index)
     {
-        if (Index == 2)
+        if (Index == 2 || (Index == 7 && bHasJournal))
         {
             continue;
         }
@@ -387,7 +406,35 @@ void ANativeWadHUD::DrawHUD()
     {
         return;
     }
-    if (bStatistics)
+    if (Form == EForm::Journal && bHasJournal)
+    {
+        TArray<int32, TInlineAllocator<8>> Pages;
+        for (const auto& [Id, Image] : Travel->JournalPages)
+        {
+            Pages.Add(Id);
+        }
+        Pages.Sort();
+        JournalPage = FMath::Clamp(JournalPage, 0, Pages.Num() - 1);
+        const auto& Page = Travel->JournalPages.FindChecked(Pages[JournalPage]);
+        if (Page.Get() != JournalImage || !JournalImage)
+        {
+            JournalImage = Page.LoadSynchronous();
+        }
+        Screen.Picture(TEXT("JNLBAR"), {209, 0});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        if (JournalImage)
+        {
+            const FVector2D Start(214, 16);
+            Screen.Texture(*JournalImage, {Start, Start + FVector2D(JournalImage->GetSizeX(), JournalImage->GetSizeY())});
+        }
+        for (const FJournalButton& Button : JournalButtons)
+        {
+            Screen.Picture(Button.Picture, {double(Button.X), 129});
+        }
+        Screen.Text(FString::Printf(TEXT("PG %d/%d"), JournalPage + 1, Pages.Num()), 252, 129, 43, 1, true);
+        return;
+    }
+    if (Form == EForm::Statistics)
     {
         using namespace NativeWadRules;
         constexpr EAttribute StatRows[] = {StrengthAttribute, ConstitutionAttribute, AccuracyAttribute,

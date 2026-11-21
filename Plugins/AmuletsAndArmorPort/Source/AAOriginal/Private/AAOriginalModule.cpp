@@ -1080,7 +1080,9 @@ public:
                     || Review == TEXT("churchscenery") || Review == TEXT("churchl20scenery")
                     || Review == TEXT("churchl20exit") || Review == TEXT("churchl60reload") || Review == TEXT("classichud")
                     || Review == TEXT("churchl60puzzles") || Review == TEXT("churchl60relic")
-                    || Review == TEXT("churchl60return") || Review == TEXT("churchl60empty"))
+                    || Review == TEXT("churchl60return") || Review == TEXT("churchl60empty")
+                    || Review == TEXT("elmorelaunch") || Review == TEXT("elmorel64") || Review == TEXT("elmorel64reload")
+                    || Review == TEXT("elmorel65") || Review == TEXT("elmorel65reload"))
                 {
                     bStarted = StartNativeWadExtensionReview(InWorld, Output, ImageSize, Review);
                 }

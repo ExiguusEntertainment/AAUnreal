@@ -7,6 +7,7 @@
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/SceneCapture2D.h"
+#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -467,7 +468,7 @@ namespace
     enum class EL25Review
     {
         None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload,
-        L60Puzzles, L60Relic, L60Return, L60Empty
+        L60Puzzles, L60Relic, L60Return, L60Empty, ElmoreLaunch, ElmoreL64, ElmoreL64Reload, ElmoreL65, ElmoreL65Reload
     };
     constexpr const TCHAR* L25KeySlot = TEXT("NativeWadChurchKeyReview");
     constexpr const TCHAR* L25DoorSlot = TEXT("NativeWadChurchDoorReview");
@@ -475,6 +476,11 @@ namespace
     constexpr const TCHAR* L60ReviewSlot = TEXT("NativeWadChurchL60Review");
     constexpr const TCHAR* AndrewPuzzleSlot = TEXT("NativeWadAndrewPuzzleReview");
     constexpr const TCHAR* AndrewRelicSlot = TEXT("NativeWadAndrewRelicReview");
+    constexpr const TCHAR* AndrewTownSlot = TEXT("NativeWadAndrewTownReview");
+    constexpr const TCHAR* ElmoreArrivalSlot = TEXT("NativeWadElmoreL64Review");
+    constexpr const TCHAR* ElmoreSlideSlot = TEXT("NativeWadElmoreLiftReview");
+    constexpr const TCHAR* ElmoreL65Slot = TEXT("NativeWadElmoreL65Review");
+    constexpr const TCHAR* ElmoreTeleporterSlot = TEXT("NativeWadElmoreTeleportReview");
     constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
     enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
 
@@ -2270,6 +2276,10 @@ namespace
                     ++NextPoint;
                     return true;
                 }
+                if (bSuccess && !Player.SaveWadCheckpoint(AndrewTownSlot))
+                {
+                    return Finish(&Player, TEXT("could not save the campaign after The Knights of Andrew"));
+                }
                 UE_LOG(LogTemp, Display, TEXT("Verified The Knights of Andrew town result. Success=%d, gold reward=%d."),
                     bSuccess, Quest.Gold - AndrewStartingGold);
                 return Finish(&Player);
@@ -2386,12 +2396,403 @@ namespace
             return true;
         }
 
+        bool TickElmoreLaunch(ANativeWadPlayer& Player, const UNativeWadTravelState& Travel, bool bTown)
+        {
+            if (bTown)
+            {
+                if (!Player.HasRestoredWadCheckpoint() || !Player.HasCompletedWadLevel(TEXT("L60")))
+                {
+                    return Finish(&Player, TEXT("Elmore's Retreat needs the completed Andrew checkpoint"));
+                }
+                if (Travel.Quest.bShowResult)
+                {
+                    Press(Player, EKeys::Enter);
+                    return true;
+                }
+                if (NextPoint == 0 && Travel.Quest.Selected == 1)
+                {
+                    RecordTownCharacter(Player);
+                    Press(Player, EKeys::Right);
+                    ++NextPoint;
+                    return true;
+                }
+                if (Travel.Quest.Selected != 2)
+                {
+                    return Finish(&Player, TEXT("the original quest selector did not reach Elmore's Retreat"));
+                }
+                if (NextPoint == 1)
+                {
+                    SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                    Press(Player, EKeys::Q);
+                    ++NextPoint;
+                }
+                else if (NextPoint == 2)
+                {
+                    bool bSaved = false;
+                    if (CaptureTownFrame(TEXT("briefing"), bSaved))
+                    {
+                        if (!bSaved)
+                        {
+                            return Finish(&Player, TEXT("could not capture the Elmore briefing"));
+                        }
+                        Press(Player, EKeys::Enter);
+                        ++NextPoint;
+                    }
+                }
+                return true;
+            }
+            if (!Player.GetWorld()->GetMapName().EndsWith(TEXT("L64")) || Travel.Quest.Active != 2
+                || !FVector2D(Player.GetActorLocation()).Equals({1984, 2704}, 3.0)
+                || !MatchesTownCharacter(Player) || !Travel.JournalPages.Contains(423) || !Travel.JournalPages.Contains(424))
+            {
+                return Finish(&Player, TEXT("Elmore's Retreat did not reach L64's source spawn with both journal pages"));
+            }
+            APlayerController* Controller = Player.GetController<APlayerController>();
+            ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Hud || !Hud->HasClassicHud())
+            {
+                return Finish(&Player, TEXT("the native Elmore arrival lost the classic HUD"));
+            }
+            const auto ClickFormButton = [&](FVector2D Point)
+            {
+                int32 Width, Height;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale);
+            };
+            bool bSaved = false;
+            if (NextPoint == 3 && CaptureTownFrame(TEXT("l64-arrival"), bSaved))
+            {
+                if (!bSaved || !Player.SaveWadCheckpoint(ElmoreArrivalSlot))
+                {
+                    return Finish(&Player, TEXT("could not save the original L64 arrival"));
+                }
+                ClickFormButton({30, 189});
+                if (!Player.IsInventoryOpen())
+                {
+                    return Finish(&Player, TEXT("the classic journal button did not open the authored note page"));
+                }
+                ++NextPoint;
+            }
+            if (NextPoint == 4 && CaptureTownFrame(TEXT("journal"), bSaved))
+            {
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("could not capture the original journal page"));
+                }
+                ClickFormButton({300, 132});
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 5 && CaptureTownFrame(TEXT("journal-page-two"), bSaved))
+            {
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("could not capture the second original journal page"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified Town Hall launches Elmore's Retreat at L64's original spawn with journal pages 423 and 424."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickElmoreL64(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            FVector2D Lift;
+            const bool bResume = L25Review == EL25Review::ElmoreL64Reload;
+            if (!Level.GetSectorSurfaceHeights(278, Lift))
+            {
+                return Finish(&Player, TEXT("L64 is missing the authored lift"));
+            }
+            if (bResume)
+            {
+                FWadLevelCheckpoint Snapshot;
+                if (!Player.HasRestoredWadCheckpoint() || !Level.WriteCheckpoint(Snapshot, true))
+                {
+                    return Finish(&Player, TEXT("L64 did not restore the running lift from disk"));
+                }
+                if (NextPoint == 0 && Lift.X == 120.0 && Snapshot.ActivityWallTextures.FindRef(2685) == TEXT("SW2BRN2")
+                    && Snapshot.ActivityWallTextures.FindRef(2687) == TEXT("SW2BRN2"))
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified the L64 lift completed after restart and reset both authored switch faces."));
+                    if (!PlaceReviewPlayer(Level, Player, {2980, -1280}))
+                    {
+                        return Finish(&Player, TEXT("could not reach L64's flood controls"));
+                    }
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                else if (NextPoint == 1 && Now - StageTime > 1.10)
+                {
+                    if (Snapshot.SectorHeights.FindRef(351).X != 96 || Snapshot.SectorHeights.FindRef(125).X != 200
+                        || !PlaceReviewPlayer(Level, Player, {2990, -1380}))
+                    {
+                        return Finish(&Player, TEXT("L64's first flood activity did not move the authored floors"));
+                    }
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                else if (NextPoint == 2 && Now - StageTime > 1.10)
+                {
+                    if (Snapshot.SectorHeights.FindRef(351).X != 0 || Snapshot.SectorHeights.FindRef(128).X != 16
+                        || !PlaceReviewPlayer(Level, Player, {-762, 108}))
+                    {
+                        return Finish(&Player, TEXT("L64's second flood activity did not restore the authored floor heights"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified both L64 flood activities at their authored floor heights."));
+                    ++NextPoint;
+                }
+                else if (NextPoint == 3 && WalkTo(Player, {-907, 108}))
+                {
+                    return Finish(&Player, TEXT("the authored L64 exit did not travel to L65"));
+                }
+                return true;
+            }
+
+            switch (NextPoint)
+            {
+            case 0:
+                if (!Player.HasRestoredWadCheckpoint() || Lift.X != 120 || !PlaceReviewPlayer(Level, Player, {-123, -1685}))
+                {
+                    return Finish(&Player, TEXT("L64 did not restore the authored lift initially at Z120"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (WalkTo(Player, {-123, -1734}))
+                {
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Now - StageTime > 2.05)
+                {
+                    if (Lift.X != 0 || !PlaceReviewPlayer(Level, Player, {-193, -1989}))
+                    {
+                        return Finish(&Player, TEXT("L64's original plate did not lower the lift"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 3:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-153.5, -1987.5, 45});
+                    Press(Player, EKeys::E);
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Lift.X > 0 && Lift.X < 120)
+                {
+                    FWadLevelCheckpoint Snapshot;
+                    if (!Level.WriteCheckpoint(Snapshot, true)
+                        || Snapshot.ActivityWallTextures.FindRef(2685) != TEXT("SW2BRN1")
+                        || Snapshot.ActivityWallTextures.FindRef(2687) != TEXT("SW2BRN1"))
+                    {
+                        return Finish(&Player, TEXT("L64's lift switch did not change both authored faces"));
+                    }
+                    if (Lift.X >= 50 && Player.SaveWadCheckpoint(ElmoreSlideSlot))
+                    {
+                        UE_LOG(LogTemp, Display, TEXT("Verified L64's original plate and E switch and saved the lift halfway through its cycle."));
+                        return Finish(&Player);
+                    }
+                }
+                else if (Now - StageTime > 0.55)
+                {
+                    return Finish(&Player, TEXT("the L64 lift switch did not produce a checkpoint during motion"));
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickElmoreL65(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            const bool bResume = L25Review == EL25Review::ElmoreL65Reload;
+            const FVector2D Destination(1628, 2370);
+            FWadLevelCheckpoint Snapshot;
+            if (!Player.HasRestoredWadCheckpoint() || !Level.WriteCheckpoint(Snapshot, true))
+            {
+                return Finish(&Player, TEXT("L65 did not restore the active quest checkpoint"));
+            }
+            if (bResume)
+            {
+                if (NextPoint == 0)
+                {
+                    if (!FVector2D(Player.GetActorLocation()).Equals(Destination, 6)
+                        || Snapshot.ActivityWallTextures.FindRef(1222) != TEXT("SW2BRN1") || Snapshot.Variables[1] != 1)
+                    {
+                        return Finish(&Player, TEXT("L65 did not restore the teleporter position and switch state"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L65 restored the authored teleporter destination and its switch."));
+                }
+                return TickElmoreBillboards(Level, Player);
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (!FVector2D(Player.GetActorLocation()).Equals({-852, 2282}, 3)
+                    || !PlaceReviewPlayer(Level, Player, {1221, 2360}))
+                {
+                    return Finish(&Player, TEXT("could not reach the first L65 switch from the checkpoint"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {1221, 2400, 144});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Snapshot.ActivityWallTextures.FindRef(1222) != TEXT("SW2BRN1") || Snapshot.Variables[1] != 1
+                    || !PlaceReviewPlayer(Level, Player, {1120, 2310}))
+                {
+                    return Finish(&Player, TEXT("the first L65 switch did not enable its teleporter"));
+                }
+                ++NextPoint;
+                break;
+            case 3:
+                if (FVector2D(Player.GetActorLocation()).Equals(Destination, 6))
+                {
+                    Stop(Player);
+                    ++NextPoint;
+                }
+                else if (WalkTo(Player, {1120, 2373}))
+                {
+                    return Finish(&Player, TEXT("walking into sector 115 did not use L65's enabled teleporter"));
+                }
+                break;
+            case 4:
+                if (Player.GetCharacterMovement()->IsMovingOnGround() && Player.SaveWadCheckpoint(ElmoreTeleporterSlot))
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L65 line 847 enables sector 115's original teleporter to (1628, 2370)."));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool TickElmoreBillboards(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            if (NextPoint == 0 || NextPoint == 2)
+            {
+                const FVector2D Point = NextPoint == 0 ? FVector2D(-776, 1816) : FVector2D(-650, 1930);
+                if (!PlaceReviewPlayer(Level, Player, Point))
+                {
+                    return Finish(&Player, TEXT("could not reach the L65 scenery review view"));
+                }
+                Aim(Player, {-744, 1908, 67});
+                ++NextPoint;
+                return true;
+            }
+            bool bHanging = false;
+            bool bFloor = false;
+            const APlayerController* Controller = Player.GetController<APlayerController>();
+            FVector Eye;
+            FRotator View;
+            Controller->GetPlayerViewPoint(Eye, View);
+            for (TActorIterator<ANativeWadScenery> Prop(Player.GetWorld()); Prop; ++Prop)
+            {
+                const bool bBraziers = Prop->ActorHasTag(TEXT("WAD Scenery Thing 156"));
+                if (!bBraziers && !Prop->ActorHasTag(TEXT("WAD Scenery Thing 209")))
+                {
+                    continue;
+                }
+                const FVector Anchor = Prop->GetActorLocation();
+                const UStaticMeshComponent* Sprite = Prop->FindComponentByClass<UStaticMeshComponent>();
+                const int32 Sector = Level.FindWadSector(FVector2D(Anchor));
+                FVector2D Surfaces;
+                if (!Sprite || !Sprite->GetStaticMesh() || !Level.GetSectorSurfaceHeights(Sector, Surfaces))
+                {
+                    return Finish(&Player, TEXT("could not inspect L65's barrel and animated hanging brazier"));
+                }
+                const FVector Facing = (Eye - Anchor).GetSafeNormal2D();
+                const FVector Center = Sprite->GetComponentLocation();
+                const double HalfHeight = Sprite->GetStaticMesh()->GetBounds().BoxExtent.Y
+                    * FMath::Abs(Sprite->GetComponentTransform().GetScale3D().Y);
+                const double Edge = Center.Z + (bBraziers ? HalfHeight : -HalfHeight);
+                const double Surface = bBraziers ? Surfaces.Y : Level.GetWalkingHeight(Sector);
+                if (FVector::DotProduct(Sprite->GetUpVector(), -Facing) < 0.995
+                    || !FVector2D(Center).Equals(FVector2D(Anchor), 0.05)
+                    || !FMath::IsNearlyEqual(Edge, Surface, 0.05)
+                    || !FMath::IsNearlyEqual(Anchor.Z, Surface, 0.05)
+                    || Prop->GetSourceAngle() != 0)
+                {
+                    return Finish(&Player, TEXT("an L65 sprite failed to face the camera upright around its authored mount"));
+                }
+                (bBraziers ? bHanging : bFloor) = true;
+            }
+            if (!bHanging || !bFloor)
+            {
+                return Finish(&Player, TEXT("the L65 scenery mount fixtures are missing"));
+            }
+            bool bSaved = false;
+            if (CaptureTownFrame(NextPoint == 1 ? TEXT("l65-sprites-south") : TEXT("l65-sprites-east"), bSaved))
+            {
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("could not capture the L65 scenery from the second view"));
+                }
+                if (++NextPoint == 4)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified L65's barrel and animated brazier face both views with fixed floor and ceiling mounts."));
+                    return Finish(&Player);
+                }
+            }
+            return true;
+        }
+
         bool TickL25(UWorld& Current, ANativeWadPlayer& Player)
         {
             if (HeldKey)
             {
                 SendKey(Player, HeldKey.GetValue(), IE_Released);
+                if (HeldKey.GetValue() == EKeys::Q)
+                {
+                    SendKey(Player, EKeys::LeftAlt, IE_Released);
+                }
                 HeldKey.Reset();
+            }
+            if (L25Review >= EL25Review::ElmoreLaunch)
+            {
+                const auto* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+                if (!Travel || (L25Review != EL25Review::ElmoreLaunch && (Travel->Quest.Active != 2
+                    || !Travel->JournalPages.Contains(423) || !Travel->JournalPages.Contains(424))))
+                {
+                    return Finish(&Player, TEXT("Elmore's Retreat lost its campaign progress or journal pages"));
+                }
+                if (L25Review == EL25Review::ElmoreLaunch)
+                {
+                    return TickElmoreLaunch(Player, *Travel, Current.GetAuthGameMode<ANativeWadTownGameMode>() != nullptr);
+                }
+                if (L25Review == EL25Review::ElmoreL64Reload && Current.GetMapName().EndsWith(TEXT("L65")))
+                {
+                    const auto* L64 = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L64"));
+                    bool bSaved = false;
+                    if (!FVector2D(Player.GetActorLocation()).Equals({-852, 2282}, 3) || !L64
+                        || L64->ActivityWallTextures.FindRef(2685) != TEXT("SW2BRN2") || Travel->Quest.ResumeMaps.FindRef(2) != 65)
+                    {
+                        return Finish(&Player, TEXT("L64's authored exit lost its source state or the L65 spawn"));
+                    }
+                    if (CaptureTownFrame(TEXT("l65-arrival"), bSaved))
+                    {
+                        if (!bSaved || !Player.SaveWadCheckpoint(ElmoreL65Slot))
+                        {
+                            return Finish(&Player, TEXT("could not save the original L65 arrival"));
+                        }
+                        UE_LOG(LogTemp, Display, TEXT("Verified L64 Thing 227 travels to L65 and archives the solved lift and active quest."));
+                        return Finish(&Player);
+                    }
+                    return true;
+                }
             }
             if ((L25Review == EL25Review::L60Return || L25Review == EL25Review::L60Empty)
                 && Current.GetAuthGameMode<ANativeWadTownGameMode>())
@@ -2418,6 +2819,10 @@ namespace
             case EL25Review::L60Relic:
             case EL25Review::L60Return:
             case EL25Review::L60Empty: return TickL60Relic(**Level, Player);
+            case EL25Review::ElmoreL64:
+            case EL25Review::ElmoreL64Reload: return TickElmoreL64(**Level, Player);
+            case EL25Review::ElmoreL65:
+            case EL25Review::ElmoreL65Reload: return TickElmoreL65(**Level, Player);
             default: return TickL25Key(**Level, Player);
             }
         }
@@ -4272,12 +4677,16 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : Mode == TEXT("churchl20exit") ? EL25Review::L20Exit : Mode == TEXT("churchl60reload") ? EL25Review::L60Reload
         : Mode == TEXT("churchl60puzzles") ? EL25Review::L60Puzzles : Mode == TEXT("churchl60relic") ? EL25Review::L60Relic
         : Mode == TEXT("churchl60return") ? EL25Review::L60Return : Mode == TEXT("churchl60empty") ? EL25Review::L60Empty
+        : Mode == TEXT("elmorelaunch") ? EL25Review::ElmoreLaunch : Mode == TEXT("elmorel64") ? EL25Review::ElmoreL64
+        : Mode == TEXT("elmorel64reload") ? EL25Review::ElmoreL64Reload : Mode == TEXT("elmorel65") ? EL25Review::ElmoreL65
+        : Mode == TEXT("elmorel65reload") ? EL25Review::ElmoreL65Reload
         : EL25Review::None;
     const ETownReview TownReview = Mode == TEXT("towntour") ? ETownReview::Tour : Mode == TEXT("townfailure") ? ETownReview::Failure
         : Mode == TEXT("townreload") || L25Review == EL25Review::Exit ? ETownReview::Reload
         : Mode == TEXT("townstart") ? ETownReview::Start
         : Mode == TEXT("townscroll") ? ETownReview::Scroll : ETownReview::None;
-    const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start || TownReview == ETownReview::Scroll;
+    const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start
+        || TownReview == ETownReview::Scroll || L25Review == EL25Review::ElmoreLaunch;
     const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
         : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
     const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
@@ -4289,6 +4698,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bDoorReload = Mode == TEXT("doorreload");
     const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bStartsInL20 ? TEXT("L20")
+        : L25Review >= EL25Review::ElmoreL65 ? TEXT("L65")
+        : L25Review >= EL25Review::ElmoreL64 ? TEXT("L64")
         : L25Review >= EL25Review::L60Reload ? TEXT("L60")
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bL22Journey || bDoorReload ? TEXT("L31")
