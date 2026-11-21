@@ -711,6 +711,11 @@ struct FAAWadNativeImport
             || MapName == TEXT("L152") || MapName == TEXT("L153");
         const bool bUndeadMap = MapName == TEXT("L231") || MapName == TEXT("L75") || MapName == TEXT("L10")
             || MapName == TEXT("L12");
+        const bool bTempleMap = MapName == TEXT("L51") || MapName == TEXT("L52") || MapName == TEXT("L41") || MapName == TEXT("L44");
+        const bool bLateCampaignMap = MapName == TEXT("L74") || MapName == TEXT("L73") || MapName == TEXT("L72")
+            || MapName == TEXT("L32") || MapName == TEXT("L71") || MapName == TEXT("L70")
+            || MapName == TEXT("L61") || MapName == TEXT("L40");
+        const bool bExtendedScenery = bRetreatMap || bUndeadMap || bTempleMap || bLateCampaignMap;
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && (!InstallL151Slice(World, Actor, Map, WadPath, Output)
                 || !InstallL151Key(World, Actor, Map, Output)))
@@ -719,12 +724,14 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L31") && !InstallL31Script(Actor, Map, WadPath, Output))
             || (MapName == TEXT("L25") && !InstallL25Script(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L20") && !InstallL20Script(Actor, Map, WadPath, Output))
-            || ((bChurchQuestMap || bRetreatMap || bUndeadMap) && !InstallScenery(World, Actor, Map, bRetreatMap || bUndeadMap, Output))
+            || ((bChurchQuestMap || bExtendedScenery) && !InstallScenery(World, Actor, Map, bExtendedScenery, Output))
             || (bChurchQuestMap && !InstallChurchEncounters(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
             || (bRetreatMap && (!InstallRetreatScript(Actor, Map, WadPath, MapName, Output)
                 || !InstallRetreatEncounters(World, Actor, Map, Output)))
             || (bUndeadMap && !InstallUndeadQuest(World, Actor, Map, WadPath, MapName, Output))
+            || (bTempleMap && !InstallTempleMap(World, Actor, Map, WadPath, MapName, Output))
+            || (bLateCampaignMap && !InstallLateCampaignMap(World, Actor, Map, WadPath, MapName, Output))
             || (MapName == TEXT("L152") && !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("ElmoreKey6"),
                     TEXT("KEY6/KEY6.CPC"), TEXT("L152 Key 6"), Output, FWadLevelCheckpoint::ElmoreKeysRevision))
             || (MapName == TEXT("L153") && (!InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("ElmoreKey3"),
@@ -766,22 +773,9 @@ struct FAAWadNativeImport
     bool InstallUndeadQuest(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
         const FString& MapName, FOutputDevice& Output)
     {
-        TArray<int32> Entries{0};
-        for (const auto& Sector : Map.Sectors)
-        {
-            Entries.AddUnique(Sector.Type);
-        }
-        for (const auto& Line : Map.Lines)
-        {
-            Entries.AddUnique(Line.Special);
-        }
-        Entries.Sort();
         constexpr int32 UnavailableSounds[] = {3501};
-        if (!InstallCampaignScript(Actor, Map, WadPath, MapName, Entries, UnavailableSounds, Output))
-        {
-            return false;
-        }
-        if (!InstallUndeadCreatures(World, Actor, Map, WadPath, Output))
+        if (!InstallCampaignActivitiesFromMap(Actor, Map, WadPath, MapName, UnavailableSounds, Output)
+            || !InstallCampaignCreatures(World, Actor, Map, WadPath, Output))
         {
             return false;
         }
@@ -793,12 +787,36 @@ struct FAAWadNativeImport
         if (MapName == TEXT("L12"))
         {
             return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key1, TEXT("Key1"),
-                TEXT("KEY1/KEY1.CPC"), TEXT("L12 Key 1"), Output) && InstallExiguus(World, Actor, Map, Output);
+                TEXT("KEY1/KEY1.CPC"), TEXT("L12 Key 1"), Output) && InstallWizardQuestDrop(World, Actor, Map, false, Output);
         }
         return true;
     }
 
-    bool InstallUndeadCreatures(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
+    bool InstallTempleMap(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
+        const FString& WadPath, const FString& MapName, FOutputDevice& Output)
+    {
+        if (!InstallCampaignActivitiesFromMap(Actor, Map, WadPath, MapName, {}, Output)
+            || !InstallCampaignCreatures(World, Actor, Map, WadPath, Output))
+        {
+            return false;
+        }
+        if (MapName == TEXT("L41"))
+        {
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key9, TEXT("Key9"),
+                TEXT("KEY9/KEY9.CPC"), TEXT("L41 Key 9"), Output)
+                && InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("Key6"),
+                    TEXT("KEY6/KEY6.CPC"), TEXT("L41 Key 6"), Output);
+        }
+        if (MapName == TEXT("L44"))
+        {
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("Key3"),
+                TEXT("KEY3/KEY3.CPC"), TEXT("L44 Key 3"), Output)
+                && InstallWizardQuestDrop(World, Actor, Map, true, Output);
+        }
+        return true;
+    }
+
+    bool InstallCampaignCreatures(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
         const FString& WadPath, FOutputDevice& Output)
     {
         struct FGeneratorSource
@@ -807,8 +825,10 @@ struct FAAWadNativeImport
         };
         TArray<FGeneratorSource> Source;
         TArray<FString> Lines;
-        if (!FFileHelper::LoadFileToStringArray(Lines, *FPaths::ChangeExtension(WadPath, TEXT("GEN"))))
+        const FString GeneratorPath = FPaths::ChangeExtension(WadPath, TEXT("GEN"));
+        if (!FFileHelper::LoadFileToStringArray(Lines, *GeneratorPath))
         {
+            Output.Logf(TEXT("Could not read the original generator file %s."), *GeneratorPath);
             return false;
         }
         for (const FString& Line : Lines)
@@ -821,19 +841,22 @@ struct FAAWadNativeImport
             }
             TArray<FString> Words;
             Record.ParseIntoArrayWS(Words);
-            if (Words.IsEmpty())
+            // The source only recognizes records that begin with G, so a stray comment prefix is harmless.
+            if (Words.IsEmpty() || Words[0] != TEXT("G"))
             {
                 continue;
             }
             int32 Fields[10];
-            if (Words.Num() != 11 || Words[0] != TEXT("G"))
+            if (Words.Num() != 11)
             {
+                Output.Logf(TEXT("Malformed generator record in %s: %s"), *GeneratorPath, *Line);
                 return false;
             }
             for (int32 Index = 0; Index < UE_ARRAY_COUNT(Fields); ++Index)
             {
                 if (!FDefaultValueHelper::ParseInt(Words[Index + 1], Fields[Index]))
                 {
+                    Output.Logf(TEXT("Invalid generator value in %s: %s"), *GeneratorPath, *Line);
                     return false;
                 }
             }
@@ -850,13 +873,15 @@ struct FAAWadNativeImport
             const TCHAR* Downed;
             const TCHAR* Attacking;
             const TCHAR* Bolt;
-            int32 Health, Retreat, Melee, Radius, Step, Vision, BoltDamage;
+            int32 Health, Retreat, Melee, MeleeRange, Radius, Step, Vision, BoltDamage;
         };
         constexpr FCreatureSource Creatures[] = {
             {4080, TEXT("Evil Knight"), TEXT("EVILKNT"), TEXT("EKNTW001.CPC"), TEXT("EKNTD001.CPC"),
-                TEXT("EKNTD008.CPC"), TEXT("EKNTA001.CPC"), nullptr, 3000, 300, 400, 15, 10, 180, 0},
+                TEXT("EKNTD008.CPC"), TEXT("EKNTA001.CPC"), nullptr, 3000, 300, 400, 30, 15, 10, 180, 0},
             {1025, TEXT("Electric Skeleton"), TEXT("NEWSKEL"), TEXT("SKWK1A.CPC"), TEXT("SKDY1A.CPC"),
-                TEXT("SKDY1F.CPC"), TEXT("SKAT1A.CPC"), TEXT("MISSIL12/1.CPC"), 3000, 500, 600, 15, 10, 180, 100},
+                TEXT("SKDY1F.CPC"), TEXT("SKAT1A.CPC"), TEXT("MISSIL12/1.CPC"), 3000, 500, 600, 30, 15, 10, 180, 100},
+            {1035, TEXT("Bad Knight"), TEXT("BADKNIT"), TEXT("BADBOYA1.CPC"), TEXT("BADBOYJ1.CPC"),
+                TEXT("BADBOYJ4.CPC"), TEXT("BADBOYF1.CPC"), nullptr, 5000, 500, 700, 35, 25, 10, 180, 0},
         };
         Actor.CreatureGenerators.Reset();
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
@@ -885,7 +910,7 @@ struct FAAWadNativeImport
             Profile.RetreatHealth = Creature.Retreat;
             Profile.MeleeDamage = Creature.Melee;
             Profile.MeleeDelayUpdates = 10;
-            Profile.MeleeRange = 30.0f;
+            Profile.MeleeRange = FMath::Max(float(Creature.MeleeRange), Creature.Radius + ANativeWadPlayer::CapsuleRadius + 1.0f);
             Profile.CollisionRadius = Creature.Radius;
             Profile.CollisionHalfHeight = Size.Y * 0.5f;
             Profile.SpriteSize = FVector2D(Size);
@@ -969,12 +994,49 @@ struct FAAWadNativeImport
         return true;
     }
 
-    bool InstallExiguus(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    bool InstallLateCampaignMap(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
+        const FString& WadPath, const FString& MapName, FOutputDevice& Output)
     {
-        constexpr int32 CreatureType = 1032;
-        const int32 Id = Map.Things.IndexOfByPredicate([](const FWadThing& Thing) { return Thing.Type == CreatureType; });
+        constexpr int32 UnavailableSounds[] = {3501};
+        if (!InstallCampaignActivitiesFromMap(Actor, Map, WadPath, MapName, UnavailableSounds, Output)
+            || !InstallCampaignCreatures(World, Actor, Map, WadPath, Output))
+        {
+            return false;
+        }
+        if (MapName == TEXT("L72"))
+        {
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::WandOfDisintegration, TEXT("WandOfDisintegration"),
+                TEXT("WAND18/WAND18.CPC"), TEXT("L72 Wand of Disintegration"), Output);
+        }
+        if (MapName == TEXT("L61"))
+        {
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey8, TEXT("Key8"),
+                TEXT("KEY8/KEY8.CPC"), TEXT("L61 Key 8"), Output);
+        }
+        if (MapName == TEXT("L40"))
+        {
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key4, TEXT("Key4"),
+                TEXT("KEY4/KEY4.CPC"), TEXT("L40 Key 4"), Output)
+                && InstallQuestPickup(World, Actor, Map, NativeWadRules::OrbOfDestruction, TEXT("OrbOfDestruction"),
+                    TEXT("ORB7/ORB7.CPC"), TEXT("L40 Orb of Destruction"), Output);
+        }
+        return true;
+    }
+
+    bool InstallWizardQuestDrop(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
+        bool bElymas, FOutputDevice& Output)
+    {
+        // L44 uses the extended type for the red variant of the orange wizard.
+        const int32 CreatureType = bElymas ? 50158 : 1032;
+        const TCHAR* Name = bElymas ? TEXT("Elymas") : TEXT("Exiguus");
+        const int32 DropType = bElymas ? NativeWadRules::ElymasNotes : NativeWadRules::OrbOfTheUndead;
+        const int32 Id = Map.Things.IndexOfByPredicate([CreatureType](const FWadThing& Thing)
+        {
+            return uint16(Thing.Type) == CreatureType;
+        });
         if (!Map.Things.IsValidIndex(Id))
         {
+            Output.Logf(TEXT("Could not find the authored %s Thing type %d."), Name, CreatureType);
             return false;
         }
         const FWadThing& Thing = Map.Things[Id];
@@ -986,41 +1048,61 @@ struct FAAWadNativeImport
         UMaterial* Hurt = SpriteMaterial(TEXT("WIZORNG_Hurt"), TEXT("WIZORNG/OWDIE01.CPC"));
         UMaterial* Downed = SpriteMaterial(TEXT("WIZORNG_Down"), TEXT("WIZORNG/OWDIE08.CPC"));
         UMaterial* Attacking = SpriteMaterial(TEXT("WIZORNG_Attack"), TEXT("WIZORNG/OWA01.CPC"));
-        UMaterial* OrbImage = SpriteMaterial(TEXT("OrbOfTheUndead"), TEXT("ORB6/ORB6.CPC"));
-        if (Sector == INDEX_NONE || !Plane || !Standing || !Hurt || !Downed || !Attacking || !OrbImage)
+        UMaterial* DropImage = bElymas ? SpriteMaterial(TEXT("ElymasNotes"), TEXT("SCRL8/SCRL8.CPC"))
+            : SpriteMaterial(TEXT("OrbOfTheUndead"), TEXT("ORB6/ORB6.CPC"));
+        UMaterial* Bolt = bElymas ? SpriteMaterial(TEXT("HomingFireball"), TEXT("HMISS6/1.CPC")) : nullptr;
+        if (Sector == INDEX_NONE || !Plane || !Standing || !Hurt || !Downed || !Attacking || !DropImage || (bElymas && !Bolt))
         {
+            Output.Logf(TEXT("Could not install %s's floor position, sprites, or quest drop."), Name);
             return false;
         }
         FWadEncounterProfile Profile;
-        Profile.Name = TEXT("Exiguus");
+        Profile.Name = Name;
         Profile.MaxHealth = 10000;
-        Profile.RetreatHealth = 0;
+        Profile.RetreatHealth = bElymas ? 500 : 0;
         Profile.MeleeDamage = 400;
         Profile.MeleeDelayUpdates = 10;
         Profile.MeleeRange = 60.0f;
-        Profile.BoltDamage = 0;
-        Profile.BoltRange = 0;
+        Profile.BoltDamage = bElymas ? 1000 : 0;
+        Profile.BoltRange = bElymas ? 5000 : 0;
+        Profile.RangedDelayUpdates = bElymas ? 10 : 50;
         Profile.RegenPerUpdate = 0;
         Profile.CollisionRadius = 25.0f;
         Profile.CollisionHalfHeight = Size.Y * 0.5f;
         Profile.SpriteSize = FVector2D(Size);
-        Profile.UpdateTicks = 7;
-        Profile.WalkSpeed = 12 * TicksPerSecond / (7 + (7 >> 1));
-        Profile.VisionHalfAngle = 157.5f;
+        Profile.UpdateTicks = bElymas ? 8 : 7;
+        Profile.WalkSpeed = 12 * TicksPerSecond / (Profile.UpdateTicks + (Profile.UpdateTicks >> 1));
+        Profile.VisionHalfAngle = bElymas ? 90.f : 157.5f;
         const double Floor = Actor.GetWalkingHeight(Sector);
-        ANativeWadGuardian* Exiguus = ImportSliceThing<ANativeWadGuardian>(World, Map, Id,
-            Floor + Profile.CollisionHalfHeight + 2.0, TEXT("WAD Creature Exiguus"));
-        ANativeWadPickup* Orb = ImportTaggedActor<ANativeWadPickup>(World, FVector(XY, Floor + 12.0),
-            FRotator::ZeroRotator, TEXT("WAD Exiguus Orb Drop"));
-        if (!Exiguus || !Orb)
+        ANativeWadGuardian* Wizard = ImportSliceThing<ANativeWadGuardian>(World, Map, Id,
+            Floor + Profile.CollisionHalfHeight + 2.0, *FString::Printf(TEXT("WAD Creature %s"), Name));
+        ANativeWadPickup* Drop = ImportTaggedActor<ANativeWadPickup>(World, FVector(XY, Floor + 12.0),
+            FRotator::ZeroRotator, bElymas ? TEXT("WAD Elymas Notes Drop") : TEXT("WAD Exiguus Orb Drop"));
+        if (!Wizard || !Drop)
         {
             return false;
         }
-        Orb->Configure(Plane, OrbImage, NativeWadRules::OrbOfTheUndead);
-        Exiguus->Configure(Plane, Standing, Downed, Attacking, Hurt, nullptr, Profile);
-        Exiguus->SetDefeatPickup(Orb);
-        Output.Logf(TEXT("Imported Exiguus from Thing %d in sector %d and attached his Orb of the Undead drop."), Id, Sector);
+        Drop->Configure(Plane, DropImage, DropType);
+        Wizard->Configure(Plane, Standing, Downed, Attacking, Hurt, Bolt, Profile);
+        Wizard->SetDefeatPickup(Drop);
+        Output.Logf(TEXT("Imported %s from Thing %d in sector %d with quest drop %d."), Name, Id, Sector, DropType);
         return true;
+    }
+
+    bool InstallCampaignActivitiesFromMap(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
+        const FString& MapName, TConstArrayView<int32> UnavailableSounds, FOutputDevice& Output)
+    {
+        TArray<int32> Entries{0};
+        for (const auto& Sector : Map.Sectors)
+        {
+            Entries.AddUnique(Sector.Type);
+        }
+        for (const auto& Line : Map.Lines)
+        {
+            Entries.AddUnique(Line.Special);
+        }
+        Entries.Sort();
+        return InstallCampaignScript(Actor, Map, WadPath, MapName, Entries, UnavailableSounds, Output);
     }
 
     bool InstallCampaignScript(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
@@ -1072,7 +1154,8 @@ struct FAAWadNativeImport
                 {
                     const TCHAR* Resource = Command.Target == 4005 ? TEXT("MISSILE6/1.CPC") : Command.Target == 4006 ? TEXT("MISSILE7/1.CPC")
                         : Command.Target == 4012 ? TEXT("MISSIL13/1.CPC") : Command.Target == 4015 ? TEXT("MISSIL16/1.CPC")
-                        : Command.Target == 4016 ? TEXT("EARTHBND/1.CPC") : nullptr;
+                        : Command.Target == 4016 ? TEXT("EARTHBND/1.CPC")
+                        : Command.Target == NativeWadRules::PoisonCrossbowBolt ? TEXT("ARROW2/1.CPC") : nullptr;
                     Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
                     UMaterialInterface* Image = Resource ? SpriteMaterial(FString::Printf(TEXT("Missile%d"), Command.Target), Resource) : nullptr;
                     if (!Actor.ScriptMissileMesh || !Image)
@@ -1389,6 +1472,37 @@ struct FAAWadNativeImport
         return true;
     }
 
+    static int32 FindSceneryWallSector(const FDoomWadMapData& Map, const FVector2D& Point)
+    {
+        int32 Sector = INDEX_NONE;
+        for (const FWadLineDef& Line : Map.Lines)
+        {
+            const int32 Front = Map.GetSectorForSide(Line.Side[0]);
+            const int32 Back = Map.GetSectorForSide(Line.Side[1]);
+            if ((Front == INDEX_NONE) == (Back == INDEX_NONE)
+                || !Map.Vertices.IsValidIndex(Line.From) || !Map.Vertices.IsValidIndex(Line.To))
+            {
+                continue;
+            }
+            const FWadVertex& Start = Map.Vertices[Line.From];
+            const FWadVertex& End = Map.Vertices[Line.To];
+            const FVector2D Edge(End.X - Start.X, End.Y - Start.Y);
+            const FVector2D Offset = Point - FVector2D(Start.X, Start.Y);
+            const double Along = FVector2D::DotProduct(Edge, Offset);
+            if (Edge.IsZero() || Along < 0 || Along > Edge.SizeSquared() || FVector2D::CrossProduct(Edge, Offset) != 0)
+            {
+                continue;
+            }
+            const int32 WallSector = Front != INDEX_NONE ? Front : Back;
+            if (Sector != INDEX_NONE && Sector != WallSector)
+            {
+                return INDEX_NONE;
+            }
+            Sector = WallSector;
+        }
+        return Sector;
+    }
+
     bool InstallScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, bool bRetreat, FOutputDevice& Output)
     {
         // These are fixed scenery types from OBJS.FL. Pickup, encounter and script types have their own importers.
@@ -1427,7 +1541,16 @@ struct FAAWadNativeImport
             {
                 continue;
             }
-            const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+            const FVector2D Position(Thing.X, Thing.Y);
+            int32 Sector = Actor.FindWadSector(Position);
+            if (Sector == INDEX_NONE)
+            {
+                Sector = FindSceneryWallSector(Map, Position);
+                if (Sector != INDEX_NONE)
+                {
+                    Output.Logf(TEXT("Scenery Thing %d keeps its authored position on the wall of sector %d."), Id, Sector);
+                }
+            }
             if (!Map.Sectors.IsValidIndex(Sector))
             {
                 Output.Logf(TEXT("Scenery thing %d (%s) falls outside the authored floor."), Id, **Resource);
@@ -2456,6 +2579,15 @@ struct FAAWadNativeImport
                 UE_LOG(LogTemp, Error, TEXT("Native WAD import could not triangulate sector %d."), Index);
                 return false;
             }
+            if (Footprint.bNormalizedOverlap)
+            {
+                Sector.RepairedBoundaryPoints.Reserve(Footprint.BoundaryEdges.Num() * 2);
+                for (const FIntPoint& Edge : Footprint.BoundaryEdges)
+                {
+                    Sector.RepairedBoundaryPoints.Add(Footprint.Vertices[Edge.X]);
+                    Sector.RepairedBoundaryPoints.Add(Footprint.Vertices[Edge.Y]);
+                }
+            }
             FString Floor;
             FString Ceiling;
             UDoomWadLoader::GetLastWadSectorTextureNames(Index, Floor, Ceiling);
@@ -2936,7 +3068,12 @@ bool SaveNativeWadHud(FOutputDevice& Output)
         {958, 1, TEXT("NECKLACE/NECKLACE.CPC")},
         {NativeWadRules::OrbOfDefense, 1, TEXT("ORB5/ORB5.CPC")},
         {NativeWadRules::OrbOfTheUndead, 1, TEXT("ORB6/ORB6.CPC")},
+        {NativeWadRules::ElymasNotes, 1, TEXT("SCRL8/SCRL8.CPC")},
+        {NativeWadRules::WandOfDisintegration, 5, TEXT("WAND18/WAND18.CPC")},
+        {NativeWadRules::OrbOfDestruction, 1, TEXT("ORB7/ORB7.CPC")},
         {NativeWadRules::Key1, 1, TEXT("KEY1/KEY1.CPC")},
+        {NativeWadRules::Key4, 1, TEXT("KEY4/KEY4.CPC")},
+        {NativeWadRules::Key9, 1, TEXT("KEY9/KEY9.CPC")},
         {NativeWadRules::ElmoreKey3, 1, TEXT("KEY3/KEY3.CPC")},
         {NativeWadRules::ElmoreKey5, 1, TEXT("KEY5/KEY5.CPC")},
         {NativeWadRules::ElmoreKey6, 1, TEXT("KEY6/KEY6.CPC")},

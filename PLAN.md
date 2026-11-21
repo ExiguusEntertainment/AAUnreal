@@ -9,7 +9,7 @@ The goal is a playable Unreal port of Amulets & Armor from a new game through th
 | 1. Native level foundation | Import original geometry, materials, collision, moving sectors, and lighting into saved Unreal levels. | Proven on L30 and L151 at GitHub checkpoint `727f482`. |
 | 2. One complete gameplay slice | Play a continuous route from an original spawn through an authored interaction, an encounter, a pickup, and a level transition. | Verified from L30's original spawn to L301 in Steps 16–18. |
 | 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Steps 19–24 verify a Guardian fight, the ready hand, one spell, and the first priest level-up. |
-| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | 18 of 30 source maps are native. Quest progression and Town Hall returns have been exercised through Exiguus and the Undead, the fourth quest. |
+| 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | All 30 source maps are native. Staged replays verify Town Hall returns through Destruction. The remaining source asset and gameplay parity work is listed below. |
 | 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | Disk checkpoints restore settled levels, ordinary door phases, scripted lifts, and pending waits. L301's positional stream and waterfall loops run with the source audio. |
 | 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | Planned |
 
@@ -288,6 +288,56 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - All nine WAD automation tests passed. The gallery is `Saved/Wad-Exiguus-Review.html`.
 - A continuous route, combat balance, Exiguus's summoning, other creature combat effects, the boulders, the flying-potion generator, and the Blue Wizard generators remain follow-ups.
 
+### Temple of Astarte, L51 and L52
+
+97. **Trace the Temple of Astarte quest.** `QUEST4.INI` gives the route L51 → L52 → L41 → L44. The original L44 encounter with Elymas drops his notes (item 380). John takes the notes and awards 35 gold and 200,000 experience.
+98. **Import L51 and launch from Town Hall.** Preserve the completed Exiguus character and enter the Temple at the source start `(-160, -189)`. L51 has 173 sectors, 787 lines, and 13 imported activities.
+99. **Verify the poison corridor and L51 exit.** Run activity 10 from the original sector, fire the two type 887 bolts, and check player damage and poison. Press the switch on line 674, cross gate 115, and reach L52's source start `(760, 3540)` through Thing 234.
+100. **Import L52 and verify its timed gate and pit rescue.** Import 171 sectors, 774 lines, and 16 activities. Step on all three plates and check the ceiling rises to Z25, Z50, and Z75, then returns to Z0 and resets the plate variables. Verify the pit teleporter and save before the original L41 exit.
+
+- Sector 154 had a one-unit linedef overlapping a longer boundary. The importer splits and normalizes overlapping edges when the original footprint fails. The same repaired outline is saved for runtime sector membership. The WAD regression checks the courtyard's exact area, all three plate cutouts, and the outside point near the overlap.
+- Use `AA.ExportNativeWadPortReview` with `TempleLaunch`, `TempleL51`, `TempleL52`, and `TempleL52Reload`. Begin with `NativeWadUndeadTownReview` and continue from each saved arrival. The final checkpoint, `NativeWadTempleExitReview`, is beside the L41 exit.
+- The replay uses regular controls from staged approaches. All ten WAD automation tests passed. The gallery is `Saved/Wad-Temple-Astarte-Review.html`.
+
+### Temple of Astarte, L41 and L44
+
+101. **Continue from the L52 checkpoint.** Cross the original exit at Thing 238 and enter L41 at `(7104, 4152)`.
+102. **Import L41 and exercise its gate and key.** Preserve 358 sectors, 1,358 lines, 41 activities, and the two source keys. Press the timed gate switch, collect the local Key 6, use its door, and take Thing 323 to L44.
+103. **Import L44 and recover Elymas's notes.** Preserve 116 sectors, 465 lines, and 17 activities. Trigger the three pressure plates, check gate 68, and verify that Elymas's packed type 50158 drops item 380 on defeat. Collect and use the local Key 3 at the final passage.
+104. **Turn in the notes.** Use L44's original Town Hall exit and check the notes are consumed for 35 gold and 200,000 experience. Save the result for The Lost City.
+
+- The verified replays use `CampaignL52`, `CampaignL41`, and `CampaignL44Chain`. The L44 replay applies a controlled finishing hit to verify the defeat and pickup. The Town Hall checkpoint is `NativeWadCampaignTown4Review`.
+
+### The Lost City
+
+105. **Launch The Lost City.** Accept the quest from the Temple result and reach L74's original start at `(-1120, -454)`.
+106. **Import L74 and verify its switch.** Preserve 191 sectors and 1,009 lines. Raise gate 104 before taking the original exit into L73.
+107. **Import L73 and verify the three plates.** Preserve 252 sectors and 1,120 lines. Raise gate 118 through Z175, Z195, and Z232, then take the original exit into L72.
+108. **Import L72 and return with the wand.** Preserve 340 sectors and 1,642 lines. Lower the hidden floor, collect the original Wand of Disintegration, and use L72's exit. The Town Hall turn-in consumes the wand and awards 75 gold.
+
+- Sector 184 in L73 has two crossing linedefs. The loader splits and triangulates the boundary at the exact fractional intersections. The saved runtime outline retains those positions. The repaired L52 package still uses its saved integer outline.
+
+### Destruction
+
+109. **Launch Destruction.** Accept the quest from the Lost City result, arrive at L32, and receive journal page 603.
+110. **Import L32 and open the paired gates.** Preserve 250 sectors, 1,158 lines, and 13 activities. Press the original delayed switch and verify ceilings 108 and 233 before the exit to L71.
+111. **Import L71 and operate the platform.** Preserve 122 sectors, 639 lines, and five activities. Enter sector 86 to raise floor 84 to Z200 and enable its switch. Use the switch to lower the floor to Z16, verify the timed return to Z200, and take the original L70 exit.
+112. **Import L70 and raise gate 56.** Preserve 103 sectors, 651 lines, and 12 activities. Press the original switch and take the exit to L61.
+113. **Import L61 and check the ceiling plate.** Preserve 191 sectors, 789 lines, and four activities. Enter the authored pressure plate, verify ceilings 143 and 62, and collect the local Key 8 before proceeding to L40.
+114. **Import L40 and recover the Orb of Destruction.** Preserve 129 sectors, 712 lines, and 16 activities. Verify the two-switch gate, collect the original orb and Key 4, and open door 123.
+115. **Return to Town Hall.** Exercise the original L40 exit and verify the orb is consumed for 100 gold and 350,000 experience.
+116. **Audit the imports.** Match all 30 original campaign map files to native `.umap` packages. Verify the package signatures and that every map has generated Unreal assets, with 15,438 assets across the 30 map folders.
+
+- The L71 generator parser skips the stray character on its comment line, following the original parser's rule for recognizing generator records. The L61 torch on a one-sided wall uses the wall's source sector and retains its exact authored coordinates.
+- `CampaignTown6Chain` starts from `NativeWadCampaignTown5Review`. `CampaignL71Chain` resumes from the recorded L71 arrival. The successful Town Hall return saves `NativeWadCampaignTown6Review` with the orb consumed.
+- All 11 WAD automation tests passed, including the L52 overlapping boundary and the L73 crossed boundary. The final three quest replays use staged approaches and regular controls, with a controlled finishing hit for Elymas. The screenshots are in `Saved/Wad-Campaign-Finale-Review.html`.
+
+### Gameplay parity follow-ups
+
+- [ ] Port L41's remaining wizard generators and scripted projectile effects. Match Elymas's homing projectile and palette in L44.
+- [ ] Match L73's acid projectile and the mana drain in the recovery sector.
+- [ ] Port L32's homing missile and the remaining creature generators in L71, L70, and L61. Implement L61's deferred scripted effects.
+
 ### Asset follow-ups
 
 - [ ] Find the original `MARBGRAY` texture and restore it to the L30 import. The supplied `PICS.RES` lacks it, so the affected lower wall bands use the default material when exposed. Check a raised floor at sector 147 after restoring the art.
@@ -298,6 +348,8 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - [ ] Restore `ASHWALL2` and `AASHITTY` in L64 and `MARBGRAY` in L65. Find authored sound samples 5, 1508, and 1510 referenced by their scripts.
 - [ ] Restore `STARTAN3` and `AASHITTY` in L34 when the source textures are available.
 - [ ] Find L153's authored sound sample 15. The supplied sound archive also lacks L151's sample 1514, so reimport preserves any lift sample already embedded in the native map.
+- [ ] Restore `BLOOD3` in L51 and `MARBGRAY` in L51, L52, L41, L44, L32, and L40 when the textures are available.
+- [ ] Restore `CEIL3_2` in L74, `AASHITTY` in L74, L71, and L61, and `FLOOR4_8` in L72 and L61 when the textures are available.
 
 ## 2026-04-11 Review Findings
 

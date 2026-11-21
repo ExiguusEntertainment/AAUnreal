@@ -51,6 +51,7 @@ public:
     void ShowInteractionMessage(FString Message);
     void ReceiveEncounterHit(int32 Damage);
     void ReceiveTrapPoison(int32 Damage);
+    int32 GetPoisonLevel() const { return PoisonLevel; }
     void ReceiveTrapParalysis();
     void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }

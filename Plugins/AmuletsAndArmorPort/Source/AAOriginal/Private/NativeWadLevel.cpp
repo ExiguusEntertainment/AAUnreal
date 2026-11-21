@@ -255,6 +255,29 @@ bool ANativeWadLevel::ContainsSectorPoint(int32 Sector, const FVector2D& LocalPo
     {
         return false;
     }
+    const auto CrossesRay = [&LocalPosition](const auto& A, const auto& B)
+    {
+        return (A.Y > LocalPosition.Y) != (B.Y > LocalPosition.Y)
+            && LocalPosition.X < A.X + (LocalPosition.Y - A.Y) * (B.X - A.X) / (B.Y - A.Y);
+    };
+    const auto ContainsRepairedPoint = [&CrossesRay](const auto& Points)
+    {
+        bool bInside = false;
+        for (int32 Index = 0; Index + 1 < Points.Num(); Index += 2)
+        {
+            bInside ^= CrossesRay(Points[Index], Points[Index + 1]);
+        }
+        return bInside;
+    };
+    const FAAWadNativeSector& Entry = Sectors[Sector];
+    if (!Entry.RepairedBoundaryPoints.IsEmpty())
+    {
+        return ContainsRepairedPoint(Entry.RepairedBoundaryPoints);
+    }
+    if (!Entry.RepairedBoundary.IsEmpty())
+    {
+        return ContainsRepairedPoint(Entry.RepairedBoundary);
+    }
     bool bInside = false;
     for (const int32 LineIndex : LinesBySector[Sector])
     {
@@ -265,11 +288,7 @@ bool ANativeWadLevel::ContainsSectorPoint(int32 Sector, const FVector2D& LocalPo
         }
         const FIntPoint A = Vertices[Line.From];
         const FIntPoint B = Vertices[Line.To];
-        if ((A.Y > LocalPosition.Y) != (B.Y > LocalPosition.Y)
-            && LocalPosition.X < A.X + (LocalPosition.Y - A.Y) * (B.X - A.X) / (B.Y - A.Y))
-        {
-            bInside = !bInside;
-        }
+        bInside ^= CrossesRay(A, B);
     }
     return bInside;
 }

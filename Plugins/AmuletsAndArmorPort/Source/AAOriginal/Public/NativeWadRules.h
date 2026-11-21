@@ -35,7 +35,12 @@ namespace NativeWadRules
     inline constexpr int32 AndrewNecklace = 958;
     inline constexpr int32 OrbOfDefense = 954;
     inline constexpr int32 OrbOfTheUndead = 955;
+    inline constexpr int32 ElymasNotes = 380;
+    inline constexpr int32 WandOfDisintegration = 918;
+    inline constexpr int32 OrbOfDestruction = 956;
     inline constexpr int32 Key1 = 257;
+    inline constexpr int32 Key4 = 260;
+    inline constexpr int32 Key9 = 265;
     inline constexpr int32 ElmoreKey3 = 259;
     inline constexpr int32 ElmoreKey5 = 261;
     inline constexpr int32 ElmoreKey6 = 262;
@@ -43,6 +48,7 @@ namespace NativeWadRules
     inline constexpr int32 ChurchMountedKnight = 1008;
     inline constexpr int32 ChurchFootKnight = 1009;
     inline constexpr int32 GrayCrossbowBolt = 886;
+    inline constexpr int32 PoisonCrossbowBolt = 887;
     inline constexpr int32 PiercingCrossbowBolt = 888;
     inline constexpr int32 ChurchBoltDamage = 300;
 

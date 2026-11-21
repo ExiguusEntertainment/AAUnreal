@@ -21,7 +21,12 @@ namespace
         case AndrewNecklace: return TEXT("Necklace of Andrew");
         case OrbOfDefense: return TEXT("Orb of Defense");
         case OrbOfTheUndead: return TEXT("Orb of the Undead");
+        case ElymasNotes: return TEXT("Elymas's notes");
+        case WandOfDisintegration: return TEXT("Wand of Disintegration");
+        case OrbOfDestruction: return TEXT("Orb of Destruction");
         case Key1: return TEXT("Key 1");
+        case Key4: return TEXT("Key 4");
+        case Key9: return TEXT("Key 9");
         case ElmoreKey3: return TEXT("Key 3");
         case ElmoreKey5: return TEXT("Key 5");
         case ElmoreKey6: return TEXT("Key 6");

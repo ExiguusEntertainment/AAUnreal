@@ -248,8 +248,87 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadLoader_L30_MapData, "AAOriginal.
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadLoader_L30_Footprints, "AAOriginal.WAD.L30.Footprints",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadLoader_L52_OverlappingBoundary, "AAOriginal.WAD.L52.OverlappingBoundary",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginal_WadLoader_L52_OverlappingBoundary::RunTest(const FString& Parameters)
+{
+    const FString Path = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe/L52.MAP");
+    if (!FPaths::FileExists(Path))
+    {
+        AddWarning(TEXT("L52.MAP fixture is missing."));
+        return true;
+    }
+    if (!TestTrue(TEXT("L52 loads"), UDoomWadLoader::LoadDoomWadMap(Path, TEXT("L52"))))
+    {
+        return false;
+    }
+    FDoomWadSectorFootprint Footprint;
+    if (!TestTrue(TEXT("Sector 154 triangulates despite its overlapping linedefs"),
+        UDoomWadLoader::GetLastWadSectorFootprint(154, Footprint)))
+    {
+        return false;
+    }
+
+    TestTrue(TEXT("The loader reports the repaired boundary"), Footprint.bNormalizedOverlap);
+    const FVector2D Samples[] = {{-1706, 3488}, {-1758, 3502}, {-1394, 3734}, {-922, 3270}, {-2400, 3712.5}};
+    bool Filled[UE_ARRAY_COUNT(Samples)] = {};
+    double Area = 0.0;
+    for (int32 Index = 0; Index < Footprint.Triangles.Num(); Index += 3)
+    {
+        const FVector2D& A = Footprint.Vertices[Footprint.Triangles[Index]];
+        const FVector2D& B = Footprint.Vertices[Footprint.Triangles[Index + 1]];
+        const FVector2D& C = Footprint.Vertices[Footprint.Triangles[Index + 2]];
+        Area += FVector2D::CrossProduct(B - A, C - A) * 0.5;
+        for (int32 Sample = 0; Sample < UE_ARRAY_COUNT(Samples); ++Sample)
+        {
+            const FVector2D& P = Samples[Sample];
+            Filled[Sample] |= FVector2D::CrossProduct(B - A, P - A) >= 0
+                && FVector2D::CrossProduct(C - B, P - B) >= 0 && FVector2D::CrossProduct(A - C, P - C) >= 0;
+        }
+    }
+    TestEqual(TEXT("Courtyard triangles cover exactly the normalized sector area"), Area, 2629174.5);
+    TestTrue(TEXT("The courtyard beside plate 96 stays filled"), Filled[0]);
+    TestFalse(TEXT("Sector 96 remains a cutout in the courtyard"), Filled[1]);
+    TestFalse(TEXT("Sector 106 remains a cutout in the courtyard"), Filled[2]);
+    TestFalse(TEXT("Sector 97 remains a cutout in the courtyard"), Filled[3]);
+    TestFalse(TEXT("The overlap does not extend the courtyard outside its west edge"), Filled[4]);
+    return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadLoader_L30_FixedWalls, "AAOriginal.WAD.L30.FixedWalls",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadLoader_L73_CrossedBoundary, "AAOriginal.WAD.L73.CrossedBoundary",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginal_WadLoader_L73_CrossedBoundary::RunTest(const FString& Parameters)
+{
+    const FString Path = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe/L73.MAP");
+    if (!FPaths::FileExists(Path))
+    {
+        AddWarning(TEXT("L73.MAP fixture is missing."));
+        return true;
+    }
+    if (!TestTrue(TEXT("L73 loads"), UDoomWadLoader::LoadDoomWadMap(Path, TEXT("L73"))))
+    {
+        return false;
+    }
+    FDoomWadSectorFootprint Footprint;
+    if (!TestTrue(TEXT("Sector 184 triangulates despite its crossing linedefs"),
+        UDoomWadLoader::GetLastWadSectorFootprint(184, Footprint)))
+    {
+        return false;
+    }
+    const FVector2D Intersections[] = {{-67472.0 / 17.0, 10848.0 / 17.0}, {-893128.0 / 225.0, 143344.0 / 225.0}};
+    for (const FVector2D& Point : Intersections)
+    {
+        TestTrue(TEXT("A crossing was retained at its fractional map position"),
+            Footprint.Vertices.ContainsByPredicate([&Point](const FVector2D& Vertex) { return Vertex.Equals(Point, 1.e-6); }));
+    }
+    TestTrue(TEXT("The crossed edges are serialized as a repaired boundary"), Footprint.bNormalizedOverlap);
+    return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadLoader_L30_SectorMotion, "AAOriginal.WAD.L30.SectorMotion",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

@@ -137,4 +137,5 @@ struct FDoomWadSectorFootprint
     TArray<FVector2D> Vertices;
     TArray<FIntPoint> BoundaryEdges;
     TArray<int32> Triangles;
+    bool bNormalizedOverlap = false;
 };

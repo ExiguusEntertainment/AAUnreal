@@ -317,6 +317,7 @@ namespace
                 }
                 else if (Opcode == 54 && (Args[0] == 4005 || Args[0] == 4006 || Args[0] == 4011 || Args[0] == 4012
                     || Args[0] == 4015 || Args[0] == 4016
+                    || Args[0] == NativeWadRules::PoisonCrossbowBolt
                     || Args[0] == NativeWadRules::PiercingCrossbowBolt) && Args[7] > 0)
                 {
                     Command.Operation = EWadScriptOperation::LaunchMissile;

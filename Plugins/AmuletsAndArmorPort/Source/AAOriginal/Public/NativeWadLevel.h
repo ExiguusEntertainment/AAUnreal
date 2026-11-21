@@ -70,6 +70,14 @@ struct FAAWadNativeSector
 
     UPROPERTY()
     FVector2D FloorScrollRate = FVector2D::ZeroVector;
+
+    // Integer edge data from the original L52 import.
+    UPROPERTY()
+    TArray<FIntPoint> RepairedBoundary;
+
+    // Start and end points for repaired footprint edges, including fractional intersections.
+    UPROPERTY()
+    TArray<FVector2D> RepairedBoundaryPoints;
 };
 
 USTRUCT()

@@ -1,6 +1,7 @@
 #include "CoreMinimal.h"
 #include "NativeWadReview.h"
 
+#include "Algo/Find.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/StaticMeshComponent.h"
 #include "Containers/Ticker.h"
@@ -466,6 +467,138 @@ namespace
 
     enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll };
     enum class EUndeadReview { None, Launch, Castle, Traps, Keep, Boss, Return, Empty };
+    enum class ETempleReview { None, Launch, L51, L52, Reload };
+    enum class ECampaignAction { Place, Walk, Use, Floor, Ceiling, OpenDoor, HealthAtLeast, Pickup, Defeat, Frame };
+
+    struct FCampaignAction
+    {
+        ECampaignAction Action;
+        FVector Target;
+        int32 Index = INDEX_NONE;
+        const TCHAR* Label = nullptr;
+    };
+
+    struct FCampaignRoute
+    {
+        int32 Map, Quest, Destination, ExitThing;
+        FVector2D Spawn;
+        TConstArrayView<FCampaignAction> Actions;
+    };
+
+    struct FCampaignTurnIn
+    {
+        int32 Quest, FirstMap, Item, Gold, Experience;
+    };
+
+    const FCampaignAction Campaign52[] = {
+        {ECampaignAction::Walk, {-3448, 1440, 0}},
+    };
+    const FCampaignAction Campaign41[] = {
+        {ECampaignAction::Place, {3552, -2018, 0}}, {ECampaignAction::Use, {3552, -2048, 42}},
+        {ECampaignAction::Ceiling, {0, 0, 130}, 220, TEXT("L41 timed switch raises gate 220 to Z130")},
+        {ECampaignAction::Place, {-76, 2942, 0}}, {ECampaignAction::Pickup, {-76, 2910, 52}, NativeWadRules::ElmoreKey6},
+        {ECampaignAction::Place, {3621, 832, 0}}, {ECampaignAction::Use, {3677, 832, 40}},
+        {ECampaignAction::OpenDoor, {0, 0, 56}, 37, TEXT("L41 Key 6 opens door 37")},
+        {ECampaignAction::Frame, {3677, 832, 44}, INDEX_NONE, TEXT("key-gate")},
+        {ECampaignAction::Walk, {3740, 832, 0}},
+        {ECampaignAction::Place, {1344, 6724, 0}}, {ECampaignAction::Walk, {1344, 6782, 0}},
+    };
+    const FCampaignAction Campaign44[] = {
+        {ECampaignAction::Place, {-714, -414, 0}}, {ECampaignAction::Walk, {-650, -414, 0}},
+        {ECampaignAction::Floor, {0, 0, 320}, 108},
+        {ECampaignAction::Place, {54, -416, 0}}, {ECampaignAction::Walk, {-8, -416, 0}},
+        {ECampaignAction::Floor, {0, 0, 320}, 107},
+        {ECampaignAction::Place, {-268, 1046, 0}},
+        {ECampaignAction::Defeat, FVector::ZeroVector, NativeWadRules::ElymasNotes, TEXT("Elymas")},
+        {ECampaignAction::Ceiling, {0, 0, 112}, 68, TEXT("L44 three pressure plates raise gate 68")},
+        {ECampaignAction::Place, {-714, 3060, 0}}, {ECampaignAction::Pickup, {-702, 3090, 44}, NativeWadRules::ElmoreKey3},
+        {ECampaignAction::Place, {384, 3166, 0}}, {ECampaignAction::Use, {384, 3136, 42}},
+        {ECampaignAction::OpenDoor, {0, 0, 56}, 42, TEXT("L44 Key 3 opens the Town Hall passage")},
+        {ECampaignAction::Place, {408, 3264, 0}}, {ECampaignAction::Walk, {384, 3296, 0}},
+    };
+    const FCampaignAction Campaign74[] = {
+        {ECampaignAction::Place, {208, 1150, 0}}, {ECampaignAction::Use, {208, 1200, 92}},
+        {ECampaignAction::Ceiling, {0, 0, 152}, 104, TEXT("L74's switch raises gate 104")},
+        {ECampaignAction::Frame, {208, 1200, 92}, INDEX_NONE, TEXT("city-switch")},
+        {ECampaignAction::Place, {-2145, 2376, 0}}, {ECampaignAction::Walk, {-2145, 2430, 0}},
+    };
+    const FCampaignAction Campaign73[] = {
+        {ECampaignAction::Place, {-226, 1318, 0}},
+        {ECampaignAction::HealthAtLeast, {0, 0, 1800}, INDEX_NONE, TEXT("L73's source recovery sector restores health")},
+        {ECampaignAction::Place, {-4382, 1542, 0}}, {ECampaignAction::Walk, {-4363, 1590, 0}},
+        {ECampaignAction::Place, {-1029, 2782, 0}},
+        {ECampaignAction::Ceiling, {0, 0, 175}, 118},
+        {ECampaignAction::Place, {-4562, 1304, 0}}, {ECampaignAction::Walk, {-4610, 1329, 0}},
+        {ECampaignAction::Place, {-1029, 2782, 0}},
+        {ECampaignAction::Ceiling, {0, 0, 195}, 118},
+        {ECampaignAction::Place, {-4321, 1125, 0}}, {ECampaignAction::Walk, {-4345, 1078, 0}},
+        {ECampaignAction::Place, {-1029, 2782, 0}},
+        {ECampaignAction::Ceiling, {0, 0, 232}, 118, TEXT("L73's three plates raise gate 118 through all three heights")},
+        {ECampaignAction::Walk, {-1029, 2864, 0}},
+    };
+    const FCampaignAction Campaign72[] = {
+        {ECampaignAction::Place, {1460, 946, 0}}, {ECampaignAction::Use, {1485, 946, -12}},
+        {ECampaignAction::Floor, {0, 0, -56}, 295, TEXT("L72's wall lowers the hidden floor")},
+        {ECampaignAction::Place, {-3432, 944, 0}}, {ECampaignAction::Pickup, {-3392, 984, 12}, NativeWadRules::WandOfDisintegration,
+            TEXT("the original L72 Wand of Disintegration pickup")},
+        {ECampaignAction::Place, {-3382, 1136, 0}}, {ECampaignAction::Walk, {-3310, 1136, 0}},
+    };
+    const FCampaignAction Campaign32[] = {
+        {ECampaignAction::Place, {706, 836, 0}}, {ECampaignAction::Use, {656, 836, 196}},
+        {ECampaignAction::Ceiling, {0, 0, 328}, 108}, {ECampaignAction::Ceiling, {0, 0, 280}, 233,
+            TEXT("L32's delayed switch opens both gates")},
+        {ECampaignAction::Place, {1890, 1535, 0}}, {ECampaignAction::Walk, {1950, 1535, 0}},
+    };
+    const FCampaignAction Campaign71[] = {
+        {ECampaignAction::Place, {-746, -64, 0}}, {ECampaignAction::Walk, {-797, -64, 0}},
+        {ECampaignAction::Floor, {0, 0, 200}, 84, TEXT("L71's entry strip raises platform 84 to Z200")},
+        {ECampaignAction::Place, {-489, -73, 0}}, {ECampaignAction::Use, {-464, -73, 48}},
+        {ECampaignAction::Floor, {0, 0, 16}, 84, TEXT("L71's switch lowers platform 84 to Z16")},
+        {ECampaignAction::Floor, {0, 0, 200}, 84, TEXT("L71's platform returns to Z200 after the delay")},
+        {ECampaignAction::Place, {500, 4235, 0}}, {ECampaignAction::Walk, {456, 4260, 0}},
+    };
+    const FCampaignAction Campaign70[] = {
+        {ECampaignAction::Place, {400, 617, 0}}, {ECampaignAction::Use, {400, 592, -146}},
+        {ECampaignAction::Ceiling, {0, 0, 190}, 56, TEXT("L70's switch raises gate 56")},
+        {ECampaignAction::Place, {1894, 496, 0}}, {ECampaignAction::Walk, {1976, 496, 0}},
+    };
+    const FCampaignAction Campaign61[] = {
+        {ECampaignAction::Place, {-832, 2922, 0}}, {ECampaignAction::Walk, {-832, 2982, 0}},
+        {ECampaignAction::Ceiling, {0, 0, 380}, 143}, {ECampaignAction::Ceiling, {0, 0, 264}, 62,
+            TEXT("L61's pressure plate opens both ceilings")},
+        {ECampaignAction::Place, {-1588, -712, 0}}, {ECampaignAction::Pickup, {-1628, -672, 148}, NativeWadRules::ElmoreKey8},
+        {ECampaignAction::Place, {-2794, 448, 0}}, {ECampaignAction::Walk, {-2855, 448, 0}},
+    };
+    const FCampaignAction Campaign40[] = {
+        {ECampaignAction::Place, {-236, -1808, 0}}, {ECampaignAction::Use, {-186, -1808, 884}},
+        {ECampaignAction::Place, {302, -1808, 0}}, {ECampaignAction::Use, {252, -1808, 884}},
+        {ECampaignAction::Ceiling, {0, 0, 444}, 41, TEXT("L40's two switches open gate 41")},
+        {ECampaignAction::Place, {2267, 3023, 0}}, {ECampaignAction::Pickup, {2304, 3008, 212}, NativeWadRules::OrbOfDestruction,
+            TEXT("the original L40 Orb of Destruction pickup")},
+        {ECampaignAction::Place, {2376, 3040, 0}}, {ECampaignAction::Pickup, {2336, 3040, 212}, NativeWadRules::Key4},
+        {ECampaignAction::Place, {504, 2664, 0}}, {ECampaignAction::Use, {478, 2632, 440}},
+        {ECampaignAction::OpenDoor, {0, 0, 56}, 123, TEXT("L40 Key 4 opens door 123")},
+        {ECampaignAction::Frame, {478, 2632, 445}, INDEX_NONE, TEXT("last-key-gate")},
+        {ECampaignAction::Place, {-190, 3296, 0}}, {ECampaignAction::Walk, {-122, 3296, 0}},
+    };
+    const FCampaignRoute CampaignRoutes[] = {
+        {52, 4, 41, 238, {760, 3540}, Campaign52},
+        {41, 4, 44, 323, {7104, 4152}, Campaign41},
+        {44, 4, 0, 71, {-3572, 758}, Campaign44},
+        {74, 5, 73, 183, {-1120, -454}, Campaign74},
+        {73, 5, 72, 218, {-3696, -553}, Campaign73},
+        {72, 5, 0, 214, {2352, 104}, Campaign72},
+        {32, 6, 71, 270, {124, 3154}, Campaign32},
+        {71, 6, 70, 231, {-1146, -911}, Campaign71},
+        {70, 6, 61, 58, {-2320, 492}, Campaign70},
+        {61, 6, 40, 240, {2200, 2272}, Campaign61},
+        {40, 6, 0, 235, {28, -4667}, Campaign40},
+    };
+    const FCampaignTurnIn CampaignQuests[] = {
+        {4, 51, NativeWadRules::ElymasNotes, 35, 200000},
+        {5, 74, NativeWadRules::WandOfDisintegration, 75, 0},
+        {6, 32, NativeWadRules::OrbOfDestruction, 100, 350000},
+    };
     enum class EL25Review
     {
         None, Passages, KeyReload, DoorReload, Knights, Exit, L20Reload, Scenery, L20Scenery, L20Exit, L60Reload,
@@ -497,6 +630,9 @@ namespace
     constexpr const TCHAR* UndeadCemeterySlot = TEXT("NativeWadUndeadCemeteryReview");
     constexpr const TCHAR* UndeadOrbSlot = TEXT("NativeWadUndeadOrbReview");
     constexpr const TCHAR* UndeadTownSlot = TEXT("NativeWadUndeadTownReview");
+    constexpr const TCHAR* TempleL51Slot = TEXT("NativeWadTempleL51Review");
+    constexpr const TCHAR* TempleL52Slot = TEXT("NativeWadTempleL52Review");
+    constexpr const TCHAR* TempleExitSlot = TEXT("NativeWadTempleExitReview");
     constexpr const TCHAR* TownReviewSlot = TEXT("NativeWadTownReview");
     enum class EL22RouteAction { Walk, Door, Switch, RepeatSwitch, Journal, Plate, Capture, Exit };
 
@@ -624,6 +760,18 @@ namespace
         bool bDoorReload = false;
         ETownReview TownReview = ETownReview::None;
         EUndeadReview UndeadReview = EUndeadReview::None;
+        ETempleReview TempleReview = ETempleReview::None;
+        const FCampaignRoute* CampaignRoute = nullptr;
+        const FCampaignTurnIn* CampaignLaunch = nullptr;
+        int32 CampaignPickupCount = INDEX_NONE;
+        int32 CampaignGoldBeforeExit = 0;
+        bool bCampaignActionStarted = false;
+        bool bCampaignExitRecorded = false;
+        bool bCampaignChain = false;
+        bool bCampaignArrivedInRun = false;
+        double CampaignStepTime = -1.0;
+        int32 TemplePlate = 0;
+        int32 PoisonBeforeTrap = 0;
         EL25Review L25Review = EL25Review::None;
         TArray<int32> ItemsBeforeTravel;
         int32 ReadyBeforeTravel = INDEX_NONE;
@@ -3851,6 +3999,548 @@ namespace
             return true;
         }
 
+        bool TickTempleL51(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            FVector2D Gate;
+            if (!Level.GetSectorSurfaceHeights(115, Gate))
+            {
+                return Finish(&Player, TEXT("L51 is missing the authored exit gate"));
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (Gate != FVector2D(8, 16) || !PlaceReviewPlayer(Level, Player, {598, 2016}))
+                {
+                    return Finish(&Player, TEXT("could not reach L51's poison corridor with the exit gate closed"));
+                }
+                TrapHealth = Player.GetHealth();
+                PoisonBeforeTrap = Player.GetPoisonLevel();
+                ++NextPoint;
+                break;
+            case 1:
+                if (WalkTo(Player, {545, 2020}))
+                {
+                    ++NextPoint;
+                }
+                break;
+            case 2:
+                if (Level.GetScriptMissileCount(NativeWadRules::PoisonCrossbowBolt) == 2
+                    && Player.GetHealth() <= TrapHealth - 300 && Player.GetPoisonLevel() > PoisonBeforeTrap)
+                {
+                    bool bSaved = false;
+                    Aim(Player, {746, 2020, 28});
+                    if (CaptureTownFrame(TEXT("poison-corridor"), bSaved))
+                    {
+                        if (!bSaved || !PlaceReviewPlayer(Level, Player, {-1800, 2202}))
+                        {
+                            return Finish(&Player, TEXT("could not capture the poison corridor or reach the gate switch"));
+                        }
+                        UE_LOG(LogTemp, Display, TEXT("Verified L51 fires two authored type 887 bolts and poisons the player."));
+                        ++NextPoint;
+                    }
+                }
+                break;
+            case 3:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Aim(Player, {-1833, 2202, 245});
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Gate.Y == 168)
+                {
+                    if (!PlaceReviewPlayer(Level, Player, {-1829, 3642}))
+                    {
+                        return Finish(&Player, TEXT("could not reach the opened exit gate"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L51 switch 674 lifts gate 115 from Z16 to Z168."));
+                    ++NextPoint;
+                }
+                break;
+            case 5:
+                WalkTo(Player, {-2272, 3642});
+                break;
+            }
+            return true;
+        }
+
+        bool TickTempleL52(ANativeWadLevel& Level, ANativeWadPlayer& Player)
+        {
+            struct FPlate
+            {
+                FVector2D Approach, Target;
+                int32 Sector;
+                double GateHeight;
+            };
+            const FPlate Plates[] = {
+                {{-1878, 3552}, {-1830, 3552}, 96, 25},
+                {{-1388, 3630}, {-1360, 3670}, 106, 50},
+                {{-976, 3280}, {-944, 3248}, 97, 75},
+            };
+            FVector2D Gate;
+            if (!Level.GetSectorSurfaceHeights(94, Gate))
+            {
+                return Finish(&Player, TEXT("L52 is missing the three-plate gate"));
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (Gate.Y != 0 || !PlaceReviewPlayer(Level, Player, {-2192, -1258}))
+                {
+                    return Finish(&Player, TEXT("L52 must start with the plate gate shut and the pit approach accessible"));
+                }
+                ++NextPoint;
+                break;
+            case 1:
+                if (FVector2D(Player.GetActorLocation()).Equals({-1536, 1816}, 4))
+                {
+                    Stop(Player);
+                    UE_LOG(LogTemp, Display, TEXT("Verified the L52 pit teleporter rescues the player to (-1536, 1816)."));
+                    ++NextPoint;
+                }
+                else
+                {
+                    WalkTo(Player, {-2192, -1304});
+                }
+                break;
+            case 2:
+                if (!PlaceReviewPlayer(Level, Player, Plates[TemplePlate].Approach))
+                {
+                    return Finish(&Player, TEXT("could not reach an L52 pressure plate approach"));
+                }
+                ++NextPoint;
+                break;
+            case 3:
+                if (WalkTo(Player, Plates[TemplePlate].Target))
+                {
+                    if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) != Plates[TemplePlate].Sector)
+                    {
+                        return Finish(&Player, TEXT("the player did not step onto the requested L52 plate"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 4:
+                if (Gate.Y == Plates[TemplePlate].GateHeight)
+                {
+                    ++TemplePlate;
+                    NextPoint = TemplePlate < UE_ARRAY_COUNT(Plates) ? 2 : 5;
+                }
+                break;
+            case 5:
+                if (!PlaceReviewPlayer(Level, Player, {-1536, 2858}))
+                {
+                    return Finish(&Player, TEXT("could not reach the open L52 gate"));
+                }
+                ++NextPoint;
+                break;
+            case 6:
+            {
+                bool bSaved = false;
+                Aim(Player, {-1536, 2912, 35});
+                if (CaptureTownFrame(TEXT("three-plate-gate"), bSaved))
+                {
+                    if (!bSaved)
+                    {
+                        return Finish(&Player, TEXT("could not capture the open L52 gate"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            }
+            case 7:
+                if (WalkTo(Player, {-1536, 2966}))
+                {
+                    if (!PlaceReviewPlayer(Level, Player, {-3402, 1440}))
+                    {
+                        return Finish(&Player, TEXT("could not reach the L52 exit approach after crossing the gate"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L52's three plates raise gate 94 to Z25, Z50, and Z75 and allow crossing."));
+                    ++NextPoint;
+                }
+                break;
+            case 8:
+                if (Gate.Y == 0)
+                {
+                    FWadLevelCheckpoint Snapshot;
+                    if (!Level.WriteCheckpoint(Snapshot) || Snapshot.Variables[1] != 0 || Snapshot.Variables[2] != 0
+                        || Snapshot.Variables[3] != 0 || Snapshot.Variables[4] != 0)
+                    {
+                        return Finish(&Player, TEXT("L52 did not reset the plates and gate after the source delay"));
+                    }
+                    ++NextPoint;
+                }
+                break;
+            case 9:
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    const FAAWadNativeLevelLink* Link = Level.GetLevelLinks().FindByPredicate([](const auto& Entry)
+                    {
+                        return Entry.SourceThing == 238;
+                    });
+                    if (!Link || Link->Sector != 170 || Link->Destination.ToSoftObjectPath().GetLongPackageName() != TEXT("/Game/Maps/L41")
+                        || !Player.SaveWadCheckpoint(TempleExitSlot))
+                    {
+                        return Finish(&Player, TEXT("could not verify the original L41 exit or save its approach"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L52 resets its plates and saves before Thing 238, the original L41 exit."));
+                    return Finish(&Player);
+                }
+                break;
+            }
+            return true;
+        }
+
+        bool CollectCampaignItem(ANativeWadPlayer& Player, int32 Type, const FVector& Position)
+        {
+            if (CampaignPickupCount == INDEX_NONE && Player.GetCharacterMovement()->IsMovingOnGround())
+            {
+                CampaignPickupCount = Player.GetItemCount(Type);
+                Aim(Player, Position);
+                Press(Player, EKeys::E);
+                return false;
+            }
+            return CampaignPickupCount != INDEX_NONE && Player.GetItemCount(Type) == CampaignPickupCount + 1;
+        }
+
+        bool TickCampaignAction(ANativeWadLevel& Level, ANativeWadPlayer& Player, const FCampaignAction& Step)
+        {
+            switch (Step.Action)
+            {
+            case ECampaignAction::Place:
+                return PlaceReviewPlayer(Level, Player, FVector2D(Step.Target));
+            case ECampaignAction::Walk:
+                return WalkTo(Player, FVector2D(Step.Target));
+            case ECampaignAction::Use:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    return false;
+                }
+                Aim(Player, Step.Target);
+                Press(Player, EKeys::E);
+                return true;
+            case ECampaignAction::Floor:
+            case ECampaignAction::Ceiling:
+            case ECampaignAction::OpenDoor:
+            {
+                FVector2D Heights;
+                return Level.GetSectorSurfaceHeights(Step.Index, Heights)
+                    && (Step.Action == ECampaignAction::OpenDoor ? Heights.Y - Heights.X >= Step.Target.Z
+                        : FMath::IsNearlyEqual(Step.Action == ECampaignAction::Floor ? Heights.X : Heights.Y, Step.Target.Z, 0.01));
+            }
+            case ECampaignAction::Pickup:
+                return CollectCampaignItem(Player, Step.Index, Step.Target);
+            case ECampaignAction::HealthAtLeast:
+                return Player.GetHealth() >= Step.Target.Z;
+            case ECampaignAction::Defeat:
+            {
+                if (CampaignPickupCount != INDEX_NONE && Player.GetItemCount(Step.Index) == CampaignPickupCount + 1)
+                {
+                    return true;
+                }
+                ANativeWadPickup* Drop = nullptr;
+                for (TActorIterator<ANativeWadPickup> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->GetItemType() == Step.Index)
+                    {
+                        Drop = *It;
+                        break;
+                    }
+                }
+                if (!Drop)
+                {
+                    return false;
+                }
+                if (!bCampaignActionStarted && !Drop->IsAvailable() && Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+                    {
+                        if (It->GetEncounterName() == Step.Label && !It->IsDefeated())
+                        {
+                            bCampaignActionStarted = It->TakeMeleeHit(Player, It->GetEncounterHealth());
+                            break;
+                        }
+                    }
+                }
+                return bCampaignActionStarted && Drop->IsAvailable() && CollectCampaignItem(Player, Step.Index, Drop->GetActorLocation());
+            }
+            case ECampaignAction::Frame:
+            {
+                bool bSaved = false;
+                Aim(Player, Step.Target);
+                return CaptureTownFrame(Step.Label, bSaved) && bSaved;
+            }
+            }
+            return false;
+        }
+
+        bool TickCampaign(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the campaign replay lost the player or travel state"));
+            }
+            const FWadQuestProgress& Quest = Travel->Quest;
+            const bool bTown = Current.GetAuthGameMode<ANativeWadTownGameMode>() != nullptr;
+            if (bTown && CampaignLaunch)
+            {
+                if (!Player.HasRestoredWadCheckpoint() || Quest.ResultQuest != CampaignLaunch->Quest - 1 || !Quest.bSucceeded)
+                {
+                    return Finish(&Player, TEXT("the next quest needs the previous successful Town Hall checkpoint"));
+                }
+                if (Quest.bShowResult)
+                {
+                    Press(Player, EKeys::Enter);
+                }
+                else if (NextPoint == 0 && Quest.Selected == CampaignLaunch->Quest - 1)
+                {
+                    RecordTownCharacter(Player);
+                    Press(Player, EKeys::Right);
+                    ++NextPoint;
+                }
+                else if (NextPoint == 1 && Quest.Selected == CampaignLaunch->Quest)
+                {
+                    SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                    Press(Player, EKeys::Q);
+                    ++NextPoint;
+                }
+                else if (NextPoint == 2)
+                {
+                    bool bSaved = false;
+                    if (CaptureTownFrame(TEXT("briefing"), bSaved) && bSaved)
+                    {
+                        Press(Player, EKeys::Enter);
+                        ++NextPoint;
+                    }
+                }
+                return true;
+            }
+            if (bTown)
+            {
+                if (Travel->ArrivingFromMap != 0)
+                {
+                    return true;
+                }
+                const auto* Reward = Algo::FindByPredicate(CampaignQuests,
+                    [&](const FCampaignTurnIn& Entry) { return Entry.Quest == CampaignRoute->Quest; });
+                if (!Reward || !bCampaignExitRecorded || Quest.Active != INDEX_NONE || Quest.ResultQuest != Reward->Quest
+                    || !Quest.bSucceeded || !Quest.bShowResult || Quest.Gold - CampaignGoldBeforeExit != Reward->Gold
+                    || Player.GetExperience() - ExperienceBeforeTravel != Reward->Experience || Player.GetItemCount(Reward->Item) != 0)
+                {
+                    return Finish(&Player, TEXT("the Town Hall return did not apply the source quest reward and item turn-in"));
+                }
+                bool bSaved = false;
+                if (CaptureTownFrame(TEXT("town-success"), bSaved))
+                {
+                    const FString Slot = FString::Printf(TEXT("NativeWadCampaignTown%dReview"), Reward->Quest);
+                    if (!bSaved || !Player.SaveWadCheckpoint(Slot))
+                    {
+                        return Finish(&Player, TEXT("could not save the successful campaign return"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified campaign quest %d turn-in: %d gold, %d experience."),
+                        Reward->Quest, Reward->Gold, Reward->Experience);
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            if (&Current != SourceWorld.Get())
+            {
+                const int32 Destination = CampaignLaunch ? CampaignLaunch->FirstMap : CampaignRoute->Destination;
+                const int32 QuestId = CampaignLaunch ? CampaignLaunch->Quest : CampaignRoute->Quest;
+                const auto* Arrival = Algo::FindByPredicate(CampaignRoutes,
+                    [Destination](const FCampaignRoute& Entry) { return Entry.Map == Destination; });
+                const FString Source = CampaignRoute ? FString::Printf(TEXT("/Game/Maps/L%d"), CampaignRoute->Map) : FString();
+                if (!Arrival || Quest.Active != QuestId || !Current.GetMapName().EndsWith(FString::Printf(TEXT("L%d"), Destination))
+                    || !FVector2D(Player.GetActorLocation()).Equals(Arrival->Spawn, 5.0)
+                    || (CampaignLaunch && !MatchesTownCharacter(Player))
+                    || (Destination == 32 && !Travel->JournalPages.Contains(603))
+                    || (CampaignRoute && (Quest.ResumeMaps.FindRef(QuestId) != Destination || !Travel->VisitedLevels.Contains(Source))))
+                {
+                    return Finish(&Player, TEXT("the campaign did not reach the authored spawn with its previous state"));
+                }
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    const FString Slot = FString::Printf(TEXT("NativeWadCampaignL%dReview"), Destination);
+                    if (!Player.SaveWadCheckpoint(Slot))
+                    {
+                        return Finish(&Player, TEXT("could not save the authored arrival"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified campaign arrival at L%d."), Destination);
+                    if (bCampaignChain)
+                    {
+                        CampaignRoute = Arrival;
+                        CampaignLaunch = nullptr;
+                        SourceWorld = &Current;
+                        NextPoint = 0;
+                        bCampaignArrivedInRun = true;
+                        bCampaignExitRecorded = false;
+                        bCampaignActionStarted = false;
+                        CampaignPickupCount = INDEX_NONE;
+                        CampaignStepTime = -1.0;
+                        return true;
+                    }
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || !CampaignRoute || Quest.Active != CampaignRoute->Quest
+                || (!bCampaignArrivedInRun && !Player.HasRestoredWadCheckpoint()))
+            {
+                return Finish(&Player, TEXT("the campaign route needs its native map and matching checkpoint"));
+            }
+            if (!CampaignRoute->Actions.IsValidIndex(NextPoint))
+            {
+                return Finish(&Player, TEXT("the original exit did not start travel"));
+            }
+            if (NextPoint == CampaignRoute->Actions.Num() - 1 && !bCampaignExitRecorded)
+            {
+                const FAAWadNativeLevelLink* Link = Level->GetLevelLinks().FindByPredicate([&](const auto& Entry)
+                {
+                    return Entry.SourceThing == CampaignRoute->ExitThing;
+                });
+                if (!Link)
+                {
+                    return Finish(&Player, TEXT("the map is missing its original exit Thing"));
+                }
+                bCampaignExitRecorded = true;
+                CampaignGoldBeforeExit = Quest.Gold;
+                ExperienceBeforeTravel = Player.GetExperience();
+            }
+            const FCampaignAction& Step = CampaignRoute->Actions[NextPoint];
+            const double Now = Current.GetTimeSeconds();
+            if (CampaignStepTime < 0.0)
+            {
+                CampaignStepTime = Now;
+            }
+            else if (Now - CampaignStepTime > 30.0)
+            {
+                FVector2D Heights;
+                if ((Step.Action == ECampaignAction::Floor || Step.Action == ECampaignAction::Ceiling
+                    || Step.Action == ECampaignAction::OpenDoor) && (*Level)->GetSectorSurfaceHeights(Step.Index, Heights))
+                {
+                    UE_LOG(LogTemp, Error, TEXT("Campaign sector %d has floor Z%.6f and ceiling Z%.6f, expected %.6f for action %d."),
+                        Step.Index, Heights.X, Heights.Y, Step.Target.Z, int32(Step.Action));
+                }
+                return Finish(&Player, *FString::Printf(TEXT("L%d step %d timed out waiting for action %d"), CampaignRoute->Map,
+                    NextPoint, int32(Step.Action)));
+            }
+            if (TickCampaignAction(**Level, Player, Step))
+            {
+                if (Step.Action == ECampaignAction::Defeat)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified %s drops the authored quest item %d on defeat."), Step.Label, Step.Index);
+                }
+                else if (Step.Label && Step.Action != ECampaignAction::Frame)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified %s."), Step.Label);
+                }
+                ++NextPoint;
+                bCampaignActionStarted = false;
+                CampaignPickupCount = INDEX_NONE;
+                CampaignStepTime = -1.0;
+            }
+            return true;
+        }
+
+        bool TickTemple(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the Temple of Astarte review lost the player or campaign"));
+            }
+            const FWadQuestProgress& Quest = Travel->Quest;
+            if (Current.GetAuthGameMode<ANativeWadTownGameMode>())
+            {
+                if (TempleReview != ETempleReview::Launch || !Player.HasRestoredWadCheckpoint()
+                    || !Player.HasCompletedWadLevel(TEXT("L12")))
+                {
+                    return Finish(&Player, TEXT("the Temple launch needs the completed Exiguus checkpoint"));
+                }
+                if (Quest.bShowResult)
+                {
+                    Press(Player, EKeys::Enter);
+                }
+                else if (NextPoint == 0 && Quest.Selected == 3)
+                {
+                    RecordTownCharacter(Player);
+                    Press(Player, EKeys::Right);
+                    ++NextPoint;
+                }
+                else if (NextPoint == 1 && Quest.Selected == 4)
+                {
+                    SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                    Press(Player, EKeys::Q);
+                    ++NextPoint;
+                }
+                else if (NextPoint == 2)
+                {
+                    bool bSaved = false;
+                    if (CaptureTownFrame(TEXT("briefing"), bSaved))
+                    {
+                        if (!bSaved)
+                        {
+                            return Finish(&Player, TEXT("could not capture the Temple of Astarte briefing"));
+                        }
+                        Press(Player, EKeys::Enter);
+                        ++NextPoint;
+                    }
+                }
+                return true;
+            }
+            if (Quest.Active != 4)
+            {
+                return Finish(&Player, TEXT("the Temple route lost the active quest"));
+            }
+            if (&Current != SourceWorld.Get())
+            {
+                const bool bLaunch = TempleReview == ETempleReview::Launch;
+                const FVector2D Start = bLaunch ? FVector2D(-160, -189) : FVector2D(760, 3540);
+                const FWadLevelCheckpoint* L51 = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L51"));
+                if (!Current.GetMapName().EndsWith(bLaunch ? TEXT("L51") : TEXT("L52"))
+                    || !FVector2D(Player.GetActorLocation()).Equals(Start, 4)
+                    || (bLaunch && !MatchesTownCharacter(Player))
+                    || (!bLaunch && (!L51 || L51->SectorHeights.FindRef(115).Y != 168 || Quest.ResumeMaps.FindRef(4) != 52)))
+                {
+                    return Finish(&Player, TEXT("the Temple route did not reach the authored spawn or carry the gate state"));
+                }
+                if (Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    if (!Player.SaveWadCheckpoint(bLaunch ? TempleL51Slot : TempleL52Slot))
+                    {
+                        return Finish(&Player, TEXT("could not save the Temple arrival"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified Temple of Astarte arrival at %s."), bLaunch ? TEXT("L51") : TEXT("L52"));
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || !Player.HasRestoredWadCheckpoint())
+            {
+                return Finish(&Player, TEXT("the Temple review needs its native map and checkpoint"));
+            }
+            if (TempleReview == ETempleReview::Reload)
+            {
+                FVector2D Gate;
+                if (!Level->GetSectorSurfaceHeights(94, Gate) || Gate.Y != 0
+                    || !FVector2D(Player.GetActorLocation()).Equals({-3402, 1440}, 4)
+                    || Quest.ResumeMaps.FindRef(4) != 52 || !Travel->VisitedLevels.Contains(TEXT("/Game/Maps/L51"))
+                    || Level->FindWadSector({-1706, 3488}) != 154
+                    || Level->FindWadSector({-2400, 3712.5}) != INDEX_NONE)
+                {
+                    return Finish(&Player, TEXT("the L52 checkpoint lost the repaired courtyard, reset gate, exit approach, or campaign state"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the L52 exit checkpoint reloads with the quest active, gate reset, and courtyard boundary repaired."));
+                return Finish(&Player);
+            }
+            return TempleReview == ETempleReview::L51 ? TickTempleL51(**Level, Player) : TickTempleL52(**Level, Player);
+        }
+
         bool TickElmoreFinal(UWorld& Current, ANativeWadPlayer& Player, const UNativeWadTravelState& Travel)
         {
             if (Current.GetAuthGameMode<ANativeWadTownGameMode>())
@@ -5506,7 +6196,8 @@ namespace
             APlayerController* Controller = Current ? Current->GetFirstPlayerController() : nullptr;
             ANativeWadPlayer* Player = Controller ? Cast<ANativeWadPlayer>(Controller->GetPawn()) : nullptr;
             const double Now = FPlatformTime::Seconds();
-            if (Now - StartTime > (bRiverReview || bRavineReview || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure
+            if (Now - StartTime > (bCampaignChain ? 360.0
+                : bRiverReview || bRavineReview || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure
                 ? 270.0 : bSlice ? 180.0 : 120.0))
             {
                 return Finish(Player, TEXT("the review timed out"));
@@ -5526,6 +6217,14 @@ namespace
             if (UndeadReview != EUndeadReview::None)
             {
                 return TickUndead(*Current, *Player);
+            }
+            if (TempleReview != ETempleReview::None)
+            {
+                return TickTemple(*Current, *Player);
+            }
+            if (CampaignRoute || CampaignLaunch)
+            {
+                return TickCampaign(*Current, *Player);
             }
             if (L25Review != EL25Review::None)
             {
@@ -5849,6 +6548,15 @@ bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 I
 
 bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, const FString& Mode)
 {
+    const bool bCampaignChain = Mode.StartsWith(TEXT("campaign")) && Mode.EndsWith(TEXT("chain"));
+    const FString CampaignMode = bCampaignChain ? Mode.LeftChop(5) : Mode;
+    const auto* CampaignRoute = Algo::FindByPredicate(CampaignRoutes,
+        [&CampaignMode](const FCampaignRoute& Route) { return CampaignMode == FString::Printf(TEXT("campaignl%d"), Route.Map); });
+    const auto* CampaignLaunch = Algo::FindByPredicate(CampaignQuests,
+        [&CampaignMode](const FCampaignTurnIn& Quest) { return CampaignMode == FString::Printf(TEXT("campaigntown%d"), Quest.Quest); });
+    const ETempleReview TempleReview = Mode == TEXT("templelaunch") ? ETempleReview::Launch
+        : Mode == TEXT("templel51") ? ETempleReview::L51 : Mode == TEXT("templel52") ? ETempleReview::L52
+        : Mode == TEXT("templel52reload") ? ETempleReview::Reload : ETempleReview::None;
     const EUndeadReview UndeadReview = Mode == TEXT("undeadlaunch") ? EUndeadReview::Launch
         : Mode == TEXT("undeadcastle") ? EUndeadReview::Castle : Mode == TEXT("undeadtraps") ? EUndeadReview::Traps
         : Mode == TEXT("undeadkeep") ? EUndeadReview::Keep : Mode == TEXT("undeadboss") ? EUndeadReview::Boss
@@ -5876,7 +6584,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : Mode == TEXT("townstart") ? ETownReview::Start
         : Mode == TEXT("townscroll") ? ETownReview::Scroll : ETownReview::None;
     const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start
-        || TownReview == ETownReview::Scroll || L25Review == EL25Review::ElmoreLaunch || UndeadReview == EUndeadReview::Launch;
+        || TownReview == ETownReview::Scroll || L25Review == EL25Review::ElmoreLaunch
+        || UndeadReview == EUndeadReview::Launch || TempleReview == ETempleReview::Launch || CampaignLaunch;
     const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
         : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
     const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
@@ -5887,7 +6596,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
     const bool bDoorReload = Mode == TEXT("doorreload");
     const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
-    const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : bStartsInL20 ? TEXT("L20")
+    const FString CampaignMap = CampaignRoute ? FString::Printf(TEXT("L%d"), CampaignRoute->Map) : FString();
+    const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : CampaignRoute ? *CampaignMap : bStartsInL20 ? TEXT("L20")
+        : TempleReview == ETempleReview::L51 ? TEXT("L51") : TempleReview != ETempleReview::None ? TEXT("L52")
         : UndeadReview == EUndeadReview::Castle ? TEXT("L231") : UndeadReview == EUndeadReview::Traps ? TEXT("L75")
         : UndeadReview == EUndeadReview::Keep ? TEXT("L10") : UndeadReview != EUndeadReview::None ? TEXT("L12")
         : L25Review >= EL25Review::ElmoreL153Puzzles ? TEXT("L153") : L25Review == EL25Review::ElmoreL152 ? TEXT("L152")
@@ -5922,6 +6633,10 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bDoorReload = bDoorReload;
     Review->TownReview = TownReview;
     Review->UndeadReview = UndeadReview;
+    Review->TempleReview = TempleReview;
+    Review->CampaignRoute = CampaignRoute;
+    Review->CampaignLaunch = CampaignLaunch;
+    Review->bCampaignChain = bCampaignChain;
     Review->L25Review = L25Review;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;

@@ -22,6 +22,7 @@ namespace
     constexpr double UseReach = 64.0;
     constexpr int32 ScriptBudget = 512;
     constexpr int32 PoisonMissileDamage = 250;
+    constexpr int32 PoisonCrossbowDamage = 300;
     constexpr double AmbientRadius = 500.0;
 
     USoundWaveProcedural* MakeWadSound(const FWadSoundSample& Sample, bool bLoop)
@@ -644,10 +645,12 @@ int32 ANativeWadLevel::CountPlayingAmbientEmitters(int32 Sound) const
 
 void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
 {
-    const EWadBoltEffect Effect = Command.Target == 4015 ? EWadBoltEffect::Poison
+    const EWadBoltEffect Effect = Command.Target == 4015 || Command.Target == NativeWadRules::PoisonCrossbowBolt
+        ? EWadBoltEffect::Poison
         : Command.Target == 4016 ? EWadBoltEffect::Paralyze
         : Command.Target == 4012 ? EWadBoltEffect::LockDoor : EWadBoltEffect::Damage;
-    const int32 Damage = Effect == EWadBoltEffect::Poison ? PoisonMissileDamage
+    const int32 Damage = Command.Target == NativeWadRules::PoisonCrossbowBolt ? PoisonCrossbowDamage
+        : Effect == EWadBoltEffect::Poison ? PoisonMissileDamage
         : Command.Target == 4005 ? 750 : Command.Target == 4006 ? 1000
         : Command.Target == NativeWadRules::PiercingCrossbowBolt ? NativeWadRules::ChurchBoltDamage : 100;
     UMaterialInterface* Art = ScriptMissileMaterials.FindRef(Command.Target).Get();

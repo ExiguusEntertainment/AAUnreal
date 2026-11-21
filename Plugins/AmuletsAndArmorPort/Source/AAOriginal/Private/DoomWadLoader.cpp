@@ -269,6 +269,118 @@ const FDoomWadMapData* UDoomWadLoader::GetLastWadMapData()
     return AA::G_LastStats.bValid ? &AA::G_LastMap : nullptr;
 }
 
+static TArray<UE::Geometry::FIndex2i> NormalizeOverlappingWadEdges(
+    TConstArrayView<FVector2D> Vertices, TConstArrayView<UE::Geometry::FIndex2i> Edges)
+{
+    TMap<FIntPoint, uint8> EdgeDirections;
+    for (const UE::Geometry::FIndex2i& Edge : Edges)
+    {
+        const FVector2D Origin = Vertices[Edge.A];
+        const FVector2D Direction = Vertices[Edge.B] - Origin;
+        const double LengthSquared = Direction.SizeSquared();
+        TArray<TPair<double, int32>, TInlineAllocator<4>> Points{{0, Edge.A}, {LengthSquared, Edge.B}};
+        for (int32 Index = 0; Index < Vertices.Num(); ++Index)
+        {
+            const FVector2D Offset = Vertices[Index] - Origin;
+            const double Along = FVector2D::DotProduct(Direction, Offset);
+            if (Along > 0 && Along < LengthSquared && FVector2D::CrossProduct(Direction, Offset) == 0)
+            {
+                Points.Emplace(Along, Index);
+            }
+        }
+        Points.Sort([](const auto& A, const auto& B) { return A.Key < B.Key; });
+        for (int32 Index = 1; Index < Points.Num(); ++Index)
+        {
+            const int32 A = Points[Index - 1].Value;
+            const int32 B = Points[Index].Value;
+            const FIntPoint Segment(FMath::Min(A, B), FMath::Max(A, B));
+            EdgeDirections.FindOrAdd(Segment) |= A < B ? 1 : 2;
+        }
+    }
+
+    TArray<UE::Geometry::FIndex2i> Result;
+    // Collapse duplicates along the same side. Opposing edges put the sector on both sides of the segment.
+    for (const auto& [Segment, Direction] : EdgeDirections)
+    {
+        if (Direction == 1)
+        {
+            Result.Emplace(Segment.X, Segment.Y);
+        }
+        else if (Direction == 2)
+        {
+            Result.Emplace(Segment.Y, Segment.X);
+        }
+    }
+    return Result;
+}
+
+static bool SplitCrossingWadEdges(TArray<FVector2D>& Vertices, TArray<UE::Geometry::FIndex2i>& Edges)
+{
+    using FPointOnEdge = TPair<double, int32>;
+    TArray<TArray<FPointOnEdge, TInlineAllocator<4>>> Cuts;
+    Cuts.SetNum(Edges.Num());
+    bool bFoundCrossing = false;
+    for (int32 First = 0; First < Edges.Num(); ++First)
+    {
+        const FVector2D A = Vertices[Edges[First].A];
+        const FVector2D DirectionA = Vertices[Edges[First].B] - A;
+        for (int32 Second = First + 1; Second < Edges.Num(); ++Second)
+        {
+            const FVector2D B = Vertices[Edges[Second].A];
+            const FVector2D DirectionB = Vertices[Edges[Second].B] - B;
+            const double Cross = FVector2D::CrossProduct(DirectionA, DirectionB);
+            if (Cross == 0)
+            {
+                continue;
+            }
+            const double AlongA = FVector2D::CrossProduct(B - A, DirectionB) / Cross;
+            const double AlongB = FVector2D::CrossProduct(B - A, DirectionA) / Cross;
+            if (AlongA <= 0 || AlongA >= 1 || AlongB <= 0 || AlongB >= 1)
+            {
+                continue;
+            }
+            const FVector2D Point = A + AlongA * DirectionA;
+            int32 Vertex = Vertices.IndexOfByPredicate([&Point](const FVector2D& Existing)
+            {
+                return Existing.Equals(Point, UE_DOUBLE_KINDA_SMALL_NUMBER);
+            });
+            if (Vertex == INDEX_NONE)
+            {
+                Vertex = Vertices.Add(Point);
+            }
+            Cuts[First].AddUnique({AlongA, Vertex});
+            Cuts[Second].AddUnique({AlongB, Vertex});
+            bFoundCrossing = true;
+        }
+    }
+    if (!bFoundCrossing)
+    {
+        return false;
+    }
+
+    TArray<UE::Geometry::FIndex2i> Result;
+    for (int32 Index = 0; Index < Edges.Num(); ++Index)
+    {
+        auto& Points = Cuts[Index];
+        Points.Sort([](const FPointOnEdge& A, const FPointOnEdge& B) { return A.Key < B.Key; });
+        int32 Start = Edges[Index].A;
+        for (const FPointOnEdge& Cut : Points)
+        {
+            if (Start != Cut.Value)
+            {
+                Result.Emplace(Start, Cut.Value);
+                Start = Cut.Value;
+            }
+        }
+        if (Start != Edges[Index].B)
+        {
+            Result.Emplace(Start, Edges[Index].B);
+        }
+    }
+    Edges = MoveTemp(Result);
+    return true;
+}
+
 bool UDoomWadLoader::GetLastWadSectorFootprint(int32 SectorIndex, FDoomWadSectorFootprint& OutFootprint)
 {
     OutFootprint = FDoomWadSectorFootprint();
@@ -280,7 +392,6 @@ bool UDoomWadLoader::GetLastWadSectorFootprint(int32 SectorIndex, FDoomWadSector
 
     FDoomWadSectorFootprint Footprint;
     TMap<FIntPoint, int32> VertexByPosition;
-    TArray<int32> EdgeBalance;
     TArray<UE::Geometry::FIndex2i> Constraints;
     const auto GetOrAddVertex = [&](const FWadVertex& Vertex)
     {
@@ -291,7 +402,6 @@ bool UDoomWadLoader::GetLastWadSectorFootprint(int32 SectorIndex, FDoomWadSector
         }
         const int32 Index = Footprint.Vertices.Emplace(Position.X, Position.Y);
         VertexByPosition.Add(Position, Index);
-        EdgeBalance.Add(0);
         return Index;
     };
 
@@ -316,29 +426,45 @@ bool UDoomWadLoader::GetLastWadSectorFootprint(int32 SectorIndex, FDoomWadSector
         }
         const int32 From = GetOrAddVertex(A);
         const int32 To = GetOrAddVertex(B);
-        ++EdgeBalance[From];
-        --EdgeBalance[To];
         Constraints.Emplace(From, To);
-        Footprint.BoundaryEdges.Emplace(From, To);
     }
 
-    for (int32 Balance : EdgeBalance)
+    TArray<UE::Geometry::FIndex3i> FilledTriangles;
+    const auto Fill = [&](TConstArrayView<UE::Geometry::FIndex2i> Edges)
     {
-        if (Balance != 0)
+        TArray<int32> EdgeBalance;
+        EdgeBalance.SetNumZeroed(Footprint.Vertices.Num());
+        for (const UE::Geometry::FIndex2i& Edge : Edges)
+        {
+            ++EdgeBalance[Edge.A];
+            --EdgeBalance[Edge.B];
+        }
+        if (Edges.Num() < 3 || EdgeBalance.ContainsByPredicate([](int32 Balance) { return Balance != 0; }))
         {
             return false;
         }
-    }
+        UE::Geometry::FDelaunay2 Triangulation;
+        FilledTriangles.Reset();
+        // Odd winding fills exterior rings and islands while keeping nested holes clear.
+        return Triangulation.Triangulate(Footprint.Vertices, Edges)
+            && Triangulation.GetFilledTriangles(FilledTriangles, Edges, UE::Geometry::FDelaunay2::EFillMode::OddWinding)
+            && !FilledTriangles.IsEmpty();
+    };
 
-    UE::Geometry::FDelaunay2 Triangulation;
-    TArray<UE::Geometry::FIndex3i> FilledTriangles;
-    // A triangle belongs to the sector when it is inside an odd number of closed rings.
-    // Crossing into a hole therefore clears it, and crossing into another nested island fills it.
-    if (Constraints.Num() < 3 || !Triangulation.Triangulate(Footprint.Vertices, Constraints)
-        || !Triangulation.GetFilledTriangles(FilledTriangles, Constraints, UE::Geometry::FDelaunay2::EFillMode::OddWinding)
-        || FilledTriangles.IsEmpty())
+    if (!Fill(Constraints))
     {
-        return false;
+        // Some maps have a short linedef lying on a longer boundary of the same sector.
+        Constraints = NormalizeOverlappingWadEdges(Footprint.Vertices, Constraints);
+        if (!Fill(Constraints)
+            && (!SplitCrossingWadEdges(Footprint.Vertices, Constraints) || !Fill(Constraints)))
+        {
+            return false;
+        }
+        Footprint.bNormalizedOverlap = true;
+    }
+    for (const UE::Geometry::FIndex2i& Edge : Constraints)
+    {
+        Footprint.BoundaryEdges.Emplace(Edge.A, Edge.B);
     }
 
     Footprint.Triangles.Reserve(3 * FilledTriangles.Num());
