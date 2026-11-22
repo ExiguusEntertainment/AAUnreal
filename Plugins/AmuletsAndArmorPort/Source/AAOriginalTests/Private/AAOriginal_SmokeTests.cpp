@@ -3,8 +3,13 @@
 #include "AAOriginalAPI.h"
 #include "DoomWadLoader.h"
 #include "DoomWadWalls.h"
+#include "NativeWadLevel.h"
+#include "NativeWadPlayer.h"
 #include "NativeWadRules.h"
 #include "SectorMeshBuilderActor.h"
+#include "Camera/CameraTypes.h"
+#include "Components/BoxComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
@@ -26,6 +31,82 @@ bool FAAOriginalModuleLoads::RunTest(const FString& Parameters)
     IModuleInterface* Module = FModuleManager::Get().LoadModule("AAOriginal");
     TestNotNull(TEXT("AAOriginal module should load"), Module);
     return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadCameraNearPlane, "AAOriginal.WAD.Gameplay.CameraNearPlane",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginal_WadCameraNearPlane::RunTest(const FString& Parameters)
+{
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for WAD camera"), World))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>();
+    if (!TestNotNull(TEXT("Native WAD player"), Player))
+    {
+        return false;
+    }
+    FMinimalViewInfo View;
+    Player->CalcCamera(0.0f, View);
+    const float EyeOffset = View.Location.Z - Player->GetActorLocation().Z;
+    const float CapsuleCapOffset = FMath::Max(0.0f, EyeOffset - (Player->CapsuleHalfHeight - Player->CapsuleRadius));
+    const float Clearance = FMath::Sqrt(FMath::Square(Player->CapsuleRadius) - FMath::Square(CapsuleCapOffset));
+    return TestTrue(TEXT("The perspective near plane stays inside the capsule at eye height"),
+        View.PerspectiveNearClipPlane > 0.0f && View.PerspectiveNearClipPlane < Clearance);
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginal_WadWallPenetration, "AAOriginal.WAD.Gameplay.WallPenetrationRecovery",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginal_WadWallPenetration::RunTest(const FString& Parameters)
+{
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for WAD wall recovery"), World))
+    {
+        return false;
+    }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadLevel* Level = World->SpawnActor<ANativeWadLevel>();
+    const FVector SafePosition(-27, 0, 32);
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>(SafePosition, FRotator::ZeroRotator);
+    if (!TestNotNull(TEXT("Native level"), Level) || !TestNotNull(TEXT("Native player"), Player))
+    {
+        return false;
+    }
+
+    const auto AddWall = [Level](double X, double HalfWidth)
+    {
+        UBoxComponent* Wall = NewObject<UBoxComponent>(Level);
+        Wall->SetupAttachment(Level->GetRootComponent());
+        Wall->SetRelativeLocation(FVector(X, 0, 32));
+        Wall->SetBoxExtent(FVector(HalfWidth, 80, 64));
+        Wall->SetCollisionProfileName(TEXT("BlockAll"));
+        Wall->RegisterComponent();
+    };
+    AddWall(15, 15);
+    AddWall(-10, 1);
+    UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+    Movement->bRunPhysicsWithNoController = true;
+    Movement->SetMovementMode(MOVE_Flying);
+    Movement->TickComponent(1.0f / 60.0f, LEVELTICK_All, nullptr);
+    TestTrue(TEXT("The movement update recorded the clear approach"), Movement->GetLastUpdateLocation().Equals(SafePosition));
+
+    const FVector Overlapping(-4, 0, 32);
+    Player->SetActorLocation(Overlapping, false, nullptr, ETeleportType::TeleportPhysics);
+    const FCollisionShape Capsule = FCollisionShape::MakeCapsule(Player->CapsuleRadius, Player->CapsuleHalfHeight);
+    const FCollisionQueryParams Query(SCENE_QUERY_STAT(WadPenetrationTest), false, Player);
+    TestTrue(TEXT("The test starts inside both blocking wall spans"),
+        World->OverlapBlockingTestByChannel(Overlapping, FQuat::Identity, ECC_Pawn, Capsule, Query));
+
+    FHitResult Hit;
+    Movement->SafeMoveUpdatedComponent(FVector(1, 0, 0), FQuat::Identity, true, Hit);
+    const FVector Recovered = Player->GetActorLocation();
+    TestTrue(TEXT("Recovery stays on the original side of the wall"), Recovered.X < -21.0);
+    return TestFalse(TEXT("The recovered capsule is clear"),
+        World->OverlapBlockingTestByChannel(Recovered, FQuat::Identity, ECC_Pawn, Capsule, Query));
 }
 
 // CRC32 known vectors

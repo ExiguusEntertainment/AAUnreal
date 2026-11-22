@@ -16,12 +16,14 @@
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
+#include "NativeWadMovement.h"
 #include "NativeWadTown.h"
 #include "TimerManager.h"
 
 using namespace NativeWadRules;
 
-ANativeWadPlayer::ANativeWadPlayer()
+ANativeWadPlayer::ANativeWadPlayer(const FObjectInitializer& ObjectInitializer)
+    : Super(ObjectInitializer.SetDefaultSubobjectClass<UNativeWadMovement>(CharacterMovementComponentName))
 {
     GetCapsuleComponent()->InitCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
     GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
@@ -33,6 +35,12 @@ ANativeWadPlayer::ANativeWadPlayer()
     ViewCamera->SetupAttachment(GetCapsuleComponent());
     ViewCamera->SetRelativeLocation(FVector(0, 0, BaseEyeHeight));
     ViewCamera->bUsePawnControlRotation = true;
+}
+
+void ANativeWadPlayer::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
+{
+    Super::CalcCamera(DeltaTime, OutResult);
+    OutResult.PerspectiveNearClipPlane = 1.0f;
 }
 
 void ANativeWadPlayer::BeginPlay()

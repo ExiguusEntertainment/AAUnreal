@@ -17,7 +17,8 @@ public class AAOriginal : ModuleRules
         // Editor-only helpers for map building UI/actions
         if (Target.bBuildEditor)
         {
-            PrivateDependencyModuleNames.AddRange(new[] { "UnrealEd", "MeshDescription", "StaticMeshDescription", "AssetRegistry" });
+            PrivateDependencyModuleNames.AddRange(new[] { "UnrealEd", "MeshDescription", "StaticMeshDescription", "AssetRegistry",
+                "PropertyEditor", "Slate", "SlateCore", "ToolMenus", "ToolWidgets" });
         }
 
         PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));

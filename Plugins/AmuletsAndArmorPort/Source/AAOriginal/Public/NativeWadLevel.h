@@ -441,7 +441,7 @@ private:
 
     TMap<int32, FActiveDoor> ActiveDoors;
 
-    UPROPERTY(VisibleAnywhere, Category="WAD")
+    UPROPERTY()
     TArray<FAAWadNativeSector> Sectors;
 
     UPROPERTY()

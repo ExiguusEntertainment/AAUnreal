@@ -199,7 +199,9 @@ namespace
             return nullptr;
         }
 
+#if WITH_EDITORONLY_DATA
         Texture->MipGenSettings = TMGS_NoMipmaps;
+#endif
         Texture->NeverStream = true;
         Texture->Filter = TF_Nearest;
         Texture->AddressX = TA_Wrap;

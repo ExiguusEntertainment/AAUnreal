@@ -674,9 +674,11 @@ void ANativeWadLevel::UpdateLine(int32 Index, bool bPersist)
         {
             continue;
         }
-        for (UStaticMeshComponent* Mesh : Sides[Side].Bands)
+        for (int32 Band = 0; Band < Sides[Side].Bands.Num(); ++Band)
         {
-            if (Mesh)
+            UStaticMeshComponent* Mesh = Sides[Side].Bands[Band];
+            if (Mesh && Mesh->IsVisible() && !Wall.Surfaces.ContainsByPredicate([Side, Band](const FWadWallSurface& Surface)
+                { return Surface.SideIndex == Side && uint8(Surface.Band) == Band; }))
             {
                 Mesh->SetVisibility(false);
             }

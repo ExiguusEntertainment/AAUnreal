@@ -11,7 +11,7 @@ The goal is a playable Unreal port of Amulets & Armor from a new game through th
 | 3. Core game systems | Verify combat, enemy AI, items and inventory, equipment, spells, and character progression against the original. | Steps 19–24 verify a Guardian fight, the ready hand, one spell, and the first priest level-up. |
 | 4. Authored levels and events | Import the remaining campaign maps and verify switches, lifts, traps, scripted events, and level exits. Track unsupported features and missing assets by map. | All 30 source maps are native. Staged replays verify Town Hall returns through Destruction. The remaining source asset and gameplay parity work is listed below. |
 | 5. Presentation and persistence | Restore sky and lighting behavior, audio, menus, HUD, and save/load. Verify that revisiting a level restores its state. | Disk checkpoints restore settled levels, ordinary door phases, scripted lifts, and pending waits. L301's positional stream and waterfall loops run with the source audio. |
-| 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | Planned |
+| 6. Campaign and release verification | Play the campaign from a fresh packaged build, resolve parity and performance issues, and verify release reproducibility. Define multiplayer scope and acceptance tests separately. | The fresh character completed Visions of Jugurtha and The Knights of Andrew. The Windows Development package passed Town Hall startup, the Destruction quest, and final save reload. |
 
 ## Native Unreal Level Import
 
@@ -331,6 +331,15 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - The L71 generator parser skips the stray character on its comment line, following the original parser's rule for recognizing generator records. The L61 torch on a one-sided wall uses the wall's source sector and retains its exact authored coordinates.
 - `CampaignTown6Chain` starts from `NativeWadCampaignTown5Review`. `CampaignL71Chain` resumes from the recorded L71 arrival. The successful Town Hall return saves `NativeWadCampaignTown6Review` with the orb consumed.
 - All 11 WAD automation tests passed, including the L52 overlapping boundary and the L73 crossed boundary. The final three quest replays use staged approaches and regular controls, with a controlled finishing hit for Elymas. The screenshots are in `Saved/Wad-Campaign-Finale-Review.html`.
+
+### Campaign playthrough and standalone verification
+
+117. **Start Visions of Jugurtha with a fresh character.** The `FreshCampaign` review opens Town Hall with no save, starts L30 with zero XP and no items, and walks L30, L301, L531, L31, and L22 with the same character. The replay fights both Guardians using regular controls and turns in the journal for 10 gold. `NativeWadFreshCampaignTown0` records the actual Town Hall return.
+118. **Continue through the campaign in quest order.** The same character accepted The Knights of Andrew, crossed L25's timed bridge and gate, activated both pressure plates, and used the generated key. In L20 the replay worked the switch wing and saved at the reopened timed gate. From that checkpoint it jumped onto the return step, opened the exit through the original pressure plate, and crossed into L60. The L60 replay walked from the original spawn, rotated all five statues, climbed the raised crossing, and recovered the Necklace of Andrew. Lady Marg took the necklace and awarded 20 gold. Continue with Elmore's Retreat from `NativeWadCampaignTown1Review`.
+119. **Verify the Windows build.** The archive manifest contains Town Hall and all 30 campaign levels. The packaged executable starts in Town Hall and launches L30. In the same build, the Destruction replay starts from the verified Lost City checkpoint, runs all five finale maps, and earns 100 gold and 350,000 experience. The build saves the quest result, and a new process restores that save. The archive is `Saved/Builds/Campaign-Win64/Windows`.
+
+- The L20 review resumes the same character and records movement frames over 100 ms. The offscreen Play-in-Editor sample started in 0.553 seconds and reached the south door with 1,854 movement frames sampled. The longest was 36.2 ms, and the log showed no NavMesh rebuild. The reported hitch, wall visibility, and stuck position still need a reproduction on the affected route. The WAD automation suite passed all 13 tests, including camera near-plane clearance and wall penetration recovery.
+- The staged L60 checks also verified the timed lift, teleport, and healing pool from `NativeWadCampaignL60Review`. `CampaignL60Chain` walks the continuous route from the original spawn, with rests in cover and normal Rejuvenate inputs.
 
 ### Gameplay parity follow-ups
 

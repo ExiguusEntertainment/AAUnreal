@@ -30,13 +30,31 @@
 #include "EngineUtils.h"
 #if WITH_EDITOR
 #include "AssetCompilingManager.h"
+#include "NativeWadEditor.h"
 #endif
 
 class FAAOriginalModule : public IModuleInterface, public FSelfRegisteringExec
 {
 public:
-    virtual void StartupModule() override {}
-    virtual void ShutdownModule() override {}
+    virtual void StartupModule() override
+    {
+#if WITH_EDITOR
+        if (GIsEditor && !IsRunningCommandlet())
+        {
+            RegisterNativeWadEditorTools();
+        }
+#endif
+    }
+
+    virtual void ShutdownModule() override
+    {
+#if WITH_EDITOR
+        if (GIsEditor && !IsRunningCommandlet())
+        {
+            UnregisterNativeWadEditorTools();
+        }
+#endif
+    }
 
     static FString ResolvePathOrProjectRelative(FString InPath)
     {
@@ -739,6 +757,14 @@ public:
 
     virtual bool Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar) override
     {
+#if WITH_EDITOR
+        if (FParse::Command(&Cmd, TEXT("AA.WADSURFACES")))
+        {
+            Ar.Log(OpenNativeWadSurfaceInspector() ? TEXT("Opened the WAD surface inspector.")
+                : TEXT("AA.WadSurfaces requires the Unreal Editor."));
+            return true;
+        }
+#endif
         if (FParse::Command(&Cmd, TEXT("AA.LOADWAD")))
         {
             FString WadPath = FParse::Token(Cmd, false);
@@ -1077,6 +1103,7 @@ public:
                     || Review == TEXT("l22trap") || Review == TEXT("liftsave") || Review == TEXT("liftreload")
                     || Review == TEXT("doorreload") || Review == TEXT("towntour") || Review == TEXT("townfailure")
                     || Review == TEXT("townreload") || Review == TEXT("townstart") || Review == TEXT("townscroll")
+                    || Review == TEXT("freshcampaign")
                     || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload")
                     || Review == TEXT("churchknights") || Review == TEXT("churchjourney") || Review == TEXT("churchl20reload")
                     || Review == TEXT("churchscenery") || Review == TEXT("churchl20scenery")

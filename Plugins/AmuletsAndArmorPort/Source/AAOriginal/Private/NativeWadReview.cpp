@@ -11,6 +11,7 @@
 #include "EngineUtils.h"
 #include "ImageUtils.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "NativeWadImport.h"
 #include "NativeWadLevel.h"
 #include "PhysicsEngine/BodySetup.h"

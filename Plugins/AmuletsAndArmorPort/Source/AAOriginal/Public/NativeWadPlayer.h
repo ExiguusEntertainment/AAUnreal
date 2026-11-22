@@ -16,8 +16,9 @@ class AAORIGINAL_API ANativeWadPlayer : public ACharacter
     GENERATED_BODY()
 
 public:
-    ANativeWadPlayer();
+    explicit ANativeWadPlayer(const FObjectInitializer& ObjectInitializer);
     virtual void BeginPlay() override;
+    virtual void CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult) override;
     virtual void SetupPlayerInputComponent(UInputComponent* Input) override;
     virtual void Tick(float DeltaSeconds) override;
     virtual FVector GetPawnViewLocation() const override;
