@@ -470,7 +470,7 @@ namespace
     enum class EUndeadReview { None, Launch, Castle, Traps, Keep, Boss, Return, Empty };
     enum class ETempleReview { None, Launch, L51, L52, Reload };
     enum class ECampaignAction { Place, Walk, Jump, Use, Floor, Ceiling, OpenDoor, HealthAtLeast, Pickup, Defeat, Frame,
-        Rejuvenate, ManaAtLeast, StatueAngle, Checkpoint };
+        Rejuvenate, ManaAtLeast, StatueAngle, Checkpoint, Teleport };
 
     struct FCampaignAction
     {
@@ -478,6 +478,7 @@ namespace
         FVector Target;
         int32 Index = INDEX_NONE;
         const TCHAR* Label = nullptr;
+        FVector2D Destination = FVector2D::ZeroVector;
     };
 
     struct FCampaignRoute
@@ -594,6 +595,7 @@ namespace
         {ECampaignAction::Walk, {212, 1903, 0}}, {ECampaignAction::Walk, {212, 1946, 0}},
     };
 
+    constexpr int32 GreaterHealingPotion = 801;
     const FCampaignAction Campaign60[] = {
         // The three entrance doors lead around to the lower pools.
         {ECampaignAction::Rejuvenate, {0, 0, 1800}}, {ECampaignAction::ManaAtLeast, {0, 0, 3000}},
@@ -667,6 +669,8 @@ namespace
         {ECampaignAction::Walk, {3179, 3501, 0}},
         {ECampaignAction::Walk, {3221, 3536, 0}}, {ECampaignAction::Walk, {3975, 3518, 0}},
         {ECampaignAction::Walk, {4034, 3535, 0}},
+        {ECampaignAction::Pickup, {4034, 3573, 330}, GreaterHealingPotion, TEXT("the first authored L60 healing potion")},
+        {ECampaignAction::Pickup, {4034, 3500, 330}, GreaterHealingPotion, TEXT("the second authored L60 healing potion")},
         {ECampaignAction::Pickup, {4020, 3516, 330}, NativeWadRules::AndrewNecklace, TEXT("the original Necklace of Andrew pickup")},
         {ECampaignAction::Floor, {0, 0, 290}, 247, TEXT("L60's pedestal opens the original exit gate")},
         {ECampaignAction::Walk, {4001, 3561, 0}}, {ECampaignAction::Walk, {3900, 3561, 0}},
@@ -690,6 +694,7 @@ namespace
         {ECampaignAction::Place, {1344, 6724, 0}}, {ECampaignAction::Walk, {1344, 6782, 0}},
     };
     const FCampaignAction Campaign44[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2000}, INDEX_NONE, TEXT("the carried character recovers before facing Elymas")},
         {ECampaignAction::Place, {-714, -414, 0}}, {ECampaignAction::Walk, {-650, -414, 0}},
         {ECampaignAction::Floor, {0, 0, 320}, 108},
         {ECampaignAction::Place, {54, -416, 0}}, {ECampaignAction::Walk, {-8, -416, 0}},
@@ -767,10 +772,61 @@ namespace
         {ECampaignAction::Frame, {478, 2632, 445}, INDEX_NONE, TEXT("last-key-gate")},
         {ECampaignAction::Place, {-190, 3296, 0}}, {ECampaignAction::Walk, {-122, 3296, 0}},
     };
+    const FCampaignAction Campaign64[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2050}}, {ECampaignAction::ManaAtLeast, {0, 0, 3350}},
+        {ECampaignAction::Checkpoint, {}, INDEX_NONE, TEXT("NativeWadCampaignL64RestedReview")},
+        {ECampaignAction::Walk, {971, 2657, 0}}, {ECampaignAction::Walk, {211, 2569, 0}},
+        {ECampaignAction::Walk, {19, 2337, 0}}, {ECampaignAction::Walk, {28, 2192, 0}},
+        {ECampaignAction::Use, {28, 2160, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 255},
+        {ECampaignAction::Walk, {24, 2108, 0}}, {ECampaignAction::Walk, {32, 1392, 0}},
+        {ECampaignAction::Use, {32, 1360, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 155},
+        {ECampaignAction::Walk, {35, 1321, 0}}, {ECampaignAction::Walk, {51, 889, 0}},
+        {ECampaignAction::Walk, {91, 865, 0}},
+        {ECampaignAction::Walk, {571, 849, 0}}, {ECampaignAction::Walk, {1043, 337, 0}},
+        {ECampaignAction::Walk, {1299, 161, 0}}, {ECampaignAction::Walk, {1267, -247, 0}},
+        {ECampaignAction::Walk, {1131, -319, 0}}, {ECampaignAction::Walk, {299, -391, 0}},
+        {ECampaignAction::Walk, {59, -367, 0}}, {ECampaignAction::Walk, {27, -335, 0}},
+        {ECampaignAction::Walk, {19, 249, 0}}, {ECampaignAction::Use, {18, 280, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 38}, {ECampaignAction::Walk, {3, 305, 0}},
+        {ECampaignAction::Walk, {-43, 354, 0}},
+        {ECampaignAction::Use, {-77, 356, 45}}, {ECampaignAction::OpenDoor, {0, 0, 75}, 279},
+        {ECampaignAction::Walk, {-117, 353, 0}}, {ECampaignAction::Walk, {-349, 337, 0}},
+        {ECampaignAction::Walk, {-357, 329, 0}}, {ECampaignAction::Walk, {-469, 145, 0}},
+        // Leave room to pass south of the barbarian at (-512, 128).
+        {ECampaignAction::Walk, {-449, 75, 0}}, {ECampaignAction::Walk, {-630, 73, 0}},
+        {ECampaignAction::Walk, {-765, 105, 0}}, {ECampaignAction::Walk, {-907, 108, 0}},
+    };
+    const FCampaignAction Campaign65[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2050}}, {ECampaignAction::ManaAtLeast, {0, 0, 3300}},
+        {ECampaignAction::Walk, {-800, 2232, 0}}, {ECampaignAction::Walk, {-792, 2192, 0}},
+        {ECampaignAction::Use, {-792, 2160, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 181},
+        {ECampaignAction::Walk, {-790, 2124, 0}}, {ECampaignAction::Walk, {-752, 2112, 0}},
+        {ECampaignAction::Walk, {-416, 1912, 0}}, {ECampaignAction::Walk, {-216, 1728, 0}},
+        {ECampaignAction::Walk, {800, 1696, 0}}, {ECampaignAction::Walk, {1104, 1744, 0}},
+        {ECampaignAction::Walk, {1304, 2076, 0}}, {ECampaignAction::Use, {1314, 2112, 144}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 38}, {ECampaignAction::Walk, {1318, 2186, 0}},
+        {ECampaignAction::Walk, {1320, 2210, 0}}, {ECampaignAction::Use, {1280, 2216, 144}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 112}, {ECampaignAction::Walk, {1216, 2255, 0}},
+        {ECampaignAction::Walk, {1221, 2360, 0}}, {ECampaignAction::Use, {1221, 2400, 144}},
+        {ECampaignAction::Walk, {1120, 2310, 0}},
+        {ECampaignAction::Teleport, {1120, 2373, 0}, INDEX_NONE, TEXT("L65's first teleporter reaches its authored destination"), {1628, 2370}},
+        {ECampaignAction::Walk, {1470, 2368, 0}}, {ECampaignAction::Use, {1466, 2400, 144}},
+        {ECampaignAction::Teleport, {1628, 2370, 0}, INDEX_NONE, TEXT("L65's second teleporter reaches the exit lift area"), {2234, 1600}},
+        // Go around sector 117, which teleports back to the first pad.
+        {ECampaignAction::Walk, {2234, 1672, 0}}, {ECampaignAction::Walk, {2460, 1662, 0}},
+        {ECampaignAction::Walk, {2624, 1619, 0}}, {ECampaignAction::Use, {2656, 1619, 233}},
+        {ECampaignAction::OpenDoor, {0, 0, 58}, 154}, {ECampaignAction::Walk, {2706, 1619, 0}},
+        {ECampaignAction::Floor, {0, 0, 0}, 153, TEXT("L65's original lift lowers to the exit floor")},
+        {ECampaignAction::Use, {2733, 1619, 42}}, {ECampaignAction::OpenDoor, {0, 0, 58}, 172},
+        {ECampaignAction::Walk, {2852, 1619, 0}},
+    };
     const FCampaignRoute CampaignRoutes[] = {
         {25, 1, 20, 85, {298, 1636}, Campaign25},
         {20, 1, 60, 138, {-1084, 4630}, Campaign20},
         {60, 1, 0, 284, {-3076, -3}, Campaign60},
+        {64, 2, 65, 227, {1984, 2704}, Campaign64},
+        {65, 2, 34, 239, {-852, 2282}, Campaign65},
+        {34, 2, 151, 180, {912, 1596}, {}},
         {52, 4, 41, 238, {760, 3540}, Campaign52},
         {41, 4, 44, 323, {7104, 4152}, Campaign41},
         {44, 4, 0, 71, {-3572, 758}, Campaign44},
@@ -964,6 +1020,7 @@ namespace
         bool bCampaignActionStarted = false;
         bool bCampaignExitRecorded = false;
         bool bCampaignChain = false;
+        bool bCampaignMovementSample = false;
         bool bCampaignArrivedInRun = false;
         double CampaignStepTime = -1.0;
         double PreviousCampaignFrame = 0.0;
@@ -1051,7 +1108,7 @@ namespace
             }
         }
 
-        void BeginFreshCampaignMap(UWorld& Current, ANativeWadPlayer& Player)
+        void BeginCampaignMap(UWorld& Current, ANativeWadPlayer& Player)
         {
             Stop(Player);
             if (HeldKey)
@@ -1075,7 +1132,8 @@ namespace
             const FVector2D Offset = Target - FVector2D(Player.GetActorLocation());
             const double AcceptanceRadius = bRiverReview ? 16.0 : bRavineReview || bLiftCheckpointReview ? 12.0
                 : bSecondMap || Stage == EStage::Arrival ? 14.0
-                : CampaignRoute && CampaignRoute->Map == 60 ? 12.0 : CampaignRoute && CampaignRoute->Map == 20 ? 8.0 : 5.0;
+                : CampaignRoute && CampaignRoute->Map == 60 ? 12.0
+                : CampaignRoute && (CampaignRoute->Map == 20 || CampaignRoute->Map == 64 || CampaignRoute->Map == 65) ? 8.0 : 5.0;
             if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
                 Stop(Player);
@@ -4816,6 +4874,22 @@ namespace
             }
         }
 
+        void ReadyCampaignHealingPotion(ANativeWadPlayer& Player)
+        {
+            if (Player.IsInventoryOpen())
+            {
+                const int32 Slot = Player.GetCarriedItems().Find(GreaterHealingPotion);
+                APlayerController* Controller = Player.GetController<APlayerController>();
+                ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+                if (Hud && Slot != INDEX_NONE)
+                {
+                    Hud->ClickHUD(Hud->InventorySlotCenter(Slot));
+                    Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
+                }
+            }
+            Press(Player, EKeys::I);
+        }
+
         bool TickCampaignAction(ANativeWadLevel& Level, ANativeWadPlayer& Player, const FCampaignAction& Step)
         {
             switch (Step.Action)
@@ -4823,12 +4897,35 @@ namespace
             case ECampaignAction::Place:
                 return PlaceReviewPlayer(Level, Player, FVector2D(Step.Target));
             case ECampaignAction::Walk:
-                if ((CampaignRoute->Map == 20 || CampaignRoute->Map == 60)
+            {
+                const bool bElmore = CampaignRoute->Quest == 2;
+                if (bElmore && Player.GetItemCount(GreaterHealingPotion) > 0)
+                {
+                    if (Player.GetReadyItem() != GreaterHealingPotion || Player.IsInventoryOpen())
+                    {
+                        ReadyCampaignHealingPotion(Player);
+                        return false;
+                    }
+                    if (Player.GetHealth() < 1050)
+                    {
+                        Press(Player, EKeys::LeftControl);
+                    }
+                }
+                else if ((CampaignRoute->Map == 20 || CampaignRoute->Map == 60 || bElmore)
                     && (Player.GetHealth() < 1050 || !Player.GetRunes().IsEmpty()))
                 {
                     CastCampaignRejuvenate(Player);
                 }
                 return WalkTo(Player, FVector2D(Step.Target));
+            }
+            case ECampaignAction::Teleport:
+                if (FVector2D(Player.GetActorLocation()).Equals(Step.Destination, 6.0))
+                {
+                    Stop(Player);
+                    return true;
+                }
+                WalkTo(Player, FVector2D(Step.Target));
+                return false;
             case ECampaignAction::Jump:
             {
                 const FVector2D Target(Step.Target);
@@ -4958,6 +5055,10 @@ namespace
             {
                 return Finish(&Player, TEXT("the campaign replay lost the player or travel state"));
             }
+            if (bCampaignMovementSample && WalkFrameCount >= 1800)
+            {
+                return Finish(&Player);
+            }
             const FWadQuestProgress& Quest = Travel->Quest;
             const bool bTown = Current.GetAuthGameMode<ANativeWadTownGameMode>() != nullptr;
             if (bTown && CampaignLaunch)
@@ -5048,8 +5149,7 @@ namespace
                     {
                         CampaignRoute = Arrival;
                         CampaignLaunch = nullptr;
-                        SourceWorld = &Current;
-                        NextPoint = 0;
+                        BeginCampaignMap(Current, Player);
                         bCampaignArrivedInRun = true;
                         bCampaignExitRecorded = false;
                         bCampaignActionStarted = false;
@@ -5510,7 +5610,7 @@ namespace
             }
             if (bFreshCampaign)
             {
-                BeginFreshCampaignMap(Current, Player);
+                BeginCampaignMap(Current, Player);
                 TownReview = ETownReview::None;
                 bSlice = true;
                 bCampaign = true;
@@ -6334,7 +6434,7 @@ namespace
             case ERiverStage::Arrival:
                 if (bFreshCampaign)
                 {
-                    BeginFreshCampaignMap(Current, Player);
+                    BeginCampaignMap(Current, Player);
                     bRiverReview = false;
                     bRavineReview = true;
                     return true;
@@ -6438,7 +6538,7 @@ namespace
                 }
                 if (bFreshCampaign)
                 {
-                    BeginFreshCampaignMap(Current, Player);
+                    BeginCampaignMap(Current, Player);
                     bRavineStarted = false;
                     Trail.Reset();
                     UE_LOG(LogTemp, Display, TEXT("Fresh campaign continued into %s with the same character."), Destination);
@@ -6926,7 +7026,7 @@ namespace
             APlayerController* Controller = Current ? Current->GetFirstPlayerController() : nullptr;
             ANativeWadPlayer* Player = Controller ? Cast<ANativeWadPlayer>(Controller->GetPawn()) : nullptr;
             const double Now = FPlatformTime::Seconds();
-            if (Now - StartTime > (bFreshCampaign ? 900.0 : bCampaignChain || (CampaignRoute && CampaignRoute->Map == 20) ? 360.0
+            if (Now - StartTime > (bFreshCampaign || CampaignRoute || CampaignLaunch ? 900.0
                 : bRiverReview || bRavineReview || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure
                 ? 270.0 : bSlice ? 180.0 : 120.0))
             {
@@ -7039,7 +7139,7 @@ namespace
                 }
                 if (bFreshCampaign)
                 {
-                    BeginFreshCampaignMap(*Current, *Player);
+                    BeginCampaignMap(*Current, *Player);
                     bSlice = false;
                     bCampaign = false;
                     bRiverReview = true;
@@ -7297,7 +7397,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
 {
     const bool bFreshCampaign = Mode == TEXT("freshcampaign");
     const bool bCampaignChain = Mode.StartsWith(TEXT("campaign")) && Mode.EndsWith(TEXT("chain"));
-    const FString CampaignMode = bCampaignChain ? Mode.LeftChop(5) : Mode;
+    const bool bCampaignMovementSample = Mode == TEXT("campaignl20timing");
+    const FString CampaignMode = bCampaignMovementSample ? TEXT("campaignl20") : bCampaignChain ? Mode.LeftChop(5) : Mode;
     const auto* CampaignRoute = Algo::FindByPredicate(CampaignRoutes,
         [&CampaignMode](const FCampaignRoute& Route)
         {
@@ -7395,6 +7496,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->CampaignRoute = CampaignRoute;
     Review->CampaignLaunch = CampaignLaunch;
     Review->bCampaignChain = bCampaignChain;
+    Review->bCampaignMovementSample = bCampaignMovementSample;
     Review->bFreshCampaign = bFreshCampaign;
     Review->L25Review = L25Review;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
