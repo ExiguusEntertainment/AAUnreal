@@ -84,7 +84,11 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     }
     for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item; ++Item)
     {
-        if (!Item->Tags.IsEmpty())
+        if (Item->IsDropped())
+        {
+            Checkpoint.DroppedItems.Add({Item->GetItemType(), Item->GetActorLocation()});
+        }
+        else if (!Item->Tags.IsEmpty())
         {
             Checkpoint.RemainingPickups.Add(Item->Tags[0]);
         }
@@ -289,6 +293,32 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
                 DormantPickups.Add(Generator.Pickup);
             }
         }
+    }
+    TArray<ANativeWadPickup*> OldDrops;
+    for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item; ++Item)
+    {
+        if (Item->IsDropped())
+        {
+            OldDrops.Add(*Item);
+        }
+    }
+    TArray<ANativeWadPickup*> RestoredDrops;
+    for (const FWadSavedDrop& Drop : Checkpoint.DroppedItems)
+    {
+        ANativeWadPickup* Item = Drop.Position.ContainsNaN() ? nullptr : ANativeWadPickup::SpawnDropped(*this, Drop.Type, Drop.Position);
+        if (!Item)
+        {
+            for (ANativeWadPickup* Restored : RestoredDrops)
+            {
+                Restored->Destroy();
+            }
+            return false;
+        }
+        RestoredDrops.Add(Item);
+    }
+    for (ANativeWadPickup* Item : OldDrops)
+    {
+        Item->Destroy();
     }
     for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item; ++Item)
     {

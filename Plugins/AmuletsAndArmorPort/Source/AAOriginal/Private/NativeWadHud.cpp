@@ -515,7 +515,7 @@ void ANativeWadHUD::DrawHUD()
 
     Screen.Picture(TEXT("INVBAR3"), {209, 0});
     Screen.Rect({{214, 140}, {315, 149}}, FLinearColor::FromSRGBColor(FColor(39, 22, 15)));
-    Screen.Text(TEXT("SELECT ITEM, THEN READY"), 214, 141, 101, 1, true);
+    Screen.Text(TEXT("READY ITEM     G DROP"), 214, 141, 101, 1, true);
     const FInventoryView View(*Player, *ClassicData);
     const int32 Pages = View.PageCount();
     InventoryPage = FMath::Min(InventoryPage, Pages - 1);
@@ -534,7 +534,7 @@ void ANativeWadHUD::DrawHUD()
     {
         const FInventoryCell& Item = View.Cells[Cell];
         const FBox2D Box = SlotBox(Cell);
-        if (Cell == Selected || Cell == ReadyCell)
+        if (Cell == Selected || Cell == ReadyCell || Player->IsWornInventorySlot(Item.FirstSlot))
         {
             Screen.Rect({Box.Min + FVector2D(1, 1), Box.Max}, Screen.Color(Cell == Selected ? 82 : 78));
         }
@@ -557,7 +557,12 @@ void ANativeWadHUD::DrawHUD()
     if (Player->GetCarriedItems().IsValidIndex(InspectedSlot))
     {
         Screen.Rect({{6, 129}, {205, 149}}, FLinearColor(0.01, 0.01, 0.01, 0.92));
-        Screen.Text(Player->GetInventoryItemDescription(Player->GetCarriedItems()[InspectedSlot]), 9, 132, 193, 2);
+        FString Description = Player->GetInventoryItemDescription(Player->GetCarriedItems()[InspectedSlot]);
+        if (Player->IsWornInventorySlot(InspectedSlot))
+        {
+            Description += TEXT(" (WORN)");
+        }
+        Screen.Text(Description, 9, 132, 193, 2);
     }
     if (View.Cells.IsEmpty())
     {

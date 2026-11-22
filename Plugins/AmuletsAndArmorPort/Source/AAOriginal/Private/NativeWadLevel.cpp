@@ -424,6 +424,12 @@ bool ANativeWadLevel::UpdateDoor(const FAAWadNativeDoor& Door, FActiveDoor& Stat
     return false;
 }
 
+bool ANativeWadLevel::AttachActorToWadFloor(AActor& Actor, int32 Sector) const
+{
+    return Sectors.IsValidIndex(Sector) && Sectors[Sector].Floor
+        && Actor.AttachToComponent(Sectors[Sector].Floor, FAttachmentTransformRules::KeepWorldTransform);
+}
+
 bool ANativeWadLevel::GetSectorSurfaceHeights(int32 Sector, FVector2D& OutHeights) const
 {
     if (!Sectors.IsValidIndex(Sector) || !Sectors[Sector].Floor || !Sectors[Sector].Ceiling)

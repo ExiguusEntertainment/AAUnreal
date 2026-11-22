@@ -945,6 +945,8 @@ namespace
         bool bClassicHudReview = false;
         bool bInventoryReview = false;
         bool bInventoryReload = false;
+        bool bItemUseReview = false;
+        bool bItemUseReload = false;
         int32 AndrewPlateIndex = 0;
         int32 AndrewPlateTurns = 0;
         int32 AndrewStartingGold = 0;
@@ -1609,6 +1611,154 @@ namespace
                     return Finish(&Player, TEXT("Page Up did not return to the first page"));
                 }
                 UE_LOG(LogTemp, Display, TEXT("Verified authored world pickups, descriptions, stacking, paging, and the ready hand."));
+                return Finish(&Player);
+            }
+            ++NextPoint;
+            return true;
+        }
+
+        bool TickItemUseReview(ANativeWadPlayer& Player)
+        {
+            constexpr int32 Cherries = 245;
+            constexpr int32 HealingPotion = 800;
+            constexpr int32 IronShortSword = 203;
+            constexpr int32 Armor[] = {704, 705, 707};
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            APlayerController* Controller = Player.GetController<APlayerController>();
+            ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Hud || !Player.GetHealth())
+            {
+                return Finish(&Player, TEXT("item-use review lost its player or inventory"));
+            }
+            const auto FindDrop = [&]() -> ANativeWadPickup*
+            {
+                for (TActorIterator<ANativeWadPickup> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->IsDropped() && It->GetItemType() == Cherries)
+                    {
+                        return *It;
+                    }
+                }
+                return nullptr;
+            };
+            const auto Select = [&](int32 Type)
+            {
+                const int32 Slot = Player.GetCarriedItems().Find(Type);
+                if (Slot == INDEX_NONE || !Player.IsInventoryOpen())
+                {
+                    return false;
+                }
+                Hud->ClickHUD(Hud->InventorySlotCenter(Slot));
+                return Player.GetSelectedInventorySlot() == Slot;
+            };
+            const auto Ready = [&](int32 Type)
+            {
+                if (!Select(Type))
+                {
+                    return false;
+                }
+                Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
+                return true;
+            };
+            if (bItemUseReload)
+            {
+                if (NextPoint == 0)
+                {
+                    const ANativeWadPickup* Drop = FindDrop();
+                    if (!Player.HasRestoredWadCheckpoint() || !Drop || Player.GetItemCount(Cherries) != 1
+                        || Player.GetItemCount(HealingPotion) != 0 || Player.GetEquippedWeapon() != IronShortSword
+                        || Player.GetArmorRating() != 8)
+                    {
+                        return Finish(&Player, TEXT("the worn armor, ready sword, bag, or dropped item failed to restore"));
+                    }
+                    Aim(Player, Drop->GetActorLocation());
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                    return true;
+                }
+                if (FindDrop() || Player.GetItemCount(Cherries) != 2)
+                {
+                    return Finish(&Player, TEXT("E did not return exactly one dropped object to the saved stack"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the drop, worn armor, and ready sword restored, and E recovered one item."));
+                return Finish(&Player);
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                Press(Player, EKeys::I);
+                break;
+            case 1:
+                if (!Ready(Cherries) || Player.GetReadyItem() != Cherries)
+                {
+                    return Finish(&Player, TEXT("could not ready the original cherries"));
+                }
+                Press(Player, EKeys::I);
+                break;
+            case 2:
+                FoodBeforeTravel = Player.GetFood();
+                Press(Player, EKeys::LeftControl);
+                break;
+            case 3:
+                if (Player.GetFood() != FoodBeforeTravel + 200 || Player.GetItemCount(Cherries) != 2)
+                {
+                    return Finish(&Player, TEXT("cherries did not apply their authored food effect and consume one"));
+                }
+                Press(Player, EKeys::I);
+                break;
+            case 4:
+                if (!Ready(HealingPotion) || Player.GetReadyItem() != HealingPotion)
+                {
+                    return Finish(&Player, TEXT("could not ready the original healing potion"));
+                }
+                Press(Player, EKeys::I);
+                break;
+            case 5:
+                HealthBeforeTravel = Player.GetHealth();
+                Press(Player, EKeys::LeftControl);
+                break;
+            case 6:
+                if (Player.GetHealth() != HealthBeforeTravel + 1000 || Player.GetItemCount(HealingPotion) != 0)
+                {
+                    return Finish(&Player, TEXT("the healing potion did not apply its authored health effect and consume one"));
+                }
+                Press(Player, EKeys::I);
+                break;
+            case 7:
+                if (!Ready(IronShortSword))
+                {
+                    return Finish(&Player, TEXT("could not ready the authored iron short sword"));
+                }
+                for (const int32 Type : Armor)
+                {
+                    if (!Ready(Type))
+                    {
+                        return Finish(&Player, TEXT("could not equip an authored armor piece"));
+                    }
+                }
+                if (Player.GetArmorRating() != 8 || Player.GetEquippedWeapon() != IronShortSword)
+                {
+                    return Finish(&Player, TEXT("the armor rating or the ready weapon did not match the original rules"));
+                }
+                HealthBeforeTravel = Player.GetHealth();
+                Player.ReceivePhysicalHit(1000);
+                if (HealthBeforeTravel - Player.GetHealth() != 960 || !Select(Cherries))
+                {
+                    return Finish(&Player, TEXT("the worn armor did not reduce ordinary melee damage"));
+                }
+                Controller->SetControlRotation(FRotator::ZeroRotator);
+                Press(Player, EKeys::G);
+                break;
+            case 8:
+                if (!FindDrop() || Player.GetItemCount(Cherries) != 1 || !Player.SaveWadCheckpoint(TEXT("NativeWadItemUseReview")))
+                {
+                    return Finish(&Player, TEXT("dropping a stack item did not leave exactly one in the world and one in the bag"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified original food and potion effects, melee equipment, armor mitigation, and dropping one item."));
                 return Finish(&Player);
             }
             ++NextPoint;
@@ -6794,6 +6944,10 @@ namespace
             {
                 return TickInventoryReview(*Player);
             }
+            if (bItemUseReview)
+            {
+                return TickItemUseReview(*Player);
+            }
             if (TownReview != ETownReview::None)
             {
                 return TickTown(*Current, *Player);
@@ -7189,6 +7343,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bAmbient = Mode == TEXT("ambient");
     const bool bClassicHud = Mode == TEXT("classichud");
     const bool bInventory = Mode == TEXT("inventory") || Mode == TEXT("inventoryreload");
+    const bool bItemUse = Mode == TEXT("itemuse") || Mode == TEXT("itemusereload");
     const bool bL22Journey = Mode == TEXT("l31tol22");
     const bool bL22Trap = Mode == TEXT("l22trap");
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
@@ -7207,7 +7362,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review >= EL25Review::ElmoreL64 ? TEXT("L64")
         : L25Review >= EL25Review::L60Reload ? TEXT("L60")
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
-        : bInventory ? TEXT("L30")
+        : bInventory || bItemUse ? TEXT("L30")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
         : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");
@@ -7226,6 +7381,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bClassicHudReview = bClassicHud;
     Review->bInventoryReview = bInventory;
     Review->bInventoryReload = Mode == TEXT("inventoryreload");
+    Review->bItemUseReview = bItemUse;
+    Review->bItemUseReload = Mode == TEXT("itemusereload");
     Review->bRavineReview = Mode == TEXT("ravine") || bL22Journey;
     Review->bL22Journey = bL22Journey;
     Review->bL22TrapReview = bL22Trap;

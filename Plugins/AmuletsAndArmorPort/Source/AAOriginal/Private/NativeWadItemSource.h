@@ -15,6 +15,9 @@ struct FWadAuthoredItem
     bool bPassable = true;
     bool bHanging = false;
     bool bRaised = false;
+
+    FString AssetName() const;
+    FString WorldMaterialPackage() const;
 };
 
 bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthoredItem>& Items, FOutputDevice& Output);

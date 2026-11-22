@@ -3,10 +3,13 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
 #include "NativeWadBillboard.h"
+#include "NativeWadHudData.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
@@ -128,7 +131,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         if (bMelee)
         {
             ++MeleeHits;
-            Player->ReceiveEncounterHit(Profile.MeleeDamage);
+            Player->ReceivePhysicalHit(Profile.MeleeDamage);
         }
     }
     if (!bVisible)
@@ -346,6 +349,37 @@ void ANativeWadPickup::ConfigureAuthored(UStaticMesh* Plane, UMaterialInterface*
     {
         Scenery->SetPickup(this);
     }
+}
+
+ANativeWadPickup* ANativeWadPickup::SpawnDropped(ANativeWadLevel& Level, int32 Type, const FVector& Position)
+{
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    const FWadInventoryDetails* Details = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
+    const int32 Sector = Level.FindWadSector(FVector2D(Position - Level.GetActorLocation()));
+    if (!Details || Details->SpriteSize.X <= 0 || Details->SpriteSize.Y <= 0 || Sector == INDEX_NONE)
+    {
+        return nullptr;
+    }
+    UMaterialInterface* Material = Details->WorldMaterial.LoadSynchronous();
+    UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+    if (!Material || !Plane)
+    {
+        return nullptr;
+    }
+    FActorSpawnParameters Params;
+    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    ANativeWadPickup* Pickup = Level.GetWorld()->SpawnActor<ANativeWadPickup>(Position, FRotator::ZeroRotator, Params);
+    if (Pickup)
+    {
+        Pickup->bDropped = true;
+        Pickup->ConfigureAuthored(Plane, Material, Type, 0, Details->SpriteSize, 0, true, nullptr);
+        if (!Level.AttachActorToWadFloor(*Pickup, Sector))
+        {
+            Pickup->Destroy();
+            return nullptr;
+        }
+    }
+    return Pickup;
 }
 
 void ANativeWadPickup::Destroyed()

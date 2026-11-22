@@ -1011,6 +1011,15 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD item import finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHWADITEMRULES")))
+        {
+            if (!SaveNativeWadItemRules(Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshWadItemRules failed."));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD item rules refresh finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.IMPORTWADGAMEPLAY")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
@@ -1117,6 +1126,7 @@ public:
                     || Review == TEXT("doorreload") || Review == TEXT("towntour") || Review == TEXT("townfailure")
                     || Review == TEXT("townreload") || Review == TEXT("townstart") || Review == TEXT("townscroll")
                     || Review == TEXT("freshcampaign") || Review == TEXT("inventory") || Review == TEXT("inventoryreload")
+                    || Review == TEXT("itemuse") || Review == TEXT("itemusereload")
                     || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload")
                     || Review == TEXT("churchknights") || Review == TEXT("churchjourney") || Review == TEXT("churchl20reload")
                     || Review == TEXT("churchscenery") || Review == TEXT("churchl20scenery")

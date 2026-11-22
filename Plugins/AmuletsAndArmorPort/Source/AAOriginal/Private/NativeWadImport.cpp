@@ -809,10 +809,10 @@ struct FAAWadNativeImport
         TMap<int32, UTexture2D*> Icons;
         for (const auto& [Type, Item] : Items)
         {
-            const FString Name = FPaths::GetCleanFilename(FPaths::GetPath(Item.Picture)) + TEXT("_") + FPaths::GetBaseFilename(Item.Picture);
+            const FString Name = Item.AssetName();
             const FString MaterialName = TEXT("M_") + Name;
             const FString ImageName = TEXT("T_") + Name;
-            const FString MaterialPackage = AssetRoot / TEXT("Things") / MaterialName;
+            const FString MaterialPackage = Item.WorldMaterialPackage();
             UMaterial*& Material = ItemMaterials.FindOrAdd(Item.Picture);
             if (!Material)
             {
@@ -838,7 +838,9 @@ struct FAAWadNativeImport
                 Catalog->Items.Add(Type, Image);
             }
             Catalog->ItemWeights.Add(Type, Item.Weight);
-            Catalog->ItemDetails.Add(Type, Item.Details);
+            FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
+            Details.WorldMaterial = Material;
+            Details.SpriteSize = FIntPoint(int32(Image->Source.GetSizeX()), int32(Image->Source.GetSizeY()));
         }
         QueueSave(*Catalog);
 
@@ -2921,6 +2923,54 @@ bool SaveNativeWadItems(const FString& MapPackage, FOutputDevice& Output)
         return false;
     }
     Output.Logf(TEXT("Saved authored inventory items in %s."), *MapPackage);
+    return true;
+}
+
+bool SaveNativeWadItemRules(FOutputDevice& Output)
+{
+    auto* Catalog = LoadObject<UNativeWadHudData>(nullptr, UNativeWadHudData::ObjectPath);
+    if (!Catalog)
+    {
+        return false;
+    }
+    TSet<int32> Types;
+    for (const auto& [Type, Icon] : Catalog->Items)
+    {
+        Types.Add(Type);
+    }
+    TMap<int32, FWadAuthoredItem> Items;
+    if (!ReadWadAuthoredItems(Types, Items, Output))
+    {
+        return false;
+    }
+    int32 Consumables = 0;
+    int32 Weapons = 0;
+    int32 Armor = 0;
+    for (const auto& [Type, Item] : Items)
+    {
+        FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
+        const FString MaterialPackage = Item.WorldMaterialPackage();
+        if (FPackageName::DoesPackageExist(MaterialPackage))
+        {
+            Details.WorldMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(MaterialPackage + TEXT(".")
+                + FPackageName::GetShortName(MaterialPackage)));
+        }
+        const UTexture2D* Icon = Catalog->Items.FindRef(Type);
+        if (Icon)
+        {
+            Details.SpriteSize = FIntPoint(int32(Icon->Source.GetSizeX()), int32(Icon->Source.GetSizeY()));
+        }
+        Consumables += Details.bUsable;
+        Weapons += Details.HitFrame > 0;
+        Armor += Details.ArmorSlot != INDEX_NONE && Details.ArmorValue > 0;
+    }
+    Catalog->MarkPackageDirty();
+    if (!SaveAsset(*Catalog, *FPackageName::GetAssetPackageExtension()))
+    {
+        return false;
+    }
+    Output.Logf(TEXT("Saved WAD inventory rules for %d types, with %d consumables, %d melee weapons, and %d armor entries."),
+        Items.Num(), Consumables, Weapons, Armor);
     return true;
 }
 

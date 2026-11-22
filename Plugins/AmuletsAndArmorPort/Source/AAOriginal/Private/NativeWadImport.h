@@ -14,5 +14,6 @@ bool SaveNativeWadLevel(const FString& MapPackage, const FString& WadPath, FOutp
 bool SaveNativeWadDoors(UWorld* World, FOutputDevice& Output);
 bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice& Output, bool bPickupsOnly);
 bool SaveNativeWadItems(const FString& MapPackage, FOutputDevice& Output);
+bool SaveNativeWadItemRules(FOutputDevice& Output);
 bool RefreshNativeWadSurfaces(const FString& MapPackage, FOutputDevice& Output);
 #endif

@@ -261,6 +261,7 @@ public:
     int32 FindActivitySector(const FVector2D& Position) const;
     int32 FindWadSector(const FVector2D& Position) const;
     double GetWalkingHeight(int32 Sector) const;
+    bool AttachActorToWadFloor(AActor& Actor, int32 Sector) const;
     FVector2D GetCurrentInput(const FVector& Feet) const;
     int32 CountPlayingAmbientEmitters(int32 Sound) const;
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }

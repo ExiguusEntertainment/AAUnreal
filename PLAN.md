@@ -350,8 +350,19 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 - The L20 review resumes the same character and records movement frames over 100 ms. The offscreen Play-in-Editor sample started in 0.553 seconds and reached the south door with 1,854 movement frames sampled. The longest was 36.2 ms, and the log showed no NavMesh rebuild. The reported hitch, wall visibility, and stuck position still need a reproduction on the affected route. The WAD automation suite passed all 13 tests, including camera near-plane clearance and wall penetration recovery.
 - The staged L60 checks also verified the timed lift, teleport, and healing pool from `NativeWadCampaignL60Review`. `CampaignL60Chain` walks the continuous route from the original spawn, with rests in cover and normal Rejuvenate inputs.
 
+120. **Use, equip, and drop inventory items.** The shared item catalog now reads original definitions for food, supported potions, melee weapons, and armor. The `ItemUse` and `ItemUseReload` reviews in L30 verified the cherry and healing potion effects, readying an iron short sword, chain armor damage reduction, and dropping and recovering an item across a process restart. All 13 WAD automation tests passed.
+121. **Carry the same character through Elmore's Retreat.** The Knights of Andrew checkpoint launched Elmore's Retreat from Town Hall and arrived at the original L64 spawn with journal pages 423 and 424. Staged replays carried that character through the six quest maps and returned the Orb of Defense for 150,000 XP. The continuous L64 route reached the corridor at door sector 255 and stopped there.
+
+### Next campaign verification
+
+1. Continue the uninterrupted Elmore's Retreat route from L64's authored spawn through the Town Hall turn-in. Verify each route with regular movement and use inputs, including each map's original exit and save/reload.
+2. Carry the same character through Exiguus and the Undead, Temple of Astarte, The Lost City, and Destruction. Close gameplay parity gaps that block those routes, including equipment and item effects where the campaign uses them.
+3. Verify the original HUD and audio during play and reproduce the reported movement hitch and wall collision on the affected route.
+4. Package the current Windows build and verify the full campaign from a new character through the final Town Hall return and save/reload.
+
 ### Gameplay parity follow-ups
 
+- [ ] Verify melee hits from the expanded ready-hand weapons in a live encounter and complete remaining item behavior, including timed consumables and ranged weapons.
 - [ ] Port L41's remaining wizard generators and scripted projectile effects. Match Elymas's homing projectile and palette in L44.
 - [ ] Match L73's acid projectile and the mana drain in the recovery sector.
 - [ ] Port L32's homing missile and the remaining creature generators in L71, L70, and L61. Implement L61's deferred scripted effects.

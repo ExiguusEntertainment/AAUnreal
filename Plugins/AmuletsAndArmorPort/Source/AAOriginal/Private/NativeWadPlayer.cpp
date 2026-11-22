@@ -15,6 +15,7 @@
 #include "Misc/PackageName.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
+#include "NativeWadHudData.h"
 #include "NativeWadLevel.h"
 #include "NativeWadMovement.h"
 #include "NativeWadScenery.h"
@@ -135,6 +136,28 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
             ReadySlot = CarriedItems.Find(IronDagger);
         }
     }
+    for (int32& Worn : WornSlots)
+    {
+        Worn = INDEX_NONE;
+    }
+    if (const TCHAR* Option = URL.GetOption(TEXT("WadWorn="), nullptr))
+    {
+        TArray<FString> Parsed;
+        FString(Option).ParseIntoArray(Parsed, TEXT(","));
+        for (int32 Location = 0; Location < FMath::Min(Parsed.Num(), int32(EquipmentSlotCount)); ++Location)
+        {
+            int32 Slot;
+            if (LexTryParseString(Slot, *Parsed[Location]) && CarriedItems.IsValidIndex(Slot) && Slot != ReadySlot
+                && !IsWornInventorySlot(Slot))
+            {
+                const FWadInventoryDetails* Details = GetItemRules(CarriedItems[Slot]);
+                if (Details && (Details->ArmorSlot == Location || (Location == RightArmSlot && Details->ArmorSlot == LeftArmSlot)))
+                {
+                    WornSlots[Location] = Slot;
+                }
+            }
+        }
+    }
 }
 
 void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
@@ -163,6 +186,7 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
     Input->BindKey(EKeys::LeftControl, IE_Pressed, this, &ANativeWadPlayer::UseReadyHand);
     Input->BindKey(EKeys::NumPadSeven, IE_Pressed, this, &ANativeWadPlayer::ToggleInventory);
     Input->BindKey(EKeys::I, IE_Pressed, this, &ANativeWadPlayer::ToggleInventory);
+    Input->BindKey(EKeys::G, IE_Pressed, this, &ANativeWadPlayer::DropInventoryItem);
     Input->BindKey(EKeys::PageUp, IE_Pressed, this, &ANativeWadPlayer::InventoryPageUp);
     Input->BindKey(EKeys::PageDown, IE_Pressed, this, &ANativeWadPlayer::InventoryPageDown);
     Input->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &ANativeWadPlayer::InventoryPageUp);
@@ -311,6 +335,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     if (!CarriedItems.IsEmpty())
     {
         Options += TEXT("?WadItems=") + FString::JoinBy(CarriedItems, TEXT(","), [](int32 Type) { return LexToString(Type); });
+        Options += TEXT("?WadWorn=") + FString::JoinBy(MakeArrayView(WornSlots), TEXT(","), [](int32 Slot) { return LexToString(Slot); });
     }
     return Options;
 }
@@ -385,18 +410,25 @@ void ANativeWadPlayer::AttackPressed()
     {
         return;
     }
-    const bool bDagger = GetEquippedWeapon() == IronDagger;
-    const int32 Damage = Attributes[StrengthAttribute] * (bDagger ? DaggerWeaponDamage : 2) / 2;
-    // STATS.C supplies the 16.16 overlay speed. The ANI files flag the hit before frame 30 or 32.
-    const int32 FrameSpeed = 40000 + FMath::Min(100, Attributes[SpeedAttribute] + (bDagger ? DaggerWeaponSpeed : 0)) * 1100;
+    const int32 Weapon = GetEquippedWeapon();
+    const FWadInventoryDetails* Details = GetItemRules(Weapon);
+    const bool bAuthored = Details && Details->HitFrame > 0 && Details->SwingFrames >= Details->HitFrame;
+    const bool bDagger = Weapon == IronDagger;
+    const int32 BaseDamage = bAuthored ? Details->WeaponDamage : bDagger ? DaggerWeaponDamage : 2;
+    const int32 BaseSpeed = bAuthored ? Details->WeaponSpeed : bDagger ? DaggerWeaponSpeed : 0;
+    const int32 HitFrame = bAuthored ? Details->HitFrame : bDagger ? 30 : 32;
+    const int32 SwingFrames = bAuthored ? Details->SwingFrames : bDagger ? 50 : 46;
+    const int32 Damage = Attributes[StrengthAttribute] * BaseDamage / 2;
+    // STATS.C supplies the 16.16 overlay speed, and the weapon's ANI supplies the timing.
+    const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute] + BaseSpeed, 0, 100) * 1100;
     const auto SecondsToFrame = [FrameSpeed](int32 Frame)
     {
         return FMath::DivideAndRoundUp(Frame * 65536, FrameSpeed) / TicksPerSecond;
     };
-    NextMeleeTime = Now + SecondsToFrame(bDagger ? 50 : 46);
+    NextMeleeTime = Now + SecondsToFrame(SwingFrames);
     FTimerHandle HitTimer;
     GetWorldTimerManager().SetTimer(HitTimer, FTimerDelegate::CreateWeakLambda(this, [this, Damage]
-        { ResolveMeleeHit(Damage); }), SecondsToFrame(bDagger ? 30 : 32), false);
+        { ResolveMeleeHit(Damage); }), SecondsToFrame(HitFrame), false);
 }
 
 void ANativeWadPlayer::ResolveMeleeHit(int32 Damage)
@@ -448,6 +480,12 @@ void ANativeWadPlayer::ReceiveEncounterHit(int32 Damage)
         GetCharacterMovement()->DisableMovement();
         ShowInteractionMessage(TEXT("Defeated"));
     }
+}
+
+void ANativeWadPlayer::ReceivePhysicalHit(int32 Damage)
+{
+    const int32 ArmorReduction = GetArmorRating() / 2;
+    ReceiveEncounterHit(int32(int64(FMath::Max(0, Damage)) * (100 - ArmorReduction) / 100));
 }
 
 void ANativeWadPlayer::ReceiveTrapPoison(int32 Damage)

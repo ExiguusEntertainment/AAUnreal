@@ -168,6 +168,8 @@ public:
     int32 GetItemType() const { return ItemType; }
     int32 GetCheckpointRevision() const { return CheckpointRevision; }
     static constexpr ECollisionChannel InteractionChannel = ECC_GameTraceChannel1;
+    static ANativeWadPickup* SpawnDropped(ANativeWadLevel& Level, int32 Type, const FVector& Position);
+    bool IsDropped() const { return bDropped; }
 
 private:
     UPROPERTY(VisibleAnywhere)
@@ -181,6 +183,7 @@ private:
 
     UPROPERTY()
     int32 CheckpointRevision = 0;
+    bool bDropped = false;
 
     UPROPERTY()
     TObjectPtr<ANativeWadScenery> Scenery;

@@ -5,10 +5,117 @@
 #include "Misc/DefaultValueHelper.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "NativeWadRules.h"
 
 namespace
 {
     constexpr int32 BasicTypeMask = 0x0fff;
+
+    void ReadInventoryRules(const FString& Source, const TArray<FString>& Input, FWadInventoryDetails& Details)
+    {
+        using namespace NativeWadRules;
+
+        TArray<FString> Lines;
+        for (const FString& Raw : Input)
+        {
+            FString Line = Raw.TrimStartAndEnd().ToUpper();
+            if (!Line.IsEmpty() && !Line.StartsWith(TEXT("#")))
+            {
+                Lines.Add(MoveTemp(Line));
+            }
+        }
+        const auto Field = [&Lines](const TCHAR* Name, int32 Begin, int32 End)
+        {
+            for (int32 Index = Begin; Index + 1 < End; ++Index)
+            {
+                if (Lines[Index] == Name)
+                {
+                    return Lines[Index + 1];
+                }
+            }
+            return FString();
+        };
+        const int32 End = Lines.Num();
+        const FString Type = Field(TEXT("TYPE"), 0, End);
+        const FString Subtype = Field(TEXT("SUBTYPE"), 0, End);
+        Details.StackLimit = FMath::Max(1, FCString::Atoi(*Field(TEXT("NUMSTACKABLE"), 0, End)));
+        Details.bConsumed = Type == TEXT("FOODSTUFF") || Field(TEXT("DESTROY ON"), 0, End) == TEXT("USE");
+        if (Type == TEXT("ARMOR"))
+        {
+            Details.ArmorSlot = Subtype.StartsWith(TEXT("HELMET")) ? HeadSlot : Subtype.StartsWith(TEXT("BRACING")) ? LeftArmSlot
+                : Subtype.StartsWith(TEXT("LEGGINGS")) ? LegsSlot : Subtype.StartsWith(TEXT("BREASTPLATE")) ? ChestSlot
+                : Subtype == TEXT("SHIELD") ? ShieldSlot : INDEX_NONE;
+            Details.ArmorValue = FMath::Clamp(FCString::Atoi(*Field(TEXT("ARMOR VALUE"), 0, End)), 0, 100);
+        }
+
+        bool bUnknownUse = false;
+        for (int32 Index = 0; Index + 1 < End; ++Index)
+        {
+            if (Lines[Index] != TEXT("EFFECT"))
+            {
+                continue;
+            }
+            const FString& Name = Lines[Index + 1];
+            int32 EndEffect = Index + 2;
+            while (EndEffect < End && Lines[EndEffect] != TEXT("END EFFECT"))
+            {
+                ++EndEffect;
+            }
+            const FString Trigger = Field(TEXT("EFFECT TRIGGER"), Index + 2, EndEffect);
+            const int32 Power = FCString::Atoi(*Field(TEXT("EFFECT POWER"), Index + 2, EndEffect));
+            if (Trigger == TEXT("USE"))
+            {
+                if (Name == TEXT("MOD PLAYER HEALTH")) { Details.Health += Power; }
+                else if (Name == TEXT("MOD PLAYER MANA")) { Details.Mana += Power; }
+                else if (Name == TEXT("MOD PLAYER FOOD")) { Details.Food += Power; }
+                else if (Name == TEXT("MOD PLAYER WATER")) { Details.Water += Power; }
+                else if (Name == TEXT("HALVE PLAYER POISON LEVEL")) { Details.PoisonDivisor = 2; }
+                else if (Name == TEXT("REMOVE PLAYER POISON")) { Details.PoisonDivisor = MAX_int32; }
+                else if (Name != TEXT("DISPLAY CANNED MESSAGE") && Name != TEXT("PLAY LOCAL SOUND")) { bUnknownUse = true; }
+            }
+            else if (Type == TEXT("WEAPON") && Trigger == TEXT("READY") && Name == TEXT("READY WEAPON"))
+            {
+                TArray<FString> Values;
+                Field(TEXT("EFFECT DATA"), Index + 2, EndEffect).ParseIntoArray(Values, TEXT(","), false);
+                if (Values.Num() == 3)
+                {
+                    Details.WeaponDamage = FCString::Atoi(*Values[1]);
+                    Details.WeaponSpeed = FCString::Atoi(*Values[2]);
+                }
+            }
+            Index = EndEffect;
+        }
+        Details.bUsable = !bUnknownUse && (Details.Health || Details.Mana || Details.Food || Details.Water || Details.PoisonDivisor > 1);
+
+        if (Details.WeaponDamage <= 0)
+        {
+            return;
+        }
+        const FString Animation = Subtype == TEXT("LONGSWORD") || Subtype == TEXT("SHORTSWORD") ? TEXT("SWORD")
+            : Subtype == TEXT("DAGGER") || Subtype == TEXT("AXE") || Subtype == TEXT("MACE") || Subtype == TEXT("STAFF")
+            ? Subtype : FString();
+        TArray<uint8> Frames;
+        if (Animation.IsEmpty() || !FFileHelper::LoadFileToArray(Frames, *(Source / TEXT("WEAPONS") / Animation / (Animation + TEXT(".ANI")))))
+        {
+            return;
+        }
+        constexpr int32 Header = 2 + 32 * 16;
+        constexpr int32 BytesPerFrame = 6;
+        constexpr int32 MaxFramesPerLayer = 140;
+        if (Frames.Num() < Header + MaxFramesPerLayer * BytesPerFrame)
+        {
+            return;
+        }
+        Details.SwingFrames = FMath::Clamp(int32(Frames[0]) | (int32(Frames[1]) << 8), 0, MaxFramesPerLayer);
+        for (int32 Frame = 0; Frame < Details.SwingFrames; ++Frame)
+        {
+            if (Frames[Header + Frame * BytesPerFrame + 5] == 1)
+            {
+                Details.HitFrame = Frame + 1;
+                break;
+            }
+        }
+    }
 
     TMap<int32, FString> ReadResourceList(const TArray<FString>& Lines, const FString& Extension)
     {
@@ -82,6 +189,16 @@ namespace
     }
 }
 
+FString FWadAuthoredItem::AssetName() const
+{
+    return FPaths::GetCleanFilename(FPaths::GetPath(Picture)) + TEXT("_") + FPaths::GetBaseFilename(Picture);
+}
+
+FString FWadAuthoredItem::WorldMaterialPackage() const
+{
+    return TEXT("/Game/WadInterface/Inventory/Things/M_") + AssetName();
+}
+
 bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthoredItem>& Items, FOutputDevice& Output)
 {
     const FString Source = FPaths::ProjectDir() /
@@ -121,14 +238,7 @@ bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthore
             return false;
         }
         Item.Details.Description.TrimStartAndEndInline();
-        for (int32 Index = 0; Index + 1 < Lines.Num(); ++Index)
-        {
-            if (Lines[Index].TrimStartAndEnd().Equals(TEXT("NUMSTACKABLE"), ESearchCase::IgnoreCase))
-            {
-                Item.Details.StackLimit = FMath::Max(1, FCString::Atoi(*Lines[Index + 1]));
-                break;
-            }
-        }
+        ReadInventoryRules(Source, Lines, Item.Details);
         Items.Add(Type, MoveTemp(Item));
     }
     return true;

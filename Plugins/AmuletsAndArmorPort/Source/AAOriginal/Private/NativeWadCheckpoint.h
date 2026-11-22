@@ -72,6 +72,17 @@ struct FWadSavedScriptDelay
 };
 
 USTRUCT()
+struct FWadSavedDrop
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    int32 Type = 0;
+    UPROPERTY()
+    FVector Position = FVector::ZeroVector;
+};
+
+USTRUCT()
 struct FWadLevelCheckpoint
 {
     GENERATED_BODY()
@@ -101,6 +112,9 @@ struct FWadLevelCheckpoint
 
     UPROPERTY()
     TArray<FName> RemainingPickups;
+
+    UPROPERTY()
+    TArray<FWadSavedDrop> DroppedItems;
 
     UPROPERTY()
     TMap<FName, FWadSavedEncounter> Encounters;

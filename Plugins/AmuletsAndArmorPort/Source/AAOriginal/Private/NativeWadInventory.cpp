@@ -1,10 +1,23 @@
 #include "NativeWadPlayer.h"
 
+#include "Algo/Find.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
+#include "NativeWadLevel.h"
+
+const UNativeWadHudData* UNativeWadHudData::LoadCatalog()
+{
+    static TWeakObjectPtr<UNativeWadHudData> Catalog;
+    if (!Catalog.IsValid())
+    {
+        Catalog = LoadObject<UNativeWadHudData>(nullptr, ObjectPath, nullptr, LOAD_NoWarn);
+    }
+    return Catalog.Get();
+}
 
 namespace
 {
@@ -59,24 +72,27 @@ int32 ANativeWadPlayer::GetReadyItem() const
 
 FString ANativeWadPlayer::GetInventoryItemDescription(int32 Type) const
 {
-    if (const APlayerController* LocalPlayer = GetController<APlayerController>())
+    if (const FWadInventoryDetails* Details = GetItemRules(Type); Details && !Details->Description.IsEmpty())
     {
-        if (const ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>(); HUD && HUD->ClassicData)
-        {
-            if (const FWadInventoryDetails* Details = HUD->ClassicData->ItemDetails.Find(Type);
-                Details && !Details->Description.IsEmpty())
-            {
-                return Details->Description;
-            }
-        }
+        return Details->Description;
     }
     return FallbackItemName(Type);
 }
 
+const FWadInventoryDetails* ANativeWadPlayer::GetItemRules(int32 Type) const
+{
+    const UNativeWadHudData* Catalog = Type > 0 ? UNativeWadHudData::LoadCatalog() : nullptr;
+    return Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
+}
+
 bool ANativeWadPlayer::ConsumeItem(int32 Type)
 {
-    const int32 Slot = CarriedItems.Find(Type);
-    if (Slot == INDEX_NONE)
+    return RemoveInventorySlot(CarriedItems.Find(Type));
+}
+
+bool ANativeWadPlayer::RemoveInventorySlot(int32 Slot)
+{
+    if (!CarriedItems.IsValidIndex(Slot))
     {
         return false;
     }
@@ -97,12 +113,61 @@ bool ANativeWadPlayer::ConsumeItem(int32 Type)
     {
         --SelectedInventorySlot;
     }
+    for (int32& Worn : WornSlots)
+    {
+        if (Worn == Slot) { Worn = INDEX_NONE; }
+        else if (Worn > Slot) { --Worn; }
+    }
     return true;
 }
 
 int32 ANativeWadPlayer::GetEquippedWeapon() const
 {
-    return GetReadyItem() == IronDagger ? IronDagger : 0;
+    const int32 Type = GetReadyItem();
+    const FWadInventoryDetails* Details = GetItemRules(Type);
+    return Type == IronDagger || (Details && Details->WeaponDamage > 0 && Details->HitFrame > 0) ? Type : 0;
+}
+
+bool ANativeWadPlayer::IsWornInventorySlot(int32 Slot) const
+{
+    return Slot >= 0 && Algo::Find(WornSlots, Slot) != nullptr;
+}
+
+int32 ANativeWadPlayer::GetArmorRating() const
+{
+    const auto Rating = [&](int32 Location)
+    {
+        const int32 Slot = WornSlots[Location];
+        const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Slot) ? GetItemRules(CarriedItems[Slot]) : nullptr;
+        return Rules ? Rules->ArmorValue : 0;
+    };
+    const int32 Shield = Rating(ShieldSlot);
+    return (2 * (FMath::Max(Shield, Rating(HeadSlot)) + FMath::Max(Shield, Rating(RightArmSlot)) + FMath::Max(Shield, Rating(LeftArmSlot)))
+        + 4 * (FMath::Max(Shield, Rating(LegsSlot)) + FMath::Max(Shield, Rating(ChestSlot)))) / 14;
+}
+
+void ANativeWadPlayer::EquipArmor(int32 Slot, const FWadInventoryDetails& Details)
+{
+    int32 Location = Details.ArmorSlot;
+    for (int32& Worn : WornSlots)
+    {
+        if (Worn == Slot)
+        {
+            Worn = INDEX_NONE;
+            ShowInteractionMessage(FString::Printf(TEXT("Removed %s"), *GetInventoryItemDescription(CarriedItems[Slot])));
+            return;
+        }
+    }
+    if (Location == LeftArmSlot && WornSlots[LeftArmSlot] != INDEX_NONE && WornSlots[RightArmSlot] == INDEX_NONE)
+    {
+        Location = RightArmSlot;
+    }
+    WornSlots[Location] = Slot;
+    if (ReadySlot == Slot)
+    {
+        ReadySlot = INDEX_NONE;
+    }
+    ShowInteractionMessage(FString::Printf(TEXT("Equipped %s"), *GetInventoryItemDescription(CarriedItems[Slot])));
 }
 
 void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
@@ -113,8 +178,15 @@ void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
     }
     if (Slot == INDEX_NONE)
     {
-        ReadySlot = SelectedInventorySlot;
+        const int32 Selected = SelectedInventorySlot;
         SelectedInventorySlot = INDEX_NONE;
+        const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Selected) ? GetItemRules(CarriedItems[Selected]) : nullptr;
+        if (Rules && Rules->ArmorSlot >= 0 && Rules->ArmorSlot < EquipmentSlotCount)
+        {
+            EquipArmor(Selected, *Rules);
+            return;
+        }
+        ReadySlot = Selected;
         ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
     }
     else if (CarriedItems.IsValidIndex(Slot))
@@ -129,26 +201,81 @@ void ANativeWadPlayer::UseReadyHand()
     {
         return;
     }
-    switch (GetReadyItem())
+    const int32 Type = GetReadyItem();
+    if (Type == 0 || GetEquippedWeapon() != 0)
     {
-    case Berry:
-        ConsumeBerry();
-        break;
-    case 0:
-    case IronDagger:
         AttackPressed();
-        break;
+        return;
+    }
+    if (const FWadInventoryDetails* Rules = GetItemRules(Type); Rules && Rules->bUsable)
+    {
+        UseConsumable(*Rules);
+    }
+    else if (Type == Berry)
+    {
+        FWadInventoryDetails BerryRules;
+        BerryRules.Food = BerryFood;
+        BerryRules.bConsumed = true;
+        UseConsumable(BerryRules);
     }
 }
 
-void ANativeWadPlayer::ConsumeBerry()
+void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
 {
-    CarriedItems.RemoveAt(ReadySlot);
-    ReadySlot = INDEX_NONE;
-    const int32 Before = Food;
-    Food = FMath::Min(MaxFood, Food + BerryFood);
-    ShowInteractionMessage(TEXT("You get berry juice all over your face."));
-    UE_LOG(LogTemp, Display, TEXT("Consumed WAD berry. Food %d -> %d."), Before, Food);
+    const int32 Type = GetReadyItem();
+    const int32 BeforeHealth = Health;
+    const int32 BeforeFood = Food;
+    Health = FMath::Clamp(Health + Details.Health, 0, MaxHealth);
+    Mana = FMath::Clamp(Mana + Details.Mana, 0, MaxMana);
+    Food = FMath::Clamp(Food + Details.Food, 0, MaxFood);
+    Water = FMath::Clamp(Water + Details.Water, 0, MaxFood);
+    PoisonLevel /= FMath::Max(1, Details.PoisonDivisor);
+    if (Details.bConsumed)
+    {
+        RemoveInventorySlot(ReadySlot);
+    }
+    if (Health == 0)
+    {
+        ReceiveEncounterHit(0);
+    }
+    else
+    {
+        ShowInteractionMessage(Type == Berry ? FString(TEXT("You get berry juice all over your face."))
+            : FString::Printf(TEXT("Used %s"), *GetInventoryItemDescription(Type)));
+    }
+    UE_LOG(LogTemp, Display, TEXT("Used WAD item %d. Health %d -> %d, food %d -> %d."), Type, BeforeHealth, Health, BeforeFood, Food);
+}
+
+void ANativeWadPlayer::DropInventoryItem()
+{
+    const int32 Slot = bInventoryOpen && SelectedInventorySlot != INDEX_NONE ? SelectedInventorySlot : ReadySlot;
+    ANativeWadLevel* Level = NativeLevel.Get();
+    if (Health <= 0 || IsParalyzed() || !CarriedItems.IsValidIndex(Slot) || !Level || !GetCharacterMovement()->IsMovingOnGround())
+    {
+        return;
+    }
+    const int32 Type = CarriedItems[Slot];
+    const FWadInventoryDetails* Details = GetItemRules(Type);
+    const FVector Ahead = GetActorLocation() + FRotator(0.0, GetControlRotation().Yaw, 0.0).Vector() * 36.0;
+    const int32 Sector = Level->FindWadSector(FVector2D(Ahead - Level->GetActorLocation()));
+    FVector2D Heights;
+    const FCollisionQueryParams Query(SCENE_QUERY_STAT(WadDropClearance), true, this);
+    if (!Details || !Level->GetSectorSurfaceHeights(Sector, Heights) || Heights.Y - Heights.X <= Details->SpriteSize.Y
+        || GetWorld()->LineTraceTestByChannel(GetActorLocation(), Ahead, ECC_Visibility, Query))
+    {
+        ShowInteractionMessage(TEXT("Cannot drop that item here"));
+        return;
+    }
+
+    FVector Position = Ahead;
+    Position.Z = Level->GetActorLocation().Z + Heights.X + Details->SpriteSize.Y * 0.5 + 1.0;
+    if (!ANativeWadPickup::SpawnDropped(*Level, Type, Position))
+    {
+        ShowInteractionMessage(TEXT("Cannot drop that item here"));
+        return;
+    }
+    RemoveInventorySlot(Slot);
+    ShowInteractionMessage(FString::Printf(TEXT("Dropped %s"), *GetInventoryItemDescription(Type)));
 }
 
 void ANativeWadPlayer::ClickPressed()

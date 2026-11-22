@@ -9,6 +9,7 @@
 class UCameraComponent;
 class ANativeWadLevel;
 class UNativeWadHudData;
+struct FWadInventoryDetails;
 
 UCLASS()
 class AAORIGINAL_API ANativeWadPlayer : public ACharacter
@@ -32,6 +33,8 @@ public:
     int32 GetWater() const { return Water; }
     int32 GetExperience() const { return Experience; }
     int32 GetEquippedWeapon() const;
+    int32 GetArmorRating() const;
+    bool IsWornInventorySlot(int32 Slot) const;
     int32 GetSuccessfulCasts() const { return SuccessfulCasts; }
     int32 GetMaxHealth() const { return MaxHealth; }
     int32 GetMaxMana() const { return MaxMana; }
@@ -52,6 +55,7 @@ public:
     FString GetInteractionMessage() const;
     void ShowInteractionMessage(FString Message);
     void ReceiveEncounterHit(int32 Damage);
+    void ReceivePhysicalHit(int32 Damage);
     void ReceiveTrapPoison(int32 Damage);
     int32 GetPoisonLevel() const { return PoisonLevel; }
     void ReceiveTrapParalysis();
@@ -80,7 +84,11 @@ private:
     void UsePressed();
     void AttackPressed();
     void ResolveMeleeHit(int32 Damage);
-    void ConsumeBerry();
+    const FWadInventoryDetails* GetItemRules(int32 Type) const;
+    bool RemoveInventorySlot(int32 Slot);
+    void EquipArmor(int32 Slot, const FWadInventoryDetails& Details);
+    void UseConsumable(const FWadInventoryDetails& Details);
+    void DropInventoryItem();
     void UseReadyHand();
     void ClickPressed();
     void ToggleInventory();
@@ -130,6 +138,7 @@ private:
     int32 ExperienceNeeded = NativeWadRules::FirstLevelThreshold;
     int32 Attributes[NativeWadRules::AttributeCount] = {15, 20, 35, 15, 20, 25};
     int32 ReadySlot = INDEX_NONE;
+    int32 WornSlots[NativeWadRules::EquipmentSlotCount] = {INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE};
     int32 SelectedInventorySlot = INDEX_NONE;
     bool bInventoryOpen = false;
     bool bMouseLook = true;
