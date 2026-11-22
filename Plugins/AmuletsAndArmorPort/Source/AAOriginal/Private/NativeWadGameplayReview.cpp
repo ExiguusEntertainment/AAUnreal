@@ -943,6 +943,8 @@ namespace
         bool bRavineReview = false;
         bool bAmbientReview = false;
         bool bClassicHudReview = false;
+        bool bInventoryReview = false;
+        bool bInventoryReload = false;
         int32 AndrewPlateIndex = 0;
         int32 AndrewPlateTurns = 0;
         int32 AndrewStartingGold = 0;
@@ -1392,6 +1394,224 @@ namespace
                 }
                 break;
             }
+            return true;
+        }
+
+        bool TickInventoryReview(ANativeWadPlayer& Player)
+        {
+            struct FPickup
+            {
+                const TCHAR* Tag;
+                int32 Type;
+                FVector2D Approach;
+            };
+            const FPickup Targets[] = {
+                {TEXT("WAD Item Thing 211"), 245, {1628, 1156}},
+                {TEXT("L30 Berry Pickup"), NativeWadRules::Berry, {1628, 1172}},
+                {TEXT("WAD Item Thing 212"), 248, {1628, 1172}},
+            };
+            const auto FindPickup = [&](const TCHAR* Tag) -> ANativeWadPickup*
+            {
+                for (TActorIterator<ANativeWadPickup> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->ActorHasTag(FName(Tag)))
+                    {
+                        return *It;
+                    }
+                }
+                return nullptr;
+            };
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            APlayerController* Controller = Player.GetController<APlayerController>();
+            ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+            if (!Hud || !Hud->HasClassicHud() || !Level || !Player.GetHealth())
+            {
+                return Finish(&Player, TEXT("the inventory review lost its player, level, or classic panel"));
+            }
+            const auto VerifyCollected = [&]
+            {
+                for (const FPickup& Target : Targets)
+                {
+                    if (Player.GetItemCount(Target.Type) != 1 || FindPickup(Target.Tag))
+                    {
+                        return false;
+                    }
+                }
+                return Player.GetCarriedItems().Num() == UE_ARRAY_COUNT(Targets);
+            };
+            if (bInventoryReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint() || !VerifyCollected() || Player.GetReadyItem() != NativeWadRules::Berry)
+                {
+                    return Finish(&Player, TEXT("the saved bag, ready hand, or collected world items did not restore"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the inventory and removed world pickups after a process restart."));
+                return Finish(&Player);
+            }
+            const auto MouseY = [&](float Amount)
+            {
+                Controller->InputKey(FInputKeyEventArgs(nullptr, IPlatformInputDeviceMapper::Get().GetDefaultInputDevice(),
+                    EKeys::MouseY, IE_Axis, Amount, false, FPlatformTime::Cycles64()));
+            };
+            const FVector2D Entrance[] = {{1256, 916}, {1268, 1192}, {1416, 1340}};
+            if (NextPoint >= 3 && NextPoint < 6)
+            {
+                if (WalkTo(Player, Entrance[NextPoint - 3]))
+                {
+                    ++NextPoint;
+                }
+                return true;
+            }
+            if (NextPoint >= 9 && NextPoint < 12)
+            {
+                const FPickup& Target = Targets[NextPoint - 9];
+                if (Player.GetItemCount(Target.Type) == 1)
+                {
+                    if (FindPickup(Target.Tag))
+                    {
+                        return Finish(&Player, TEXT("the collected item still exists in the world"));
+                    }
+                    ++NextPoint;
+                    bCampaignActionStarted = false;
+                }
+                else if (!bCampaignActionStarted && WalkTo(Player, Target.Approach))
+                {
+                    const ANativeWadPickup* Item = FindPickup(Target.Tag);
+                    if (!Item || Item->GetItemType() != Target.Type)
+                    {
+                        return Finish(&Player, TEXT("an authored pickup is missing from the level"));
+                    }
+                    Aim(Player, Item->GetActorLocation());
+                    Press(Player, EKeys::E);
+                    bCampaignActionStarted = true;
+                }
+                else if (bCampaignActionStarted)
+                {
+                    return Finish(&Player, TEXT("E did not move the aimed item into the bag"));
+                }
+                return true;
+            }
+            bool bSaved = false;
+            switch (NextPoint)
+            {
+            case 0:
+                if (!Player.GetCarriedItems().IsEmpty() || !FVector2D(Player.GetActorLocation()).Equals({1608, 432}, 5.0))
+                {
+                    return Finish(&Player, TEXT("the inventory review needs a fresh character at L30's spawn"));
+                }
+                Controller->SetControlRotation(FRotator::ZeroRotator);
+                MouseY(18.0f);
+                break;
+            case 1:
+                if (Controller->GetControlRotation().GetNormalized().Pitch <= 0.0)
+                {
+                    return Finish(&Player, TEXT("positive mouse Y did not pitch the game camera up"));
+                }
+                Controller->SetControlRotation(FRotator::ZeroRotator);
+                MouseY(-18.0f);
+                break;
+            case 2:
+                if (Controller->GetControlRotation().GetNormalized().Pitch >= 0.0)
+                {
+                    return Finish(&Player, TEXT("negative mouse Y did not pitch the game camera down"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified both directions of inverted mouse pitch through the gameplay input binding."));
+                break;
+            case 6:
+                Aim(Player, {1440, 1340, 57});
+                Press(Player, EKeys::E);
+                break;
+            case 7:
+            {
+                FVector2D Heights;
+                if (!(*Level)->GetSectorSurfaceHeights(144, Heights) || Heights.Y < 100.0)
+                {
+                    return true;
+                }
+                break;
+            }
+            case 8:
+                if (!WalkTo(Player, {1488, 1340}))
+                {
+                    return true;
+                }
+                break;
+            case 12:
+                if (!VerifyCollected() || Player.GetInventoryItemDescription(245).Contains(TEXT("Item 245")))
+                {
+                    return Finish(&Player, TEXT("the bag did not contain the three authored items and their descriptions"));
+                }
+                Controller->SetControlRotation(FRotator(0.0, 58.0, 0.0));
+                Press(Player, EKeys::I);
+                break;
+            case 13:
+                if (!Player.IsInventoryOpen() || Player.IsMouseLook())
+                {
+                    return Finish(&Player, TEXT("I did not open the interactive classic inventory"));
+                }
+                Hud->ClickHUD(Hud->InventorySlotCenter(1));
+                Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
+                Hud->ClickHUD(Hud->InventorySlotCenter(0));
+                if (Player.GetReadyItem() != NativeWadRules::Berry || !Player.SaveWadCheckpoint(TEXT("NativeWadInventoryReview")))
+                {
+                    return Finish(&Player, TEXT("the classic inventory could not ready and save the world pickup"));
+                }
+                break;
+            case 14:
+                if (!CaptureTownFrame(TEXT("world-pickups"), bSaved))
+                {
+                    return true;
+                }
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("could not capture the inventory after the three world pickups"));
+                }
+                Player.CollectItem(245);
+                if (Hud->InventorySlotCenter(0) != Hud->InventorySlotCenter(3))
+                {
+                    return Finish(&Player, TEXT("matching cherries were not displayed as a single stack"));
+                }
+                for (int32 Index = 0; Index < 48; ++Index)
+                {
+                    Player.CollectItem(NativeWadRules::IronDagger);
+                }
+                Press(Player, EKeys::PageDown);
+                break;
+            case 15:
+                if (!bCampaignActionStarted)
+                {
+                    Hud->ClickHUD(Hud->InventorySlotCenter(Player.GetCarriedItems().Num() - 1));
+                    bCampaignActionStarted = true;
+                }
+                if (Player.GetSelectedInventorySlot() != Player.GetCarriedItems().Num() - 1)
+                {
+                    return Finish(&Player, TEXT("Page Down did not load the second page's clickable cells"));
+                }
+                if (!CaptureTownFrame(TEXT("second-page"), bSaved))
+                {
+                    return true;
+                }
+                if (!bSaved)
+                {
+                    return Finish(&Player, TEXT("could not capture the second page of the classic inventory"));
+                }
+                Press(Player, EKeys::PageUp);
+                break;
+            case 16:
+                Hud->ClickHUD(Hud->InventorySlotCenter(0));
+                if (Player.GetSelectedInventorySlot() != 0)
+                {
+                    return Finish(&Player, TEXT("Page Up did not return to the first page"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified authored world pickups, descriptions, stacking, paging, and the ready hand."));
+                return Finish(&Player);
+            }
+            ++NextPoint;
             return true;
         }
 
@@ -6570,6 +6790,10 @@ namespace
             {
                 return TickClassicHud(*Player);
             }
+            if (bInventoryReview)
+            {
+                return TickInventoryReview(*Player);
+            }
             if (TownReview != ETownReview::None)
             {
                 return TickTown(*Current, *Player);
@@ -6964,6 +7188,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
     const bool bAmbient = Mode == TEXT("ambient");
     const bool bClassicHud = Mode == TEXT("classichud");
+    const bool bInventory = Mode == TEXT("inventory") || Mode == TEXT("inventoryreload");
     const bool bL22Journey = Mode == TEXT("l31tol22");
     const bool bL22Trap = Mode == TEXT("l22trap");
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
@@ -6982,6 +7207,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review >= EL25Review::ElmoreL64 ? TEXT("L64")
         : L25Review >= EL25Review::L60Reload ? TEXT("L60")
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
+        : bInventory ? TEXT("L30")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
         : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");
@@ -6998,6 +7224,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->Size = ImageSize;
     Review->bAmbientReview = bAmbient;
     Review->bClassicHudReview = bClassicHud;
+    Review->bInventoryReview = bInventory;
+    Review->bInventoryReload = Mode == TEXT("inventoryreload");
     Review->bRavineReview = Mode == TEXT("ravine") || bL22Journey;
     Review->bL22Journey = bL22Journey;
     Review->bL22TrapReview = bL22Trap;

@@ -998,6 +998,19 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD door import finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.IMPORTNATIVEWADITEMS")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !SaveNativeWadItems(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.ImportNativeWadItems failed for %s."), *Package);
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD item import finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.IMPORTWADGAMEPLAY")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
@@ -1103,7 +1116,7 @@ public:
                     || Review == TEXT("l22trap") || Review == TEXT("liftsave") || Review == TEXT("liftreload")
                     || Review == TEXT("doorreload") || Review == TEXT("towntour") || Review == TEXT("townfailure")
                     || Review == TEXT("townreload") || Review == TEXT("townstart") || Review == TEXT("townscroll")
-                    || Review == TEXT("freshcampaign")
+                    || Review == TEXT("freshcampaign") || Review == TEXT("inventory") || Review == TEXT("inventoryreload")
                     || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload")
                     || Review == TEXT("churchknights") || Review == TEXT("churchjourney") || Review == TEXT("churchl20reload")
                     || Review == TEXT("churchscenery") || Review == TEXT("churchl20scenery")

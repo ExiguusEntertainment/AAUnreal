@@ -4,12 +4,13 @@
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "NativeWadHudData.h"
 
 namespace
 {
     using namespace NativeWadRules;
 
-    const TCHAR* ItemName(int32 Type)
+    FString FallbackItemName(int32 Type)
     {
         switch (Type)
         {
@@ -31,7 +32,7 @@ namespace
         case ElmoreKey5: return TEXT("Key 5");
         case ElmoreKey6: return TEXT("Key 6");
         case ElmoreKey8: return TEXT("Key 8");
-        default: return Type > 0 ? TEXT("Item") : TEXT("Empty");
+        default: return Type > 0 ? FString::Printf(TEXT("Item %d"), Type) : FString(TEXT("Empty"));
         }
     }
 
@@ -54,6 +55,22 @@ namespace
 int32 ANativeWadPlayer::GetReadyItem() const
 {
     return CarriedItems.IsValidIndex(ReadySlot) ? CarriedItems[ReadySlot] : 0;
+}
+
+FString ANativeWadPlayer::GetInventoryItemDescription(int32 Type) const
+{
+    if (const APlayerController* LocalPlayer = GetController<APlayerController>())
+    {
+        if (const ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>(); HUD && HUD->ClassicData)
+        {
+            if (const FWadInventoryDetails* Details = HUD->ClassicData->ItemDetails.Find(Type);
+                Details && !Details->Description.IsEmpty())
+            {
+                return Details->Description;
+            }
+        }
+    }
+    return FallbackItemName(Type);
 }
 
 bool ANativeWadPlayer::ConsumeItem(int32 Type)
@@ -98,7 +115,7 @@ void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
     {
         ReadySlot = SelectedInventorySlot;
         SelectedInventorySlot = INDEX_NONE;
-        ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), ItemName(GetReadyItem())));
+        ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
     }
     else if (CarriedItems.IsValidIndex(Slot))
     {
@@ -162,6 +179,10 @@ void ANativeWadPlayer::ToggleInventory()
         if (ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>())
         {
             HUD->Form = ANativeWadHUD::EForm::Inventory;
+            if (bInventoryOpen)
+            {
+                HUD->InventoryPage = 0;
+            }
         }
     }
     if (bInventoryOpen)
@@ -173,6 +194,28 @@ void ANativeWadPlayer::ToggleInventory()
     else
     {
         SetMouseLook(bRestoreLookAfterInventory);
+    }
+}
+
+void ANativeWadPlayer::InventoryPageUp()
+{
+    if (const APlayerController* LocalPlayer = GetController<APlayerController>())
+    {
+        if (ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>())
+        {
+            HUD->ChangeInventoryPage(-1);
+        }
+    }
+}
+
+void ANativeWadPlayer::InventoryPageDown()
+{
+    if (const APlayerController* LocalPlayer = GetController<APlayerController>())
+    {
+        if (ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>())
+        {
+            HUD->ChangeInventoryPage(1);
+        }
     }
 }
 
@@ -218,7 +261,7 @@ void ANativeWadPlayer::LookPitch(float Axis)
 {
     if (bMouseLook)
     {
-        AddControllerPitchInput(Axis);
+        AddControllerPitchInput(-Axis);
     }
 }
 
@@ -291,7 +334,7 @@ void ANativeWadHUD::DrawFallbackHUD(const ANativeWadPlayer& FallbackPlayer)
     DrawText(FString::Printf(TEXT("Level %d   Health %d/%d   Mana %d/%d   Food %d   XP %d/%d"),
         Player->GetCharacterLevel(), Player->GetHealth(), Player->GetMaxHealth(), Player->GetMana(), Player->GetMaxMana(),
         Player->GetFood(), Player->GetExperience(), Player->GetExperienceNeeded()), Ink, 20.0f, Canvas->ClipY - 52.0f, Font);
-    DrawText(FString::Printf(TEXT("Ready hand: %s   Runes: %s"), ItemName(Player->GetReadyItem()), *Player->GetRunes()),
+    DrawText(FString::Printf(TEXT("Ready hand: %s   Runes: %s"), *Player->GetInventoryItemDescription(Player->GetReadyItem()), *Player->GetRunes()),
         Ink, 20.0f, Canvas->ClipY - 28.0f, Font);
     const FString Message = Player->GetInteractionMessage();
     if (!Message.IsEmpty())
@@ -319,7 +362,8 @@ void ANativeWadHUD::DrawFallbackHUD(const ANativeWadPlayer& FallbackPlayer)
     }
     for (int32 Slot = 0; Slot < Player->GetCarriedItems().Num(); ++Slot)
     {
-        DrawSlot(Slot, FString(ItemName(Player->GetCarriedItems()[Slot])) + (Slot == Player->GetReadySlot() ? TEXT(" (ready)") : TEXT("")));
+        DrawSlot(Slot, Player->GetInventoryItemDescription(Player->GetCarriedItems()[Slot])
+            + (Slot == Player->GetReadySlot() ? TEXT(" (ready)") : TEXT("")));
     }
-    DrawSlot(INDEX_NONE, FString::Printf(TEXT("Ready hand: %s"), ItemName(Player->GetReadyItem())));
+    DrawSlot(INDEX_NONE, FString::Printf(TEXT("Ready hand: %s"), *Player->GetInventoryItemDescription(Player->GetReadyItem())));
 }

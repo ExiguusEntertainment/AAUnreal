@@ -1,4 +1,5 @@
 #include "NativeWadScenery.h"
+#include "NativeWadEncounter.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -63,6 +64,16 @@ uint16 ANativeWadScenery::GetSourceAngle() const
 void ANativeWadScenery::SetSourceAngle(uint16 Angle)
 {
     SetActorRotation(FRotator(0, Angle * (360.0 / 65536.0), 0));
+}
+
+void ANativeWadScenery::SetPickup(ANativeWadPickup* Item)
+{
+    Pickup = Item;
+}
+
+ANativeWadPickup* ANativeWadScenery::GetPickup() const
+{
+    return IsValid(Pickup) ? Pickup.Get() : nullptr;
 }
 
 void ANativeWadScenery::InitializeMount()

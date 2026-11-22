@@ -3,6 +3,18 @@
 #include "NativeWadTown.h"
 #include "NativeWadHudData.generated.h"
 
+USTRUCT()
+struct FWadInventoryDetails
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FString Description;
+
+    UPROPERTY()
+    int32 StackLimit = 1;
+};
+
 UCLASS()
 class UNativeWadHudData : public UDataAsset
 {
@@ -19,6 +31,9 @@ public:
 
     UPROPERTY()
     TMap<int32, int32> ItemWeights;
+
+    UPROPERTY()
+    TMap<int32, FWadInventoryDetails> ItemDetails;
 
     UPROPERTY()
     TArray<FColor> Palette;

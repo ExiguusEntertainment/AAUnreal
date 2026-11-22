@@ -9,6 +9,7 @@
 #include "NativeWadBillboard.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadScenery.h"
 
 namespace
 {
@@ -329,10 +330,42 @@ void ANativeWadPickup::Configure(UStaticMesh* Plane, UMaterialInterface* Image, 
     CheckpointRevision = InCheckpointRevision;
 }
 
+void ANativeWadPickup::ConfigureAuthored(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType, int32 InCheckpointRevision,
+    FIntPoint Size, int32 Radius, bool bPassable, ANativeWadScenery* InScenery)
+{
+    Configure(Plane, Image, InType, InCheckpointRevision);
+    Sprite->SetRelativeScale3D(FVector(Size.X * 0.01, Size.Y * 0.01, 1.0));
+    HitTarget->SetSphereRadius(FMath::Max3(8.0f, float(Radius), float(FMath::Min(Size.X, Size.Y)) * 0.5f));
+    HitTarget->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
+    HitTarget->SetCollisionResponseToChannel(InteractionChannel, ECR_Block);
+    HitTarget->SetCollisionResponseToChannel(ECC_Pawn, bPassable || InScenery ? ECR_Ignore : ECR_Block);
+    HitTarget->SetCanEverAffectNavigation(false);
+    Scenery = InScenery;
+    Sprite->SetVisibility(!Scenery);
+    if (Scenery)
+    {
+        Scenery->SetPickup(this);
+    }
+}
+
+void ANativeWadPickup::Destroyed()
+{
+    if (IsValid(Scenery) && GetWorld() && GetWorld()->IsGameWorld())
+    {
+        Scenery->SetActorHiddenInGame(true);
+        Scenery->SetActorEnableCollision(false);
+        Scenery->SetActorTickEnabled(false);
+    }
+    Super::Destroyed();
+}
+
 void ANativeWadPickup::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    FacePlayer(*Sprite);
+    if (!Scenery)
+    {
+        FacePlayer(*Sprite);
+    }
 }
 
 void ANativeWadPickup::SetAvailable(bool bAvailable)

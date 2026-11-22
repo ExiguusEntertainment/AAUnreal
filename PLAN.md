@@ -222,9 +222,18 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 
 - The native gameplay HUD uses the original `MAINBACK` frame, palette, `FontTiny`, potion frames, Priest rune buttons, item sprites, and the inventory and statistics panels. It appears at level entry, including on maps without scripted activities.
 - The banner reads live health, mana, food, water, carried weight, the ready hand, and queued runes. The original inventory grid and statistics panel display the current character. The remaining original banner forms are pending.
-- Numpad 7 opens the inventory. Tab releases the mouse for the banner buttons. Select an inventory item and click the ready-hand box to equip it. The USE and CAST buttons use the same gameplay handlers as their keyboard controls.
+- I or Numpad 7 opens the inventory. Tab releases the mouse for the banner buttons. Select an inventory item and click the ready-hand box to equip it. The USE and CAST buttons use the same gameplay handlers as their keyboard controls.
 - Run `AA.CreateClassicWadHUD` in Unreal Editor to regenerate the assets under `Content/WadInterface`. Run `AA.ExportNativeWadPortReview ClassicHud <OutputPng>` from a fresh standalone L301 game to capture the gameplay frame, inventory, statistics, and runes.
 - The L301 replay readied the dagger and cast Rejuvenate through the banner, spending 1,000 mana and restoring the player's 300 missing health. Town Hall scrolling and all nine WAD regression tests passed. The captures are in `Saved/Wad-Classic-HUD-Review.html`.
+
+### Authored pickups and inventory
+
+- Point at a world item and press E to store it. The classic grid shows the original item descriptions, stack quantities, carried weight, and ready hand. Use the page arrows, Page Up and Page Down, or the mouse wheel to browse the bag.
+- Left Ctrl or left-click in mouse-look mode uses the ready hand. An empty hand or the iron dagger attacks. Vertical game mouse look is reversed from the earlier port default. Scripted sound effects and ambient loops are available. Level music is pending.
+- `AA.ImportNativeWadItems <WadPath> <MapName> </Game/MapPackage>` adds inventory items to an existing native map using its original pickup descriptions and object art. It keeps existing quest actors and adds the new pickups to older saves on first load. Material variants keep their original item IDs and descriptions and share their base sprite artwork.
+- All 30 native campaign maps now contain their authored inventory placements. The refresh added 1,923 placements, retained 19 existing pickup actors at their original locations, and found a sector for every placement.
+- The muted `Inventory` review walks from the original L30 spawn, tests both directions of mouse pitch, and picks up cherries, a berry, and grapes with E. It verifies selection and the ready hand, then exercises stack grouping and page navigation. `InventoryReload` resumes `NativeWadInventoryReview` and checks the stored items and the removed world pickups.
+- All 13 WAD tests passed. The fresh-character replay also defeated the original Guardians and completed Visions of Jugurtha for 10 gold with the expanded pickup set.
 
 ### The Knights of Andrew quest completion
 

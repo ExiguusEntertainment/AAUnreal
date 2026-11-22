@@ -50,6 +50,7 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "NativeWadEncounter.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadHudData.h"
+#include "NativeWadItemSource.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
@@ -741,7 +742,8 @@ struct FAAWadNativeImport
                 || !InstallQuestPickup(World, Actor, Map, NativeWadRules::OrbOfDefense, TEXT("OrbOfDefense"),
                     TEXT("ORB5/ORB5.CPC"), TEXT("L153 Orb of Defense"), Output)))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
-                || !InstallL22Journal(World, Actor, Map, Output))))
+                || !InstallL22Journal(World, Actor, Map, Output)))
+            || !InstallAuthoredItems(World, Actor, Map, Output))
         {
             return false;
         }
@@ -749,6 +751,164 @@ struct FAAWadNativeImport
         AWorldSettings* Settings = World.GetWorldSettings();
         Settings->Modify();
         Settings->DefaultGameMode = ANativeWadGameMode::StaticClass();
+        return true;
+    }
+
+    bool InstallAuthoredItems(UWorld& World, ANativeWadLevel& Level, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        Level.InitializeTopology();
+        TSet<int32> Types;
+        for (const FWadThing& Thing : Map.Things)
+        {
+            Types.Add(uint16(Thing.Type));
+        }
+        TMap<int32, FWadAuthoredItem> Items;
+        if (!ReadWadAuthoredItems(Types, Items, Output))
+        {
+            return false;
+        }
+        if (Items.IsEmpty())
+        {
+            Output.Log(TEXT("This native WAD map has no authored inventory items."));
+            return true;
+        }
+        auto* Catalog = LoadObject<UNativeWadHudData>(nullptr, UNativeWadHudData::ObjectPath);
+        auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        if (!Catalog || !Plane)
+        {
+            Output.Log(TEXT("Import authored WAD items after AA.CreateClassicWadHUD."));
+            return false;
+        }
+
+        TGuardValue<FString> AssetRootGuard(AssetRoot, TEXT("/Game/WadInterface/Inventory"));
+        TMap<FName, ANativeWadPickup*> ExistingByTag;
+        TMultiMap<FIntVector, ANativeWadPickup*> LegacyByPlacement;
+        for (TActorIterator<ANativeWadPickup> It(&World); It; ++It)
+        {
+            if (It->Tags.IsEmpty() || It->GetCheckpointRevision() == FWadLevelCheckpoint::AuthoredItemsRevision)
+            {
+                if (!It->Tags.IsEmpty())
+                {
+                    ExistingByTag.Add(It->Tags[0], *It);
+                }
+                continue;
+            }
+            const FVector Location = It->GetActorLocation() - Level.GetActorLocation();
+            LegacyByPlacement.Add({FMath::RoundToInt32(Location.X), FMath::RoundToInt32(Location.Y), It->GetItemType()}, *It);
+        }
+        TMap<FName, ANativeWadScenery*> SceneryByTag;
+        for (TActorIterator<ANativeWadScenery> It(&World); It; ++It)
+        {
+            if (!It->Tags.IsEmpty())
+            {
+                SceneryByTag.Add(It->Tags[0], *It);
+            }
+        }
+
+        TMap<FString, UMaterial*> ItemMaterials;
+        TMap<int32, UTexture2D*> Icons;
+        for (const auto& [Type, Item] : Items)
+        {
+            const FString Name = FPaths::GetCleanFilename(FPaths::GetPath(Item.Picture)) + TEXT("_") + FPaths::GetBaseFilename(Item.Picture);
+            const FString MaterialName = TEXT("M_") + Name;
+            const FString ImageName = TEXT("T_") + Name;
+            const FString MaterialPackage = AssetRoot / TEXT("Things") / MaterialName;
+            UMaterial*& Material = ItemMaterials.FindOrAdd(Item.Picture);
+            if (!Material)
+            {
+                Material = FPackageName::DoesPackageExist(MaterialPackage)
+                    ? LoadObject<UMaterial>(nullptr, *(MaterialPackage + TEXT(".") + MaterialName))
+                    : SpriteMaterial(Name, Item.Picture);
+            }
+            const FString ImagePackage = AssetRoot / TEXT("Things") / ImageName;
+            const FString ImagePath = ImagePackage + TEXT(".") + ImageName;
+            UTexture2D* Image = FindObject<UTexture2D>(nullptr, *ImagePath);
+            if (!Image && FPackageName::DoesPackageExist(ImagePackage))
+            {
+                Image = LoadObject<UTexture2D>(nullptr, *ImagePath);
+            }
+            if (!Image || !Material || Image->Source.GetSizeX() <= 0 || Image->Source.GetSizeY() <= 0)
+            {
+                Output.Logf(TEXT("Could not build the authored art for WAD item %d."), Type);
+                return false;
+            }
+            Icons.Add(Type, Image);
+            if (!Catalog->Items.Contains(Type))
+            {
+                Catalog->Items.Add(Type, Image);
+            }
+            Catalog->ItemWeights.Add(Type, Item.Weight);
+            Catalog->ItemDetails.Add(Type, Item.Details);
+        }
+        QueueSave(*Catalog);
+
+        int32 Imported = 0;
+        int32 Existing = 0;
+        int32 Skipped = 0;
+        for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+        {
+            const FWadThing& Thing = Map.Things[Id];
+            const int32 Type = uint16(Thing.Type);
+            const FWadAuthoredItem* Item = Items.Find(Type);
+            if (!Item)
+            {
+                continue;
+            }
+            const FIntVector Placement(Thing.X, Thing.Y, Type);
+            if (ANativeWadPickup* const* Found = LegacyByPlacement.Find(Placement))
+            {
+                LegacyByPlacement.RemoveSingle(Placement, *Found);
+                ++Existing;
+                continue;
+            }
+            const FVector2D XY(Thing.X, Thing.Y);
+            int32 Sector = Level.FindWadSector(XY);
+            if (Sector == INDEX_NONE)
+            {
+                Sector = FindSceneryWallSector(Map, XY);
+            }
+            FVector2D Heights;
+            if (!Level.GetSectorSurfaceHeights(Sector, Heights))
+            {
+                Output.Logf(TEXT("WAD item Thing %d (type %d) has no containing sector."), Id, Type);
+                ++Skipped;
+                continue;
+            }
+
+            const UTexture2D* Image = Icons.FindChecked(Type);
+            const FIntPoint Size(Image->Source.GetSizeX(), Image->Source.GetSizeY());
+            const double HalfHeight = Size.Y * 0.5;
+            const double Mount = Item->bHanging ? Heights.Y - HalfHeight : HalfHeight + FMath::Max(Heights.X,
+                FMath::Min(Heights.X + (Item->bRaised ? 32.0 : 0.0), Heights.Y - Size.Y));
+            const FString Label = FString::Printf(TEXT("WAD Item Thing %d"), Id);
+            ANativeWadPickup* Pickup = ExistingByTag.FindRef(FName(*Label));
+            if (!Pickup)
+            {
+                Pickup = ImportSliceThing<ANativeWadPickup>(World, Map, Id, Mount, *Label);
+            }
+            if (!Pickup)
+            {
+                return false;
+            }
+            Pickup->Modify();
+            Pickup->SetActorLocation(Level.GetActorLocation() + FVector(XY, Mount));
+            ANativeWadScenery* Scenery = SceneryByTag.FindRef(FName(*FString::Printf(TEXT("WAD Scenery Thing %d"), Id)));
+            if (Scenery)
+            {
+                Scenery->Modify();
+            }
+            Pickup->ConfigureAuthored(Plane, ItemMaterials.FindChecked(Item->Picture), Type, FWadLevelCheckpoint::AuthoredItemsRevision,
+                Size, Item->Radius, Item->bPassable, Scenery);
+            USceneComponent* Surface = Item->bHanging ? Level.Sectors[Sector].Ceiling.Get() : Level.Sectors[Sector].Floor.Get();
+            if (!Surface || !Pickup->AttachToComponent(Surface, FAttachmentTransformRules::KeepWorldTransform))
+            {
+                Output.Logf(TEXT("Could not mount WAD item Thing %d to sector %d."), Id, Sector);
+                return false;
+            }
+            ++Imported;
+        }
+        Output.Logf(TEXT("Prepared %d authored inventory placements, kept %d existing pickups, and skipped %d without a sector."),
+            Imported, Existing, Skipped);
         return true;
     }
 
@@ -2726,6 +2886,44 @@ bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice&
     return true;
 }
 
+bool SaveNativeWadItems(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage))
+    {
+        Output.Log(TEXT("Authored item import needs a source WAD and an existing native map."));
+        return false;
+    }
+    const FString ObjectPath = MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage);
+    UWorld* World = LoadObject<UWorld>(nullptr, *ObjectPath);
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    {
+        Output.Logf(TEXT("No matching native editor level in %s."), *MapPackage);
+        return false;
+    }
+    FAAWadNativeImport Import;
+    if (!Import.InstallAuthoredItems(*World, *Level, *Map, Output))
+    {
+        return false;
+    }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    {
+        if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension()))
+        {
+            return false;
+        }
+    }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension()))
+    {
+        return false;
+    }
+    Output.Logf(TEXT("Saved authored inventory items in %s."), *MapPackage);
+    return true;
+}
+
 bool RefreshNativeWadSurfaces(const FString& MapPackage, FOutputDevice& Output)
 {
     if (!MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
@@ -3079,8 +3277,6 @@ bool SaveNativeWadHud(FOutputDevice& Output)
         {NativeWadRules::ElmoreKey6, 1, TEXT("KEY6/KEY6.CPC")},
         {NativeWadRules::ElmoreKey8, 1, TEXT("KEY8/KEY8.CPC")},
     };
-    Data->Items.Reset();
-    Data->ItemWeights.Reset();
     for (const auto& Item : Items)
     {
         if (!LoadWadSprite(Item.Sprite, Size, Pixels))

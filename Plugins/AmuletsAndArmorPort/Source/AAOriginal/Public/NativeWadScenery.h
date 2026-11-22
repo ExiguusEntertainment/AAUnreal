@@ -5,6 +5,7 @@
 #include "NativeWadScenery.generated.h"
 
 class ANativeWadLevel;
+class ANativeWadPickup;
 class UBoxComponent;
 class UMaterialInterface;
 class UStaticMeshComponent;
@@ -75,6 +76,8 @@ public:
         int32 InSector, int32 InThingId);
     uint16 GetSourceAngle() const;
     void SetSourceAngle(uint16 Angle);
+    void SetPickup(ANativeWadPickup* Item);
+    ANativeWadPickup* GetPickup() const;
 
 private:
     virtual void BeginPlay() override;
@@ -90,6 +93,9 @@ private:
 
     UPROPERTY()
     TObjectPtr<ANativeWadLevel> WadLevel;
+
+    UPROPERTY()
+    TObjectPtr<ANativeWadPickup> Pickup;
 
     UPROPERTY()
     FWadSceneryDefinition Definition;

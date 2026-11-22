@@ -17,6 +17,7 @@
 #include "NativeWadEncounter.h"
 #include "NativeWadLevel.h"
 #include "NativeWadMovement.h"
+#include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #include "TimerManager.h"
 
@@ -118,7 +119,7 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
         for (const FString& Entry : Items)
         {
             int32 Type;
-            if (LexTryParseString(Type, *Entry) && Type > 0 && Type <= MAX_int16)
+            if (LexTryParseString(Type, *Entry) && Type > 0 && Type <= MAX_uint16)
             {
                 CarriedItems.Add(Type);
             }
@@ -161,6 +162,11 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
     Input->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ANativeWadPlayer::ClickPressed);
     Input->BindKey(EKeys::LeftControl, IE_Pressed, this, &ANativeWadPlayer::UseReadyHand);
     Input->BindKey(EKeys::NumPadSeven, IE_Pressed, this, &ANativeWadPlayer::ToggleInventory);
+    Input->BindKey(EKeys::I, IE_Pressed, this, &ANativeWadPlayer::ToggleInventory);
+    Input->BindKey(EKeys::PageUp, IE_Pressed, this, &ANativeWadPlayer::InventoryPageUp);
+    Input->BindKey(EKeys::PageDown, IE_Pressed, this, &ANativeWadPlayer::InventoryPageDown);
+    Input->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &ANativeWadPlayer::InventoryPageUp);
+    Input->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &ANativeWadPlayer::InventoryPageDown);
     Input->BindKey(EKeys::Tab, IE_Pressed, this, &ANativeWadPlayer::ToggleMouseLook);
     Input->BindKey(EKeys::NumPadFour, IE_Pressed, this, &ANativeWadPlayer::EnterRuneFour);
     Input->BindKey(EKeys::NumPadFive, IE_Pressed, this, &ANativeWadPlayer::EnterRuneFive);
@@ -332,11 +338,29 @@ bool ANativeWadPlayer::Use()
     const FVector Direction = GetControlRotation().Vector();
     FCollisionQueryParams Query(SCENE_QUERY_STAT(UseWadPickup), true, this);
     FHitResult Hit;
-    if (GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Direction * 64.0, ECC_Visibility, Query))
+    const FVector Reach = Start + Direction * 64.0;
+    const bool bObstructed = GetWorld()->LineTraceSingleByChannel(Hit, Start, Reach, ECC_Visibility, Query);
+    FHitResult ItemHit;
+    if (GetWorld()->LineTraceSingleByChannel(ItemHit, Start, bObstructed ? Hit.ImpactPoint : Reach,
+        ANativeWadPickup::InteractionChannel, Query))
+    {
+        if (ANativeWadPickup* Pickup = Cast<ANativeWadPickup>(ItemHit.GetActor()))
+        {
+            return Pickup->Collect(*this);
+        }
+    }
+    if (bObstructed)
     {
         if (ANativeWadPickup* Pickup = Cast<ANativeWadPickup>(Hit.GetActor()))
         {
             return Pickup->Collect(*this);
+        }
+        if (const ANativeWadScenery* Scenery = Cast<ANativeWadScenery>(Hit.GetActor()))
+        {
+            if (ANativeWadPickup* Pickup = Scenery->GetPickup())
+            {
+                return Pickup->Collect(*this);
+            }
         }
     }
     for (TActorIterator<ANativeWadLevel> Level(GetWorld()); Level; ++Level)
@@ -458,12 +482,10 @@ void ANativeWadPlayer::StartWadEarthquake(double Duration)
 void ANativeWadPlayer::CollectItem(int32 Type)
 {
     CarriedItems.Add(Type);
-    ShowInteractionMessage(Type == Berry ? TEXT("Picked up a berry")
-        : Type == IronDagger ? TEXT("Picked up an iron dagger")
-        : Type == JugurthaJournal ? TEXT("Picked up Jugurtha's journal")
-        : Type == AndrewNecklace ? TEXT("Picked up the Necklace of Andrew")
-        : Type == OrbOfDefense ? TEXT("Picked up the Orb of Defense")
-        : Type == OrbOfTheUndead ? TEXT("Picked up the Orb of the Undead") : TEXT("Picked up an item"));
+    const FString Description = GetInventoryItemDescription(Type);
+    FString Name;
+    ShowInteractionMessage(FString::Printf(TEXT("Picked up %s"),
+        Description.Split(TEXT(" ["), &Name, nullptr) ? *Name : *Description));
     UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
 }
 

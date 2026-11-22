@@ -76,10 +76,49 @@ namespace
         return {Corner, Corner + FVector2D(17, 14)};
     }
 
-    int32 PageCount(const ANativeWadPlayer& Player)
+    struct FInventoryCell
     {
-        return FMath::Max(1, FMath::DivideAndRoundUp(Player.GetCarriedItems().Num(), SlotsPerPage));
-    }
+        int32 FirstSlot;
+        int32 Count = 1;
+    };
+
+    // Keep the saved inventory as individual objects. Only the displayed cells combine stackable items.
+    struct FInventoryView
+    {
+        FInventoryView(const ANativeWadPlayer& Player, const UNativeWadHudData& Data)
+        {
+            const TArray<int32>& Items = Player.GetCarriedItems();
+            CellBySlot.Reserve(Items.Num());
+            TMap<int32, int32> LastStackByType;
+            for (int32 Slot = 0; Slot < Items.Num(); ++Slot)
+            {
+                const int32 Type = Items[Slot];
+                const FWadInventoryDetails* Details = Data.ItemDetails.Find(Type);
+                const int32 Limit = Details ? Details->StackLimit : 1;
+                const int32* Previous = LastStackByType.Find(Type);
+                if (Previous && Cells[*Previous].Count < Limit)
+                {
+                    ++Cells[*Previous].Count;
+                    CellBySlot.Add(*Previous);
+                }
+                else
+                {
+                    const int32 Cell = Cells.Add({Slot});
+                    CellBySlot.Add(Cell);
+                    if (Limit > 1)
+                    {
+                        LastStackByType.Add(Type, Cell);
+                    }
+                }
+            }
+        }
+
+        int32 PageCount() const { return FMath::Max(1, FMath::DivideAndRoundUp(Cells.Num(), SlotsPerPage)); }
+        int32 CellForSlot(int32 Slot) const { return CellBySlot.IsValidIndex(Slot) ? CellBySlot[Slot] : INDEX_NONE; }
+
+        TArray<FInventoryCell> Cells;
+        TArray<int32> CellBySlot;
+    };
 
     struct FHudCanvas
     {
@@ -223,8 +262,22 @@ void ANativeWadHUD::BeginPlay()
 
 FVector2D ANativeWadHUD::InventorySlotCenter(int32 Slot) const
 {
-    return ClassicData ? InputLayout(GetOwningPlayerController()).At(SlotBox(Slot).GetCenter())
-        : FallbackInventorySlotCenter(Slot);
+    const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    if (!ClassicData || !Player)
+    {
+        return FallbackInventorySlotCenter(Slot);
+    }
+    const int32 Cell = Slot == INDEX_NONE ? INDEX_NONE : FInventoryView(*Player, *ClassicData).CellForSlot(Slot);
+    return InputLayout(GetOwningPlayerController()).At(SlotBox(Cell).GetCenter());
+}
+
+void ANativeWadHUD::ChangeInventoryPage(int32 Offset)
+{
+    const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    if (ClassicData && Player && Player->IsInventoryOpen() && Form == EForm::Inventory)
+    {
+        InventoryPage = FMath::Clamp(InventoryPage + Offset, 0, FInventoryView(*Player, *ClassicData).PageCount() - 1);
+    }
 }
 
 void ANativeWadHUD::ClickHUD(const FVector2D& Position)
@@ -300,20 +353,20 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
         Player->ClickInventorySlot(INDEX_NONE);
         return;
     }
-    const int32 LastPage = PageCount(*Player) - 1;
-    InventoryPage = FMath::Min(InventoryPage, LastPage);
+    const FInventoryView View(*Player, *ClassicData);
+    InventoryPage = FMath::Min(InventoryPage, View.PageCount() - 1);
     if (PreviousPage.IsInside(Point) || NextPage.IsInside(Point))
     {
-        InventoryPage = FMath::Clamp(InventoryPage + (PreviousPage.IsInside(Point) ? -1 : 1), 0, LastPage);
+        ChangeInventoryPage(PreviousPage.IsInside(Point) ? -1 : 1);
         return;
     }
     const int32 Start = InventoryPage * SlotsPerPage;
-    const int32 End = FMath::Min(Start + SlotsPerPage, Player->GetCarriedItems().Num());
-    for (int32 Slot = Start; Slot < End; ++Slot)
+    const int32 End = FMath::Min(Start + SlotsPerPage, View.Cells.Num());
+    for (int32 Cell = Start; Cell < End; ++Cell)
     {
-        if (SlotBox(Slot).IsInside(Point))
+        if (SlotBox(Cell).IsInside(Point))
         {
-            Player->ClickInventorySlot(Slot);
+            Player->ClickInventorySlot(View.Cells[Cell].FirstSlot);
             return;
         }
     }
@@ -461,20 +514,58 @@ void ANativeWadHUD::DrawHUD()
     }
 
     Screen.Picture(TEXT("INVBAR3"), {209, 0});
-    Screen.Rect({{214, 140}, {315, 149}}, Disabled);
-    const int32 Pages = PageCount(*Player);
+    Screen.Rect({{214, 140}, {315, 149}}, FLinearColor::FromSRGBColor(FColor(39, 22, 15)));
+    Screen.Text(TEXT("SELECT ITEM, THEN READY"), 214, 141, 101, 1, true);
+    const FInventoryView View(*Player, *ClassicData);
+    const int32 Pages = View.PageCount();
     InventoryPage = FMath::Min(InventoryPage, Pages - 1);
     const int32 Start = InventoryPage * SlotsPerPage;
-    const int32 End = FMath::Min(Start + SlotsPerPage, Player->GetCarriedItems().Num());
-    for (int32 Slot = Start; Slot < End; ++Slot)
+    const int32 End = FMath::Min(Start + SlotsPerPage, View.Cells.Num());
+    const int32 Selected = View.CellForSlot(Player->GetSelectedInventorySlot());
+    const int32 ReadyCell = View.CellForSlot(Player->GetReadySlot());
+    FVector2D Cursor(-1, -1);
+    if (const APlayerController* Controller = GetOwningPlayerController();
+        Controller && Controller->GetMousePosition(Cursor.X, Cursor.Y))
     {
-        const FBox2D Box = SlotBox(Slot);
-        if (Slot == Player->GetSelectedInventorySlot() || Slot == Player->GetReadySlot())
-        {
-            Screen.Rect({Box.Min + FVector2D(1, 1), Box.Max}, Screen.Color(Slot == Player->GetSelectedInventorySlot() ? 82 : 78));
-        }
-        Screen.Item(Player->GetCarriedItems()[Slot], Box);
+        Cursor = (Cursor - Screen.Layout.Origin) / Screen.Layout.Scale;
     }
+    int32 InspectedSlot = Player->GetSelectedInventorySlot();
+    for (int32 Cell = Start; Cell < End; ++Cell)
+    {
+        const FInventoryCell& Item = View.Cells[Cell];
+        const FBox2D Box = SlotBox(Cell);
+        if (Cell == Selected || Cell == ReadyCell)
+        {
+            Screen.Rect({Box.Min + FVector2D(1, 1), Box.Max}, Screen.Color(Cell == Selected ? 82 : 78));
+        }
+        Screen.Item(Player->GetCarriedItems()[Item.FirstSlot], Box);
+        if (Item.Count > 1)
+        {
+            const FVector2D Corner = Box.Max - FVector2D(9, 7);
+            Screen.Rect({Corner, Box.Max}, FLinearColor(0, 0, 0, 0.8));
+            Screen.Text(FString::FromInt(Item.Count), int32(Corner.X), int32(Corner.Y), 9, 1, true);
+        }
+        if (Box.IsInside(Cursor))
+        {
+            InspectedSlot = Item.FirstSlot;
+        }
+    }
+    if (Ready.IsInside(Cursor))
+    {
+        InspectedSlot = Player->GetReadySlot();
+    }
+    if (Player->GetCarriedItems().IsValidIndex(InspectedSlot))
+    {
+        Screen.Rect({{6, 129}, {205, 149}}, FLinearColor(0.01, 0.01, 0.01, 0.92));
+        Screen.Text(Player->GetInventoryItemDescription(Player->GetCarriedItems()[InspectedSlot]), 9, 132, 193, 2);
+    }
+    if (View.Cells.IsEmpty())
+    {
+        Screen.Text(TEXT("EMPTY"), 214, 69, 101, 1, true);
+    }
+    Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+    Screen.Picture(TEXT("LTARROW"), PreviousPage.Min);
+    Screen.Picture(TEXT("RTARROW"), NextPage.Min);
     Screen.Text(Load, 213, 129, 52, 1, true);
     Screen.Text(FString::Printf(TEXT("PG:%d/%d"), InventoryPage + 1, Pages), 287, 129, 27, 1, true);
 }

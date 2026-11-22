@@ -42,6 +42,7 @@ public:
     const TArray<int32>& GetCarriedItems() const { return CarriedItems; }
     int32 GetReadySlot() const { return ReadySlot; }
     int32 GetReadyItem() const;
+    FString GetInventoryItemDescription(int32 Type) const;
     int32 GetSelectedInventorySlot() const { return SelectedInventorySlot; }
     bool IsInventoryOpen() const { return bInventoryOpen; }
     bool IsMouseLook() const { return bMouseLook; }
@@ -83,6 +84,8 @@ private:
     void UseReadyHand();
     void ClickPressed();
     void ToggleInventory();
+    void InventoryPageUp();
+    void InventoryPageDown();
     void ToggleMouseLook();
     void SetMouseLook(bool bEnabled);
     bool IsInWadTown() const;
@@ -166,6 +169,7 @@ public:
 
 private:
     friend class ANativeWadPlayer;
+    void ChangeInventoryPage(int32 Offset);
     void DrawFallbackHUD(const ANativeWadPlayer& Player);
     void ClickFallbackInventory(const FVector2D& Position);
     FVector2D FallbackInventorySlotCenter(int32 Slot) const;

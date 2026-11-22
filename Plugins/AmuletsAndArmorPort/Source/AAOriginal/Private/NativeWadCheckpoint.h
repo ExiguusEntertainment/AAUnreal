@@ -78,7 +78,8 @@ struct FWadLevelCheckpoint
 
     static constexpr int32 AndrewNecklaceRevision = 1;
     static constexpr int32 ElmoreKeysRevision = 2;
-    static constexpr int32 CurrentPickupRevision = ElmoreKeysRevision;
+    static constexpr int32 AuthoredItemsRevision = 3;
+    static constexpr int32 CurrentPickupRevision = AuthoredItemsRevision;
 
     UPROPERTY()
     TMap<int32, FVector2D> SectorHeights;

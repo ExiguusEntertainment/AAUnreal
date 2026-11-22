@@ -5,6 +5,7 @@
 #include "NativeWadEncounter.generated.h"
 
 class ANativeWadPlayer;
+class ANativeWadScenery;
 class ANativeWadLevel;
 class UMaterialInterface;
 class USphereComponent;
@@ -158,11 +159,15 @@ public:
     ANativeWadPickup();
     virtual void Tick(float DeltaSeconds) override;
     void Configure(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType, int32 InCheckpointRevision = 0);
+    void ConfigureAuthored(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType, int32 InCheckpointRevision,
+        FIntPoint Size, int32 Radius, bool bPassable, ANativeWadScenery* InScenery);
+    virtual void Destroyed() override;
     void SetAvailable(bool bAvailable);
     bool IsAvailable() const { return !IsHidden(); }
     bool Collect(ANativeWadPlayer& Player);
     int32 GetItemType() const { return ItemType; }
     int32 GetCheckpointRevision() const { return CheckpointRevision; }
+    static constexpr ECollisionChannel InteractionChannel = ECC_GameTraceChannel1;
 
 private:
     UPROPERTY(VisibleAnywhere)
@@ -176,4 +181,7 @@ private:
 
     UPROPERTY()
     int32 CheckpointRevision = 0;
+
+    UPROPERTY()
+    TObjectPtr<ANativeWadScenery> Scenery;
 };
