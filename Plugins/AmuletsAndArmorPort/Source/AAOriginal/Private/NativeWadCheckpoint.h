@@ -171,6 +171,21 @@ struct FWadQuestProgress
     int32 Gold = 0;
 
     UPROPERTY()
+    int32 CopperRemainder = 0;
+
+    UPROPERTY()
+    int64 BankCopper = 0;
+
+    static constexpr int64 WalletLimit = int64(MAX_int32) * 100 + 99;
+    int64 GetWalletCopper() const { return int64(Gold) * 100 + CopperRemainder; }
+    void SetWalletCopper(int64 Copper)
+    {
+        Copper = FMath::Clamp(Copper, int64(0), WalletLimit);
+        Gold = int32(Copper / 100);
+        CopperRemainder = int32(Copper % 100);
+    }
+
+    UPROPERTY()
     int32 ShopTier = 0;
 
     UPROPERTY()

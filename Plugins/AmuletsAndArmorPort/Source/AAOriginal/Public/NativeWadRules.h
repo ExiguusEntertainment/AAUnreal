@@ -31,6 +31,12 @@ namespace NativeWadRules
     inline constexpr int32 PriestAttributes[AttributeCount] = {Strength, Speed, Magic, 15, 20, Constitution};
     inline constexpr int32 PriestAdvancement[AttributeCount] = {2, 1, 3, 2, 2, 2};
     inline constexpr int32 FeatherfallPotion = 817;
+    // INVDESC/DES00360, DES00613 and DES00805.
+    inline constexpr int32 FlyingScroll = 360;
+    inline constexpr int32 FlyingAmulet = 613;
+    inline constexpr int32 FlyingPotion = 805;
+    inline constexpr double FlyingScrollSeconds = 5000.0 / TicksPerSecond;
+    inline constexpr double FlyingPotionSeconds = 4000.0 / TicksPerSecond;
     inline constexpr int32 JugurthaJournal = 957;
     inline constexpr int32 ChurchKey = 258;
     inline constexpr int32 AndrewNecklace = 958;

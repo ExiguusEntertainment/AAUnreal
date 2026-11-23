@@ -258,7 +258,7 @@ public:
     bool UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, ANativeWadPlayer* Player);
     bool UseActivityFromView(ANativeWadPlayer& Player);
     void CheckActivitySector(ANativeWadPlayer& Player, int32& PreviousSector);
-    int32 FindActivitySector(const FVector2D& Position) const;
+    int32 FindActivitySector(const FVector2D& Position, double Radius = 0.0, int32 PreviousSector = INDEX_NONE) const;
     int32 FindWadSector(const FVector2D& Position) const;
     double GetWalkingHeight(int32 Sector) const;
     bool AttachActorToWadFloor(AActor& Actor, int32 Sector) const;

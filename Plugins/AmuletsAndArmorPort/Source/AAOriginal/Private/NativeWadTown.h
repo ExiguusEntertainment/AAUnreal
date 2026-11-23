@@ -72,6 +72,10 @@ public:
     UPROPERTY()
     TMap<FName, TObjectPtr<UTexture2D>> Pictures;
     UPROPERTY()
+    TMap<int32, int32> StoreStock;
+    UPROPERTY()
+    TMap<int32, int32> BankStock;
+    UPROPERTY()
     FWadTownFont Medium;
     UPROPERTY()
     FWadTownFont Tiny;
@@ -126,6 +130,14 @@ public:
 
 private:
     void StartQuest();
+    void DrawService(const UNativeWadTownData& Content, const struct FWadQuestProgress& Progress, const ANativeWadPlayer& Player);
+    void ClickService(const UNativeWadTownData& Content, struct FWadQuestProgress& Progress, const FVector2D& Point);
+    bool IsBankOpen() const { return Service == TEXT("Bank"); }
+    FName Service;
+    int32 StockPage = 0;
+    int32 BagPage = 0;
+    int32 ShopSelection = INDEX_NONE;
+    bool bSelling = false;
     bool bDialogue = false;
     int32 ResultPage = 0;
     int32 ScrollLine = 0;

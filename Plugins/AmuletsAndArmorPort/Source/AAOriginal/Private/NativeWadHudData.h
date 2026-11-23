@@ -17,6 +17,15 @@ struct FWadInventoryDetails
     int32 StackLimit = 1;
 
     UPROPERTY()
+    int32 ValueCopper = 0;
+
+    UPROPERTY()
+    bool bStoreBuys = false;
+
+    UPROPERTY()
+    bool bBankBuys = false;
+
+    UPROPERTY()
     int32 Health = 0;
     UPROPERTY()
     int32 Mana = 0;

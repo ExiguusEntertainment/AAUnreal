@@ -2938,6 +2938,18 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     {
         Types.Add(Type);
     }
+    TMap<int32, int32> Stock;
+    for (const bool bBank : {false, true})
+    {
+        if (!ReadWadShopStock(bBank, Stock, Output))
+        {
+            return false;
+        }
+        for (const auto& [Type, Tier] : Stock)
+        {
+            Types.Add(Type);
+        }
+    }
     TMap<int32, FWadAuthoredItem> Items;
     if (!ReadWadAuthoredItems(Types, Items, Output))
     {
@@ -2946,14 +2958,38 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     int32 Consumables = 0;
     int32 Weapons = 0;
     int32 Armor = 0;
+    FAAWadNativeImport Import;
+    Import.AssetRoot = TEXT("/Game/WadInterface/Inventory");
     for (const auto& [Type, Item] : Items)
     {
+        if (!Catalog->Items.Contains(Type))
+        {
+            const FString Name = Item.AssetName();
+            const FString ImagePackage = Import.AssetRoot / TEXT("Things/T_") + Name;
+            const FString ImagePath = ImagePackage + TEXT(".T_") + Name;
+            UTexture2D* Image = FindObject<UTexture2D>(nullptr, *ImagePath);
+            if (!Image && FPackageName::DoesPackageExist(ImagePackage))
+            {
+                Image = LoadObject<UTexture2D>(nullptr, *ImagePath);
+            }
+            if (!Image && Import.SpriteMaterial(Name, Item.Picture))
+            {
+                Image = FindObject<UTexture2D>(nullptr, *ImagePath);
+            }
+            if (!Image)
+            {
+                Output.Logf(TEXT("Could not import the shop item icon %d."), Type);
+                return false;
+            }
+            Catalog->Items.Add(Type, Image);
+            Catalog->ItemWeights.Add(Type, Item.Weight);
+        }
         FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
         const FString MaterialPackage = Item.WorldMaterialPackage();
-        if (FPackageName::DoesPackageExist(MaterialPackage))
+        const FString MaterialPath = MaterialPackage + TEXT(".") + FPackageName::GetShortName(MaterialPackage);
+        if (FindObject<UMaterialInterface>(nullptr, *MaterialPath) || FPackageName::DoesPackageExist(MaterialPackage))
         {
-            Details.WorldMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(MaterialPackage + TEXT(".")
-                + FPackageName::GetShortName(MaterialPackage)));
+            Details.WorldMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(MaterialPath));
         }
         const UTexture2D* Icon = Catalog->Items.FindRef(Type);
         if (Icon)
@@ -2963,6 +2999,14 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
         Consumables += Details.bUsable;
         Weapons += Details.HitFrame > 0;
         Armor += Details.ArmorSlot != INDEX_NONE && Details.ArmorValue > 0;
+    }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    {
+        if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension()))
+        {
+            return false;
+        }
     }
     Catalog->MarkPackageDirty();
     if (!SaveAsset(*Catalog, *FPackageName::GetAssetPackageExtension()))
@@ -3192,6 +3236,7 @@ namespace
             TEXT("UI/TOWN/BLOCK"), TEXT("UI/TOWN/SB2"), TEXT("UI/COMMON/UPARROW"), TEXT("UI/COMMON/DNARROW"),
             TEXT("UI/PROMPT/PMPTBULL"), TEXT("UI/PROMPT/BULLSB"), TEXT("UI/PROMPT/DLGBACK"), TEXT("UI/PROMPT/DLGSB"),
             TEXT("UI/PROMPT/BULLUP"), TEXT("UI/PROMPT/BULLDN"), TEXT("UI/PROMPT/OK"), TEXT("UI/PROMPT/ACCEPT"), TEXT("UI/PROMPT/CANCEL"),
+            TEXT("UI/STORE/STORBACK"), TEXT("UI/BANK/BANKBACK"), TEXT("UI/COMMON/LTARROW"), TEXT("UI/COMMON/RTARROW"),
         };
         Content->Pictures.Reset();
         FIntPoint Size;
@@ -3212,6 +3257,10 @@ namespace
                 Output.Logf(TEXT("Could not import the town graphic %s."), Picture);
                 return nullptr;
             }
+        }
+        if (!ReadWadShopStock(false, Content->StoreStock, Output) || !ReadWadShopStock(true, Content->BankStock, Output))
+        {
+            return nullptr;
         }
         const TPair<int32, const TCHAR*> QuestItems[] = {
             {957, TEXT("BOOK/BOOK.CPC")}, {958, TEXT("NECKLACE/NECKLACE.CPC")}, {954, TEXT("ORB5/ORB5.CPC")},

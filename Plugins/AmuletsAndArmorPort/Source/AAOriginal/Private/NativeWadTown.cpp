@@ -8,6 +8,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Misc/PackageName.h"
 #include "NativeWadCheckpoint.h"
+#include "NativeWadHudData.h"
 #include "TextureResource.h"
 
 namespace
@@ -64,6 +65,66 @@ namespace
     constexpr FTownButton DialogueDown{TEXT("BULLDN"), 279, 149};
     constexpr FTownButton ResultUp{TEXT("BULLUP"), 280, 54};
     constexpr FTownButton ResultDown{TEXT("BULLDN"), 280, 116};
+    constexpr int32 Coins[] = {1000, 100, 10, 1};
+    constexpr int32 BagRows = 8;
+    constexpr int32 ShopColumns = 6;
+    constexpr int32 SlotWidth = 17;
+    constexpr int32 SlotHeight = 14;
+
+    int32 StockRows(bool bBank) { return bBank ? 3 : 7; }
+    int32 StockTop(bool bBank) { return bBank ? 82 : 26; }
+
+    int64 CoinCount(int64 Total, int32 Row)
+    {
+        return Row == 0 ? Total / Coins[Row] : Total / Coins[Row] % 10;
+    }
+
+    FString FormatMoney(int64 Amount)
+    {
+        FString Result;
+        const TCHAR Currency[] = TEXT("pgsc");
+        for (int32 Row = 0; Row < UE_ARRAY_COUNT(Coins); ++Row)
+        {
+            if (const int64 Count = CoinCount(Amount, Row); Count > 0)
+            {
+                Result += FString::Printf(TEXT("%lld%c "), Count, Currency[Row]);
+            }
+        }
+        return Result.IsEmpty() ? FString(TEXT("0c")) : Result.TrimEnd();
+    }
+
+    TArray<int32> AvailableStock(const UNativeWadTownData& Content, int32 Tier, bool bBank)
+    {
+        TArray<int32> Types;
+        for (const auto& [Type, RequiredTier] : bBank ? Content.BankStock : Content.StoreStock)
+        {
+            if (Tier >= RequiredTier)
+            {
+                Types.Add(Type);
+            }
+        }
+        Types.Sort();
+        return Types;
+    }
+
+    FString ShopItemName(const ANativeWadPlayer& Player, int32 Type)
+    {
+        const FString Description = Player.GetInventoryItemDescription(Type);
+        FString Name;
+        return Description.Split(TEXT(" ["), &Name, nullptr) ? Name : Description;
+    }
+
+    int32 ResaleValue(const FWadInventoryDetails& Item, int32 Type, bool bBank)
+    {
+        if ((bBank && !Item.bBankBuys) || (!bBank && !Item.bStoreBuys) || (Type >= 300 && Type <= 317))
+        {
+            return 0;
+        }
+        if (Type == 60 || Type == 117) { return 1000; }
+        const bool bTreasure = (Type >= 110 && Type <= 113) || Type == 56 || Type == 412 || Type == 413
+            || Type == 414 || Type == 425 || Type == 433;
+        return bTreasure ? Item.ValueCopper : Item.ValueCopper / 3;
+    }
 
     struct FTownLayout
     {
@@ -180,6 +241,24 @@ namespace
         }
 
         void Button(const FTownButton& Button) const { Picture(Button.Picture, Button.X, Button.Y); }
+
+        void Panel(int32 X, int32 Y, int32 W, int32 H, const FLinearColor& Color) const
+        {
+            FCanvasTileItem Item(Layout.At(X, Y), FVector2D(W, H) * Layout.Scale, Color);
+            Item.BlendMode = SE_BLEND_Translucent;
+            Canvas.DrawItem(Item);
+        }
+
+        void Item(const UTexture2D* Image, FVector2D Position, FVector2D Bounds) const
+        {
+            if (Image && Image->GetResource() && Image->GetSizeX() && Image->GetSizeY())
+            {
+                const FVector2D NativeSize(Image->GetSizeX(), Image->GetSizeY());
+                const FVector2D Size = NativeSize * FMath::Min(Bounds.X / NativeSize.X, Bounds.Y / NativeSize.Y);
+                const FVector2D Corner = Position + (Bounds - Size) * 0.5;
+                Tile(*Image, int32(Corner.X), int32(Corner.Y), Size, FLinearColor::White);
+            }
+        }
 
         void Text(const FString& Value, const FWadTownFont& Font, int32 X, int32 Y,
             int32 Width, int32 Rows = 1, int32 Scroll = 0, bool bCenter = false) const
@@ -323,6 +402,48 @@ void ANativeWadPlayer::TownInn() { if (auto* HUD = TownHUD(*this)) { HUD->OpenSe
 void ANativeWadPlayer::TownStore() { if (auto* HUD = TownHUD(*this)) { HUD->OpenService(TEXT("Store")); } }
 void ANativeWadPlayer::TownBank() { if (auto* HUD = TownHUD(*this)) { HUD->OpenService(TEXT("Bank")); } }
 
+void ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBank)
+{
+    UNativeWadTravelState* Travel = TownTravel(*GetWorld());
+    const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
+    if (!IsInWadTown() || !Travel || !Content || Travel->Quest.bShowResult || Selection == INDEX_NONE)
+    {
+        return;
+    }
+    FWadQuestProgress& Progress = Travel->Quest;
+    const int32 Type = bSelling && CarriedItems.IsValidIndex(Selection) ? CarriedItems[Selection] : Selection;
+    const FWadInventoryDetails* Rules = GetItemRules(Type);
+    if (!Rules)
+    {
+        return;
+    }
+    if (bSelling)
+    {
+        const int32 Price = ResaleValue(*Rules, Type, bBank);
+        if (Price <= 0 || Progress.GetWalletCopper() > FWadQuestProgress::WalletLimit - Price || !RemoveInventorySlot(Selection))
+        {
+            ShowInteractionMessage(TEXT("The shop cannot buy that item."));
+            return;
+        }
+        Progress.SetWalletCopper(Progress.GetWalletCopper() + Price);
+        ShowInteractionMessage(FString::Printf(TEXT("Sold for %s"), *FormatMoney(Price)));
+        return;
+    }
+    const int32* Tier = (bBank ? Content->BankStock : Content->StoreStock).Find(Type);
+    if (!Tier || Progress.ShopTier < *Tier || Rules->ValueCopper < 0)
+    {
+        return;
+    }
+    if (Progress.GetWalletCopper() < Rules->ValueCopper)
+    {
+        ShowInteractionMessage(TEXT("You need more coins in your purse."));
+        return;
+    }
+    CarriedItems.Add(Type);
+    Progress.SetWalletCopper(Progress.GetWalletCopper() - Rules->ValueCopper);
+    ShowInteractionMessage(FString::Printf(TEXT("Bought for %s"), *FormatMoney(Rules->ValueCopper)));
+}
+
 void ANativeWadPlayer::TownClick()
 {
     const APlayerController* LocalPlayer = GetController<APlayerController>();
@@ -337,7 +458,7 @@ void ANativeWadTownHUD::SelectQuest(int32 Direction)
 {
     const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
     UNativeWadTravelState* Travel = TownTravel(*GetWorld());
-    if (Content && !Content->Quests.IsEmpty() && Travel && !Travel->Quest.bShowResult && !bDialogue)
+    if (Content && !Content->Quests.IsEmpty() && Travel && !Travel->Quest.bShowResult && !bDialogue && Service.IsNone())
     {
         const int32 Count = Content->Quests.Num();
         const int32 Selected = FMath::Clamp(Travel->Quest.Selected, 0, Count - 1);
@@ -350,7 +471,7 @@ void ANativeWadTownHUD::OpenQuest()
 {
     const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
     const UNativeWadTravelState* Travel = TownTravel(*GetWorld());
-    if (!Content || !Travel || !Content->Quests.IsValidIndex(Travel->Quest.Selected) || Travel->Quest.bShowResult || bDialogue)
+    if (!Content || !Travel || !Content->Quests.IsValidIndex(Travel->Quest.Selected) || Travel->Quest.bShowResult || bDialogue || !Service.IsNone())
     {
         return;
     }
@@ -422,6 +543,14 @@ void ANativeWadTownHUD::ConfirmAction()
         }
         ScrollLine = 0;
     }
+    else if (!Service.IsNone())
+    {
+        if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn()))
+        {
+            Player->TradeWadTownItem(ShopSelection, bSelling, IsBankOpen());
+            if (bSelling) { ShopSelection = INDEX_NONE; }
+        }
+    }
     else if (bDialogue)
     {
         StartQuest();
@@ -430,6 +559,7 @@ void ANativeWadTownHUD::ConfirmAction()
 
 void ANativeWadTownHUD::CancelAction()
 {
+    Service = NAME_None;
     if (bDialogue)
     {
         bDialogue = false;
@@ -446,6 +576,13 @@ void ANativeWadTownHUD::Scroll(int32 Direction)
         return;
     }
     const FWadQuestProgress& Progress = Travel->Quest;
+    if (!Service.IsNone())
+    {
+        const int32 PageSize = ShopColumns * StockRows(IsBankOpen());
+        const int32 Count = AvailableStock(*Content, Progress.ShopTier, IsBankOpen()).Num();
+        StockPage = FMath::Clamp(StockPage + Direction, 0, FMath::Max(0, (Count - 1) / PageSize));
+        return;
+    }
     const FWadTownQuest& Quest = Content->Quests[Progress.Selected];
     const bool bResult = Progress.bShowResult && Content->Quests.IsValidIndex(Progress.ResultQuest);
     const FString Text = bResult ? ResultText(Content->Quests[Progress.ResultQuest], Progress.bSucceeded, ResultPage)
@@ -462,6 +599,17 @@ void ANativeWadTownHUD::OpenService(FName Name)
     if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
         Player && Travel && !Travel->Quest.bShowResult && !bDialogue)
     {
+        const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
+        if (Content && (Name == TEXT("Bank") || Name == TEXT("Store"))
+            && Content->Pictures.Contains(Name == TEXT("Bank") ? TEXT("BANKBACK") : TEXT("STORBACK")))
+        {
+            Service = Name;
+            StockPage = BagPage = 0;
+            ShopSelection = INDEX_NONE;
+            bSelling = false;
+            Player->ShowInteractionMessage(FString());
+            return;
+        }
         Player->ShowInteractionMessage(FString::Printf(TEXT("The %s form is pending."), *Name.ToString()));
     }
 }
@@ -469,7 +617,7 @@ void ANativeWadTownHUD::OpenService(FName Name)
 void ANativeWadTownHUD::ClickAction(const FVector2D& Position)
 {
     const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
-    const UNativeWadTravelState* Travel = TownTravel(*GetWorld());
+    UNativeWadTravelState* Travel = TownTravel(*GetWorld());
     if (!Content || !Travel)
     {
         return;
@@ -483,6 +631,11 @@ void ANativeWadTownHUD::ClickAction(const FVector2D& Position)
     }
     const FVector2D Point = (Position - Layout.Origin) / Layout.Scale;
     const auto Clicked = [&](const FTownButton& Button) { return ContainsButton(*Content, Point, Button); };
+    if (!Service.IsNone())
+    {
+        ClickService(*Content, Travel->Quest, Point);
+        return;
+    }
     if (Travel->Quest.bShowResult)
     {
         if (Clicked(OkButton)) { ConfirmAction(); }
@@ -506,6 +659,134 @@ void ANativeWadTownHUD::ClickAction(const FVector2D& Position)
     else if (Clicked(InnButton)) { OpenService(TEXT("Inn")); }
     else if (Clicked(StoreButton)) { OpenService(TEXT("Store")); }
     else if (Clicked(BankButton)) { OpenService(TEXT("Bank")); }
+}
+
+void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQuestProgress& Progress, const FVector2D& Point)
+{
+    const auto In = [&](double X, double Y, double X2, double Y2) { return FBox2D({X, Y}, {X2, Y2}).IsInside(Point); };
+    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    if (!Player) { return; }
+    const bool bBank = IsBankOpen();
+    const int32 Top = StockTop(bBank);
+    const int32 Rows = StockRows(bBank);
+    if (In(156, 157, 210, 173) || In(194, 3, 208, 17)) { CancelAction(); }
+    else if (In(9, 157, 77, 173) && !bSelling) { ConfirmAction(); }
+    else if (In(81, 157, 149, 173) && bSelling) { ConfirmAction(); }
+    else if (In(9, 126, 24, 145)) { Scroll(-1); }
+    else if (In(95, 126, 112, 145)) { Scroll(1); }
+    else if (In(216, 135, 234, 154)) { BagPage = FMath::Max(0, BagPage - 1); }
+    else if (In(297, 135, 314, 154))
+    {
+        BagPage = FMath::Min(BagPage + 1, FMath::Max(0, (Player->GetCarriedItems().Num() - 1) / BagRows));
+    }
+    else if (bBank && In(118, 31, 144, 76))
+    {
+        const int32 Row = FMath::Clamp(int32(Point.Y - 31) / 11, 0, UE_ARRAY_COUNT(Coins) - 1);
+        const int64 Wallet = Progress.GetWalletCopper();
+        if (Point.X < 130)
+        {
+            const int64 Deposit = CoinCount(Wallet, Row) * Coins[Row];
+            if (Progress.BankCopper <= FWadQuestProgress::WalletLimit - Deposit)
+            {
+                Progress.BankCopper += Deposit;
+                Progress.SetWalletCopper(Wallet - Deposit);
+            }
+        }
+        else if (Progress.BankCopper >= Coins[Row] && Wallet <= FWadQuestProgress::WalletLimit - Coins[Row])
+        {
+            Progress.BankCopper -= Coins[Row];
+            Progress.SetWalletCopper(Wallet + Coins[Row]);
+        }
+    }
+    else if (In(10, Top, 10 + ShopColumns * SlotWidth, Top + Rows * SlotHeight))
+    {
+        const int32 Cell = int32(Point.X - 10) / SlotWidth + int32(Point.Y - Top) / SlotHeight * ShopColumns;
+        const TArray<int32> Types = AvailableStock(Content, Progress.ShopTier, bBank);
+        const int32 Index = StockPage * ShopColumns * Rows + Cell;
+        ShopSelection = Types.IsValidIndex(Index) ? Types[Index] : INDEX_NONE;
+        bSelling = false;
+    }
+    else if (In(216, 38, 314, 38 + BagRows * 12))
+    {
+        const int32 Slot = BagPage * BagRows + int32(Point.Y - 38) / 12;
+        ShopSelection = Player->GetCarriedItems().IsValidIndex(Slot) ? Slot : INDEX_NONE;
+        bSelling = true;
+    }
+}
+
+void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWadQuestProgress& Progress, const ANativeWadPlayer& Player)
+{
+    const FTownCanvas Screen{*Canvas, Content, FTownLayout(Canvas->ClipX, Canvas->ClipY)};
+    const bool bBank = IsBankOpen();
+    Screen.Picture(bBank ? TEXT("BANKBACK") : TEXT("STORBACK"), 4, 3);
+    const int64 Wallet = Progress.GetWalletCopper();
+    for (int32 Row = 0; Row < UE_ARRAY_COUNT(Coins); ++Row)
+    {
+        const int32 Y = 32 + Row * 11;
+        const FLinearColor MoneyField = FLinearColor::FromSRGBColor(FColor(93, 0, 0));
+        const int32 WalletX = bBank ? 148 : 164;
+        const int32 WalletWidth = bBank ? 52 : 37;
+        Screen.Panel(WalletX, Y, WalletWidth, 8, MoneyField);
+        Screen.Text(LexToString(CoinCount(Wallet, Row)), Content.Medium, WalletX, Y, WalletWidth, 1, 0, true);
+        if (bBank)
+        {
+            Screen.Panel(57, Y, 52, 8, MoneyField);
+            Screen.Text(LexToString(CoinCount(Progress.BankCopper, Row)), Content.Medium, 57, Y, 52, 1, 0, true);
+            Screen.Picture(TEXT("LTARROW"), 119, Y);
+            Screen.Picture(TEXT("RTARROW"), 131, Y);
+        }
+    }
+
+    const FLinearColor PanelColor(0.10f, 0.061f, 0.034f);
+    const FLinearColor SelectionColor(0.26f, 0.17f, 0.072f);
+    const int32 Rows = StockRows(bBank);
+    const int32 Top = StockTop(bBank);
+    const TArray<int32> Types = AvailableStock(Content, Progress.ShopTier, bBank);
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    const int32 PageSize = ShopColumns * Rows;
+    for (int32 Cell = 0; Catalog && Cell < PageSize; ++Cell)
+    {
+        const int32 Index = StockPage * PageSize + Cell;
+        if (!Types.IsValidIndex(Index)) { break; }
+        const int32 Type = Types[Index];
+        const int32 X = 10 + Cell % ShopColumns * SlotWidth;
+        const int32 Y = Top + Cell / ShopColumns * SlotHeight;
+        if (!bSelling && ShopSelection == Type) { Screen.Panel(X, Y, SlotWidth, SlotHeight, SelectionColor); }
+        Screen.Item(Catalog->Items.FindRef(Type), FVector2D(X + 1, Y + 1), FVector2D(SlotWidth - 2, SlotHeight - 2));
+    }
+    Screen.Panel(213, 17, 103, 138, PanelColor);
+    Screen.Text(TEXT("^038Purse"), Content.Medium, 216, 20, 98, 1, 0, true);
+    Screen.Text(TEXT("^038") + FormatMoney(Wallet), Content.Tiny, 216, 31, 98, 1, 0, true);
+    const TArray<int32>& Items = Player.GetCarriedItems();
+    for (int32 Row = 0; Row < BagRows; ++Row)
+    {
+        const int32 Slot = BagPage * BagRows + Row;
+        if (!Items.IsValidIndex(Slot)) { break; }
+        const int32 Y = 38 + Row * 12;
+        if (bSelling && ShopSelection == Slot) { Screen.Panel(215, Y, 99, 12, SelectionColor); }
+        if (Catalog) { Screen.Item(Catalog->Items.FindRef(Items[Slot]), FVector2D(217, Y), FVector2D(11, 11)); }
+        Screen.Text(TEXT("^038") + ShopItemName(Player, Items[Slot]).Left(22), Content.Tiny, 230, Y + 2, 83);
+    }
+    Screen.Picture(TEXT("LTARROW"), 217, 136);
+    Screen.Picture(TEXT("RTARROW"), 299, 136);
+    Screen.Panel(8, 126, 106, 11, PanelColor);
+    Screen.Picture(TEXT("LTARROW"), 10, 128);
+    Screen.Picture(TEXT("RTARROW"), 97, 128);
+    Screen.Text(FString::Printf(TEXT("^038Stock %d/%d"), StockPage + 1, FMath::Max(1, FMath::DivideAndRoundUp(Types.Num(), PageSize))),
+        Content.Tiny, 24, 129, 68, 1, 0, true);
+    Screen.Panel(8, 143, 202, 31, PanelColor);
+    const int32 Type = bSelling ? (Items.IsValidIndex(ShopSelection) ? Items[ShopSelection] : 0) : ShopSelection;
+    if (const FWadInventoryDetails* Rules = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr)
+    {
+        const int32 Price = bSelling ? ResaleValue(*Rules, Type, bBank) : Rules->ValueCopper;
+        const FString Offer = bSelling && Price <= 0 ? FString(TEXT("No offer")) : FormatMoney(Price);
+        Screen.Text(TEXT("^038") + ShopItemName(Player, Type) + TEXT("  ") + Offer, Content.Tiny, 11, 147, 195);
+    }
+    Screen.Text(TEXT("^038Buy"), Content.Medium, 9, 160, 68, 1, 0, true);
+    Screen.Text(TEXT("^038Sell"), Content.Medium, 81, 160, 68, 1, 0, true);
+    Screen.Text(TEXT("^038Town"), Content.Medium, 156, 160, 54, 1, 0, true);
+    Screen.Panel(213, 155, 103, 20, PanelColor);
+    Screen.Text(TEXT("^038") + Player.GetInteractionMessage(), Content.Tiny, 216, 158, 99, 2);
 }
 
 void DrawWadBitmapText(UCanvas& Canvas, const FWadTownFont& Font, TConstArrayView<FColor> Palette,
@@ -558,6 +839,11 @@ void ANativeWadTownHUD::DrawHUD()
     const FWadQuestProgress& Progress = Travel->Quest;
     const FWadTownQuest& Quest = Content->Quests[Progress.Selected];
     Screen.Picture(TEXT("MAINBACK"), 0, 0);
+    if (!Service.IsNone())
+    {
+        if (const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn())) { DrawService(*Content, Progress, *Player); }
+        return;
+    }
     Screen.Picture(TEXT("TWNBACK2"), 4, 3);
     for (const FTownButton& Button : {QuestButton, InnButton, StoreButton, BankButton, LastButton, NextButton, UpButton, DownButton})
     {

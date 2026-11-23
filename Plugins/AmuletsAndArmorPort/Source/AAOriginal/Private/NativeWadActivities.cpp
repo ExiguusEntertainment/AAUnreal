@@ -111,23 +111,56 @@ bool ANativeWadLevel::UseActivityFromView(ANativeWadPlayer& Player)
 
 void ANativeWadLevel::CheckActivitySector(ANativeWadPlayer& Player, int32& PreviousSector)
 {
-    const int32 Sector = FindActivitySector(FVector2D(Player.GetActorLocation()));
+    const int32 Sector = FindActivitySector(FVector2D(Player.GetActorLocation()), Player.GetCapsuleComponent()->GetScaledCapsuleRadius(), PreviousSector);
     if (Sector != INDEX_NONE && PreviousSector != Sector)
     {
+        UE_LOG(LogTemp, Verbose, TEXT("WAD activity sector %d at %s."), Sector, *Player.GetActorLocation().ToCompactString());
         RunWadActivity(Sectors[Sector].Activity, &Player);
     }
     PreviousSector = Sector;
 }
 
-int32 ANativeWadLevel::FindActivitySector(const FVector2D& Position) const
+int32 ANativeWadLevel::FindActivitySector(const FVector2D& Position, double Radius, int32 PreviousSector) const
 {
     const FVector2D Local(GetActorTransform().InverseTransformPosition(FVector(Position, GetActorLocation().Z)));
-    for (const int32 Sector : ActivitySectors)
+    for (const int32 Center : ActivitySectors)
     {
-        if (ContainsSectorPoint(Sector, Local))
+        if (!ContainsSectorPoint(Center, Local))
         {
-            return Sector;
+            continue;
         }
+
+        // OBJMOVE.C and 3D_COLLI.C select the highest floor under the collision footprint.
+        int32 Selected = Center;
+        if (Radius > 0.0 && LinesBySector.IsValidIndex(Center) && Heights.IsValidIndex(Center))
+        {
+            for (const int32 LineIndex : LinesBySector[Center])
+            {
+                const FAAWadNativeLine& Line = Lines[LineIndex];
+                const int32 Front = WallTopology.GetSectorForSide(Line.Sides.X);
+                const int32 Back = WallTopology.GetSectorForSide(Line.Sides.Y);
+                const int32 Neighbor = Front == Center ? Back : Front;
+                if (!(Line.Flags & 0x0004) || !Heights.IsValidIndex(Neighbor) || !Sectors[Neighbor].Activity)
+                {
+                    continue;
+                }
+
+                const double Difference = GetWalkingHeight(Neighbor) - GetWalkingHeight(Selected);
+                // Keep the current choice across a shared edge if a plate lowers to the same height.
+                if (Difference <= 0.0 && (Neighbor != PreviousSector || !FMath::IsNearlyZero(Difference)))
+                {
+                    continue;
+                }
+
+                const FVector Start(FVector2D(Vertices[Line.Endpoints.X]), 0);
+                const FVector End(FVector2D(Vertices[Line.Endpoints.Y]), 0);
+                if (FMath::PointDistToSegmentSquared(FVector(Local, 0), Start, End) < FMath::Square(Radius))
+                {
+                    Selected = Neighbor;
+                }
+            }
+        }
+        return Selected;
     }
     return INDEX_NONE;
 }
@@ -400,6 +433,17 @@ void ANativeWadLevel::TickCreatureGenerators(float DeltaSeconds)
             }
         }
         ANativeWadGuardian* Creature = Generator.Creatures[State.Released];
+        if (!IsValid(Creature))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("WAD generator %d is missing creature %d in %s."),
+                Id, State.Released, *GetWorld()->GetMapName());
+            ++State.Released;
+            if (!Generator.Creatures.IsValidIndex(State.Released))
+            {
+                State.Remaining = 0.0f;
+            }
+            continue;
+        }
         FVector Spawn = Creature->GetActorLocation();
         const UCapsuleComponent* Capsule = Creature->GetCapsuleComponent();
         Spawn.Z = GetActorLocation().Z + GetWalkingHeight(Generator.Sector) + Capsule->GetScaledCapsuleHalfHeight() + 2.0;

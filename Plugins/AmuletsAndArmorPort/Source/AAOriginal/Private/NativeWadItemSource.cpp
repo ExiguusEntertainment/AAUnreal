@@ -5,6 +5,7 @@
 #include "Misc/DefaultValueHelper.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Internationalization/Regex.h"
 #include "NativeWadRules.h"
 
 namespace
@@ -38,6 +39,9 @@ namespace
         const int32 End = Lines.Num();
         const FString Type = Field(TEXT("TYPE"), 0, End);
         const FString Subtype = Field(TEXT("SUBTYPE"), 0, End);
+        Details.bStoreBuys = Type == TEXT("WEAPON") || Type == TEXT("ARMOR") || Type == TEXT("POTION")
+            || Type == TEXT("WAND") || Type == TEXT("SCROLL") || Type == TEXT("THING") || Type == TEXT("BOLT") || Type == TEXT("QUIVER");
+        Details.bBankBuys = Type == TEXT("RING") || Type == TEXT("AMULET");
         Details.StackLimit = FMath::Max(1, FCString::Atoi(*Field(TEXT("NUMSTACKABLE"), 0, End)));
         Details.bConsumed = Type == TEXT("FOODSTUFF") || Field(TEXT("DESTROY ON"), 0, End) == TEXT("USE");
         if (Type == TEXT("ARMOR"))
@@ -182,6 +186,7 @@ namespace
         Item.Picture = FPaths::GetPath(Resource) / Picture;
         Item.Radius = Values[1];
         Item.Weight = Values[3];
+        Item.Details.ValueCopper = Values[4];
         Item.bPassable = (Values[2] & (0x0001 | 0x2000)) != 0 || Item.Radius == 0;
         Item.bHanging = (Values[7] & 0x0200) != 0;
         Item.bRaised = (Values[7] & 0x0400) != 0;
@@ -238,10 +243,56 @@ bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthore
             return false;
         }
         Item.Details.Description.TrimStartAndEndInline();
+        constexpr int32 ValuePercent[] = {100, 5, 25, 50, 100, 150, 200, 300, 400, 600, 800, 1200, 100, 100, 100, 100};
+        Item.Details.ValueCopper = int32(int64(Item.Details.ValueCopper) * ValuePercent[(Type >> 12) & 15] / 100);
         ReadInventoryRules(Source, Lines, Item.Details);
         Items.Add(Type, MoveTemp(Item));
     }
     return true;
+}
+
+bool ReadWadShopStock(bool bBank, TMap<int32, int32>& Tiers, FOutputDevice& Output)
+{
+    const FString Path = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Source")
+        / (bBank ? TEXT("BANKUI.C") : TEXT("STORE.C"));
+    FString Source;
+    if (!FFileHelper::LoadFileToString(Source, *Path))
+    {
+        Output.Logf(TEXT("Could not read authored shop stock from %s."), *Path);
+        return false;
+    }
+    const FRegexPattern Tokens(TEXT("(?s)/\\*.*?\\*/|//[^\\r\\n]*|switch\\s*\\(adv\\)|case\\s+ADVENTURE_(NONE|UNKNOWN|[1-7])\\s*:|StoreAddItem\\s*\\(\\s*([0-9]+)\\s*,"));
+    FRegexMatcher Match(Tokens, Source);
+    bool bInStock = false;
+    int32 Tier = INDEX_NONE;
+    Tiers.Reset();
+    while (Match.FindNext())
+    {
+        const FString Token = Match.GetCaptureGroup(0);
+        if (Token.StartsWith(TEXT("switch")))
+        {
+            bInStock = true;
+        }
+        if (!bInStock)
+        {
+            continue;
+        }
+        const FString Adventure = Match.GetCaptureGroup(1);
+        if (Adventure == TEXT("UNKNOWN"))
+        {
+            break;
+        }
+        if (!Adventure.IsEmpty())
+        {
+            Tier = FCString::Atoi(*Adventure);
+        }
+        const FString Item = Match.GetCaptureGroup(2);
+        if (Tier != INDEX_NONE && !Item.IsEmpty())
+        {
+            Tiers.Add(FCString::Atoi(*Item), Tier);
+        }
+    }
+    return !Tiers.IsEmpty();
 }
 
 #endif

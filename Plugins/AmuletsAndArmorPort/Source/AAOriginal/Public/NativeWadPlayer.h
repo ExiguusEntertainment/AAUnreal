@@ -61,6 +61,7 @@ public:
     void ReceiveTrapParalysis();
     void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
+    bool CanFly() const { return FlightSeconds > 0.0 || GetReadyItem() == NativeWadRules::FlyingAmulet; }
     void StartWadEarthquake(double Duration);
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
     bool SaveWadCheckpoint(const FString& Slot = FString()) const;
@@ -73,6 +74,7 @@ public:
     void WadLoad();
     void CollectItem(int32 Type);
     bool ConsumeItem(int32 Type);
+    void TradeWadTownItem(int32 Selection, bool bSelling, bool bBank);
     void AwardExperience(int32 Amount);
 
     static constexpr float CapsuleRadius = 10.0f;
@@ -147,6 +149,7 @@ private:
     int32 SuccessfulCasts = 0;
     int32 PoisonLevel = 0;
     double ParalysisSeconds = 0.0;
+    double FlightSeconds = 0.0;
     double QuakeTime = 0.0;
     bool bRestoreCheckpointOnTick = false;
     bool bRestoreVisitedOnTick = true;

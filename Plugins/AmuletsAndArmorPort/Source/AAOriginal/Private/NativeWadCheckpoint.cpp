@@ -1,5 +1,6 @@
 #include "NativeWadCheckpoint.h"
 
+#include "Components/CapsuleComponent.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -255,7 +256,10 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
         const int32 Released = CreatureGeneratorStates.FindRef(Id).Released;
         for (int32 Index = 0; Index < Generator.Creatures.Num(); ++Index)
         {
-            Generator.Creatures[Index]->SetSpawned(Index < Released);
+            if (ANativeWadGuardian* Creature = Generator.Creatures[Index]; IsValid(Creature))
+            {
+                Creature->SetSpawned(Index < Released);
+            }
         }
     }
     if (!ActivitySlides.IsEmpty() || !ActiveDoors.IsEmpty() || !PendingPickupGenerators.IsEmpty() || HasPendingCreatureGenerators())
@@ -411,7 +415,7 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
     // Arrival establishes the current sector without replaying a script that was already executed.
     if (Level)
     {
-        LastActivitySector = Level->FindActivitySector(FVector2D(Save->Position));
+        LastActivitySector = Level->FindActivitySector(FVector2D(Save->Position), GetCapsuleComponent()->GetScaledCapsuleRadius());
         LastLevelLink = Level->FindLevelLinkAt(FVector2D(Save->Position));
         bCheckedLevelLink = true;
     }

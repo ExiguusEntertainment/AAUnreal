@@ -207,6 +207,17 @@ void ANativeWadPlayer::UseReadyHand()
         AttackPressed();
         return;
     }
+    if (Type == FlyingPotion || Type == FlyingScroll)
+    {
+        if (RemoveInventorySlot(ReadySlot))
+        {
+            const double Duration = Type == FlyingPotion ? FlyingPotionSeconds : FlyingScrollSeconds;
+            FlightSeconds = FMath::Max(FlightSeconds, Duration);
+            ShowInteractionMessage(TEXT("You feel as light as the air around you!"));
+            UE_LOG(LogTemp, Display, TEXT("Used WAD flight item %d for %.2f seconds."), Type, Duration);
+        }
+        return;
+    }
     if (const FWadInventoryDetails* Rules = GetItemRules(Type); Rules && Rules->bUsable)
     {
         UseConsumable(*Rules);

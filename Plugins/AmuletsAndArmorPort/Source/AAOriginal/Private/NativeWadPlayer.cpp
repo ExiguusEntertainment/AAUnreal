@@ -88,6 +88,15 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
     ReadStat(TEXT("WadXP="), Experience, 0, MAX_int32);
     ReadStat(TEXT("WadCasts="), SuccessfulCasts, 0, MAX_int32);
     ReadStat(TEXT("WadPoison="), PoisonLevel, 0, MAX_int16);
+    FlightSeconds = 0.0;
+    if (const TCHAR* Option = URL.GetOption(TEXT("WadFlight="), nullptr))
+    {
+        double Seconds = 0.0;
+        if (LexTryParseString(Seconds, Option) && FMath::IsFinite(Seconds))
+        {
+            FlightSeconds = FMath::Clamp(Seconds, 0.0, FlyingScrollSeconds);
+        }
+    }
     if (const TCHAR* Option = URL.GetOption(TEXT("WadParalysis="), nullptr))
     {
         double Seconds = 0.0;
@@ -239,9 +248,26 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         ParalysisSeconds = FMath::Max(0.0, ParalysisSeconds - DeltaSeconds);
         const float Forward = float(Player->IsInputKeyDown(EKeys::W)) - float(Player->IsInputKeyDown(EKeys::S));
         const float Right = float(Player->IsInputKeyDown(EKeys::D)) - float(Player->IsInputKeyDown(EKeys::A));
+        FlightSeconds = FMath::Max(0.0, FlightSeconds - DeltaSeconds);
+        UCharacterMovementComponent* Movement = GetCharacterMovement();
+        const bool bFlying = CanFly();
+        if (bFlying && !Movement->IsFlying())
+        {
+            Movement->SetMovementMode(MOVE_Flying);
+        }
+        else if (!bFlying && Movement->IsFlying())
+        {
+            Movement->SetMovementMode(MOVE_Falling);
+        }
         if (!bInventoryOpen && !IsParalyzed())
         {
             MoveInViewDirection(Forward, Right);
+        }
+        if (bFlying)
+        {
+            // The original jump input thrusts upward while the effect is active.
+            const bool bAscending = !bInventoryOpen && !IsParalyzed() && Player->IsInputKeyDown(EKeys::SpaceBar);
+            AddMovementInput(FVector::UpVector, bAscending ? 1.0f : -0.35f);
         }
         if (const ANativeWadLevel* Level = NativeLevel.Get())
         {
@@ -324,6 +350,10 @@ FString ANativeWadPlayer::MakeTravelOptions() const
         TEXT("?WadLevel=%d?WadNextXP=%d?WadMaxHealth=%d?WadMaxMana=%d?WadPoison=%d?WadParalysis=%.6f?WadAttributes=%s"),
         Health, Mana, Food, Water, Experience, ReadySlot, SuccessfulCasts, CharacterLevel, ExperienceNeeded, MaxHealth, MaxMana,
         PoisonLevel, ParalysisSeconds, *FString::JoinBy(GetAttributes(), TEXT(","), [](int32 Value) { return LexToString(Value); }));
+    if (FlightSeconds > 0.0)
+    {
+        Options += FString::Printf(TEXT("?WadFlight=%.6f"), FlightSeconds);
+    }
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
         Options += FString::Printf(TEXT("?WadHour=%.9f"), Level->GetTimeOfDayHours());
@@ -505,7 +535,7 @@ void ANativeWadPlayer::ReceiveTrapParalysis()
 
 void ANativeWadPlayer::Jump()
 {
-    if (!IsParalyzed())
+    if (!IsParalyzed() && !CanFly())
     {
         Super::Jump();
     }

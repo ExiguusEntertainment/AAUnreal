@@ -2,6 +2,7 @@
 #include "NativeWadReview.h"
 
 #include "Algo/Find.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/StaticMeshComponent.h"
 #include "Containers/Ticker.h"
@@ -16,6 +17,8 @@
 #include "HAL/FileManager.h"
 #include "InputKeyEventArgs.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
@@ -466,11 +469,12 @@ namespace
         {ETrailAction::Walk, {-2568,76,0}},
     };
 
-    enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll };
+    enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll, Services, ServicesReload, ServicesLoadout };
     enum class EUndeadReview { None, Launch, Castle, Traps, Keep, Boss, Return, Empty };
     enum class ETempleReview { None, Launch, L51, L52, Reload };
     enum class ECampaignAction { Place, Walk, Jump, Use, Floor, Ceiling, OpenDoor, HealthAtLeast, Pickup, Defeat, Frame,
-        Rejuvenate, ManaAtLeast, StatueAngle, Checkpoint, Teleport };
+        Rejuvenate, ManaAtLeast, StatueAngle, Checkpoint, Teleport, CeilingAtMost, TouchSector, DefeatCreature,
+        UseFlightItem, Fly, JumpPickup, FlightEnded, CornerJump, UseLockedDoor, CrossDoor };
 
     struct FCampaignAction
     {
@@ -595,7 +599,10 @@ namespace
         {ECampaignAction::Walk, {212, 1903, 0}}, {ECampaignAction::Walk, {212, 1946, 0}},
     };
 
+    constexpr int32 HealingPotion = 800;
     constexpr int32 GreaterHealingPotion = 801;
+    constexpr int32 IronLongSword = 204;
+    constexpr const TCHAR* LighthouseReturnSlot = TEXT("NativeWadCampaignL34ReturnReview");
     const FCampaignAction Campaign60[] = {
         // The three entrance doors lead around to the lower pools.
         {ECampaignAction::Rejuvenate, {0, 0, 1800}}, {ECampaignAction::ManaAtLeast, {0, 0, 3000}},
@@ -680,97 +687,548 @@ namespace
         {ECampaignAction::Walk, {3328, 3714, 0}},
     };
 
-    const FCampaignAction Campaign52[] = {
+    const FCampaignAction Campaign51[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2800}}, {ECampaignAction::ManaAtLeast, {0, 0, 4200}},
+        {ECampaignAction::Use, {-162, -138, 139}}, {ECampaignAction::Floor, {0, 0, 96}, 138},
+        {ECampaignAction::Walk, {-457, 315, 0}}, {ECampaignAction::Walk, {-1145, 699, 0}},
+        {ECampaignAction::Walk, {-1993, 739, 0}}, {ECampaignAction::Walk, {-2025, 803, 0}},
+        {ECampaignAction::Walk, {-2025, 1819, 0}}, {ECampaignAction::Walk, {-1865, 2339, 0}},
+        {ECampaignAction::Walk, {-849, 2915, 0}}, {ECampaignAction::Walk, {-584, 2940, 0}},
+        {ECampaignAction::Jump, {-460, 2940, 0}, 123},
+        {ECampaignAction::TouchSector, {-350, 2945, 0}, 49},
+        {ECampaignAction::Floor, {0, 0, 0}, 35, TEXT("L51's pressure plate lowers the bridge")},
+        {ECampaignAction::Walk, {-641, 2403, 0}}, {ECampaignAction::Walk, {-848, 2344, 0}},
+        {ECampaignAction::Use, {-848, 2304, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 113},
+        {ECampaignAction::Walk, {-919, 1643, 0}}, {ECampaignAction::Jump, {-998, 1575, 0}, 100},
+        {ECampaignAction::TouchSector, {-1050, 1510, 0}, 70},
+        {ECampaignAction::Floor, {0, 0, 200}, 144, TEXT("L51's upper plate raises the two-part bridge")},
+        {ECampaignAction::Floor, {0, 0, 200}, 124},
+        {ECampaignAction::Walk, {-1169, 1019, 0}}, {ECampaignAction::Walk, {-1169, 1011, 0}},
+        {ECampaignAction::Walk, {-1081, 963, 0}}, {ECampaignAction::Walk, {-1012, 950, 0}},
+        {ECampaignAction::Use, {-970, 950, 197}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 81},
+        {ECampaignAction::Walk, {-919, 950, 0}}, {ECampaignAction::Walk, {-330, 872, 0}},
+        {ECampaignAction::Use, {-288, 872, 213}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 29},
+        {ECampaignAction::Walk, {-225, 875, 0}},
+        {ECampaignAction::Walk, {-41, 1099, 0}}, {ECampaignAction::Walk, {-113, 2027, 0}},
+        {ECampaignAction::Walk, {-214, 2147, 0}}, {ECampaignAction::Use, {-256, 2147, 214}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 19}, {ECampaignAction::Walk, {-308, 2147, 0}},
+        {ECampaignAction::Walk, {-1273, 2203, 0}}, {ECampaignAction::Walk, {-1791, 2202, 0}},
+        {ECampaignAction::Use, {-1833, 2202, 245}},
+        {ECampaignAction::Ceiling, {0, 0, 168}, 115, TEXT("L51's west switch raises the exit gate")},
+        {ECampaignAction::Walk, {-777, 2147, 0}}, {ECampaignAction::Walk, {-315, 2131, 0}},
+        {ECampaignAction::Use, {-273, 2131, 244}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 19},
+        {ECampaignAction::Walk, {-217, 2131, 0}},
+        {ECampaignAction::Walk, {-65, 1931, 0}}, {ECampaignAction::Walk, {-129, 1499, 0}},
+        {ECampaignAction::Walk, {-157, 1466, 0}},
+        {ECampaignAction::Use, {-157, 1424, 140}}, {ECampaignAction::Floor, {0, 0, 0}, 144},
+        {ECampaignAction::Floor, {0, 0, 0}, 124}, {ECampaignAction::Walk, {-848, 2231, 0}},
+        {ECampaignAction::Use, {-848, 2288, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 113},
+        {ECampaignAction::Walk, {-969, 2403, 0}},
+        {ECampaignAction::Walk, {-1049, 2427, 0}}, {ECampaignAction::Walk, {-1244, 2781, 0}},
+        {ECampaignAction::Jump, {-1309, 2860, 0}, 95}, {ECampaignAction::Walk, {-1366, 2948, 0}},
+        {ECampaignAction::Use, {-1408, 2948, 93}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 53},
+        {ECampaignAction::Walk, {-1473, 3043, 0}}, {ECampaignAction::Walk, {-1466, 3252, 0}},
+        {ECampaignAction::Use, {-1424, 3252, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 57},
+        {ECampaignAction::Walk, {-1329, 3274, 0}}, {ECampaignAction::Walk, {-1329, 3350, 0}},
+        {ECampaignAction::Use, {-1329, 3392, 51}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 56},
+        {ECampaignAction::Walk, {-1329, 3430, 0}}, {ECampaignAction::Walk, {-1777, 3643, 0}},
+        {ECampaignAction::Walk, {-2104, 3676, 0}}, {ECampaignAction::Pickup, {-2104, 3714, 29}, GreaterHealingPotion},
+        {ECampaignAction::Walk, {-2075, 3712, 0}}, {ECampaignAction::Pickup, {-2040, 3742, 29}, HealingPotion},
+        {ECampaignAction::Walk, {-2108, 3590, 0}}, {ECampaignAction::Pickup, {-2108, 3556, 29}, GreaterHealingPotion},
+        {ECampaignAction::Walk, {-2080, 3560, 0}}, {ECampaignAction::Pickup, {-2044, 3536, 29}, HealingPotion},
+        {ECampaignAction::Walk, {-2272, 3642, 0}},
+    };
+    const FCampaignAction Campaign52Exit[] = {
         {ECampaignAction::Walk, {-3448, 1440, 0}},
     };
-    const FCampaignAction Campaign41[] = {
-        {ECampaignAction::Place, {3552, -2018, 0}}, {ECampaignAction::Use, {3552, -2048, 42}},
-        {ECampaignAction::Ceiling, {0, 0, 130}, 220, TEXT("L41 timed switch raises gate 220 to Z130")},
-        {ECampaignAction::Place, {-76, 2942, 0}}, {ECampaignAction::Pickup, {-76, 2910, 52}, NativeWadRules::ElmoreKey6},
-        {ECampaignAction::Place, {3621, 832, 0}}, {ECampaignAction::Use, {3677, 832, 40}},
-        {ECampaignAction::OpenDoor, {0, 0, 56}, 37, TEXT("L41 Key 6 opens door 37")},
-        {ECampaignAction::Frame, {3677, 832, 44}, INDEX_NONE, TEXT("key-gate")},
-        {ECampaignAction::Walk, {3740, 832, 0}},
-        {ECampaignAction::Place, {1344, 6724, 0}}, {ECampaignAction::Walk, {1344, 6782, 0}},
+    const FCampaignAction Campaign52[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2800}}, {ECampaignAction::ManaAtLeast, {0, 0, 4200}},
+        {ECampaignAction::Walk, {520, 3408, 0}}, {ECampaignAction::Walk, {152, 3472, 0}},
+        {ECampaignAction::Walk, {-792, 3824, 0}}, {ECampaignAction::TouchSector, {-1360, 3670, 0}, 106},
+        {ECampaignAction::Ceiling, {0, 0, 25}, 94, TEXT("L52's first plate opens the gate to Z25")},
+        {ECampaignAction::TouchSector, {-1830, 3552, 0}, 96},
+        {ECampaignAction::Ceiling, {0, 0, 50}, 94, TEXT("L52's second plate opens the gate to Z50")},
+        {ECampaignAction::TouchSector, {-944, 3248, 0}, 97},
+        {ECampaignAction::Ceiling, {0, 0, 75}, 94, TEXT("L52's third plate opens the gate to Z75")},
+        {ECampaignAction::Walk, {-1400, 3120, 0}}, {ECampaignAction::Walk, {-2416, 2104, 0}},
+        {ECampaignAction::Walk, {-2472, 1088, 0}}, {ECampaignAction::Walk, {-2480, 440, 0}},
+        {ECampaignAction::Walk, {-2568, 432, 0}}, {ECampaignAction::Walk, {-3128, 1424, 0}},
+        {ECampaignAction::Walk, {-3442, 1467, 0}},
     };
-    const FCampaignAction Campaign44[] = {
-        {ECampaignAction::Rejuvenate, {0, 0, 2000}, INDEX_NONE, TEXT("the carried character recovers before facing Elymas")},
+    const FCampaignAction Campaign41[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2800}}, {ECampaignAction::ManaAtLeast, {0, 0, 4200}},
+        {ECampaignAction::Walk, {6730, 4160, 0}}, {ECampaignAction::Use, {6688, 4160, -85}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 320}, {ECampaignAction::Walk, {6088, 4160, 0}},
+        {ECampaignAction::Walk, {5512, 4184, 0}}, {ECampaignAction::Walk, {5440, 4296, 0}},
+        {ECampaignAction::Walk, {5392, 4624, 0}}, {ECampaignAction::Walk, {4568, 4616, 0}},
+        {ECampaignAction::Walk, {4312, 4336, 0}}, {ECampaignAction::Walk, {4336, 4152, 0}},
+        {ECampaignAction::Walk, {4640, 3872, 0}}, {ECampaignAction::Walk, {4640, 3370, 0}},
+        {ECampaignAction::Use, {4640, 3328, 58}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 11},
+        {ECampaignAction::Walk, {4640, 2856, 0}},
+        {ECampaignAction::Walk, {4458, 2464, 0}}, {ECampaignAction::Use, {4416, 2464, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 285}, {ECampaignAction::Walk, {4312, 2464, 0}},
+        {ECampaignAction::Walk, {3984, 2112, 0}}, {ECampaignAction::Walk, {3224, 2160, 0}},
+        {ECampaignAction::Walk, {2976, 2326, 0}}, {ECampaignAction::Use, {2976, 2368, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 45}, {ECampaignAction::Walk, {2976, 2656, 0}},
+        {ECampaignAction::Walk, {2976, 2902, 0}}, {ECampaignAction::Use, {2976, 2944, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 49}, {ECampaignAction::Walk, {2976, 3672, 0}},
+        {ECampaignAction::Walk, {2976, 4688, 0}}, {ECampaignAction::Walk, {2976, 4928, 0}},
+        {ECampaignAction::JumpPickup, {2976, 4961, 46}, NativeWadRules::Key9, TEXT("the original L41 Key 9")},
+        {ECampaignAction::Walk, {2976, 3904, 0}}, {ECampaignAction::Walk, {2976, 3050, 0}},
+        {ECampaignAction::Use, {2976, 3008, 34}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 49},
+        {ECampaignAction::Walk, {2976, 2474, 0}}, {ECampaignAction::Use, {2976, 2432, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 45}, {ECampaignAction::Walk, {3184, 2128, 0}},
+        {ECampaignAction::Walk, {3248, 2064, 0}},
+        {ECampaignAction::Walk, {3160, 1048, 0}}, {ECampaignAction::Walk, {3216, 840, 0}},
+        // Use the authored teleports to reach the west side of the maze.
+        {ECampaignAction::Walk, {2950, 852, 0}}, {ECampaignAction::Walk, {2775, 852, 0}},
+        {ECampaignAction::Walk, {2602, 827, 0}}, {ECampaignAction::Use, {2560, 827, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 51}, {ECampaignAction::Walk, {2480, 784, 0}},
+        {ECampaignAction::Walk, {2320, 440, 0}},
+        {ECampaignAction::Walk, {2288, 424, 0}}, {ECampaignAction::Walk, {2232, 432, 0}},
+        {ECampaignAction::Walk, {2144, 608, 0}},
+        {ECampaignAction::Teleport, {2144, 1032, 0}, INDEX_NONE, nullptr, {1634, 379}},
+        {ECampaignAction::Teleport, {1632, 1032, 0}, INDEX_NONE, nullptr, {1124, 379}},
+        {ECampaignAction::Walk, {1304, 440, 0}},
+        {ECampaignAction::Teleport, {1376, 1032, 0}, INDEX_NONE, TEXT("L41's maze leads to the key wing"), {852, 379}},
+        {ECampaignAction::Walk, {810, 341, 0}}, {ECampaignAction::Use, {768, 341, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 65}, {ECampaignAction::Walk, {-96, 320, 0}},
+        {ECampaignAction::Walk, {-168, 408, 0}},
+        {ECampaignAction::Walk, {-144, 584, 0}}, {ECampaignAction::Walk, {-64, 624, 0}},
+        {ECampaignAction::Walk, {304, 656, 0}}, {ECampaignAction::Walk, {368, 1685, 0}},
+        {ECampaignAction::Use, {368, 1728, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 92},
+        {ECampaignAction::Walk, {368, 1864, 0}}, {ECampaignAction::Walk, {64, 1944, 0}},
+        {ECampaignAction::TouchSector, {188, 2044, 0}, 346},
+        {ECampaignAction::Walk, {82, 2044, 0}}, {ECampaignAction::Walk, {82, 2300, 0}},
+        {ECampaignAction::TouchSector, {188, 2300, 0}, 98},
+        {ECampaignAction::Walk, {82, 2300, 0}}, {ECampaignAction::Walk, {82, 2530, 0}},
+        {ECampaignAction::Walk, {316, 2530, 0}}, {ECampaignAction::TouchSector, {316, 2428, 0}, 103},
+        {ECampaignAction::Walk, {316, 2530, 0}}, {ECampaignAction::Walk, {82, 2530, 0}},
+        {ECampaignAction::Walk, {87, 1943, 0}}, {ECampaignAction::Walk, {183, 2039, 0}},
+        {ECampaignAction::CornerJump, {319, 2175, 0}, 65, nullptr, {274, 2102}},
+        {ECampaignAction::Ceiling, {0, 0, 140}, 112, TEXT("L41's four correct plates open the Key 6 gate")},
+        {ECampaignAction::Walk, {64, 2615, 0}}, {ECampaignAction::Walk, {64, 2850, 0}},
+        {ECampaignAction::Walk, {-76, 2942, 0}}, {ECampaignAction::Pickup, {-76, 2910, 52}, NativeWadRules::ElmoreKey6},
+        {ECampaignAction::Walk, {64, 2850, 0}}, {ECampaignAction::Walk, {64, 2615, 0}},
+        {ECampaignAction::Walk, {64, 1872, 0}}, {ECampaignAction::Walk, {368, 1864, 0}},
+        {ECampaignAction::Use, {368, 1824, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 92},
+        {ECampaignAction::Walk, {312, 664, 0}}, {ECampaignAction::Walk, {152, 624, 0}},
+        {ECampaignAction::Walk, {-136, 592, 0}}, {ECampaignAction::Walk, {-168, 528, 0}},
+        {ECampaignAction::Walk, {-144, 368, 0}}, {ECampaignAction::Walk, {662, 341, 0}},
+        {ECampaignAction::Use, {704, 341, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 65},
+        {ECampaignAction::Walk, {784, 341, 0}},
+        {ECampaignAction::Teleport, {864, 1032, 0}, INDEX_NONE, nullptr, {1634, 379}},
+        {ECampaignAction::Walk, {1816, 440, 0}},
+        {ECampaignAction::Teleport, {1888, 1032, 0}, INDEX_NONE, nullptr, {2144, 379}},
+        {ECampaignAction::Walk, {2232, 432, 0}}, {ECampaignAction::Walk, {2288, 424, 0}},
+        {ECampaignAction::Walk, {2320, 440, 0}}, {ECampaignAction::Walk, {2454, 827, 0}},
+        {ECampaignAction::Use, {2496, 827, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 51},
+        {ECampaignAction::Walk, {2775, 852, 0}}, {ECampaignAction::Walk, {2950, 852, 0}},
+        {ECampaignAction::Walk, {3621, 832, 0}}, {ECampaignAction::Use, {3677, 832, 40}},
+        {ECampaignAction::OpenDoor, {0, 0, 56}, 37, TEXT("L41 Key 6 opens door 37")},
+        {ECampaignAction::Walk, {4096, 768, 0}}, {ECampaignAction::TouchSector, {4384, 608, 0}, 30},
+        {ECampaignAction::Ceiling, {0, 0, 80}, 204},
+        {ECampaignAction::Walk, {3984, 432, 0}}, {ECampaignAction::Walk, {3344, 328, 0}},
+        {ECampaignAction::Walk, {3264, 152, 0}}, {ECampaignAction::Walk, {3704, -840, 0}},
+        {ECampaignAction::Walk, {3704, -1856, 0}}, {ECampaignAction::Walk, {3552, -2018, 0}},
+        {ECampaignAction::Use, {3552, -2048, 42}},
+        {ECampaignAction::Ceiling, {0, 0, 130}, 220, TEXT("L41 timed switch raises gate 220 to Z130")},
+        {ECampaignAction::Walk, {3704, -1312, 0}}, {ECampaignAction::Walk, {3528, -816, 0}},
+        {ECampaignAction::Walk, {3352, -720, 0}}, {ECampaignAction::Walk, {3320, -720, 0}},
+        {ECampaignAction::Walk, {3200, -960, 0}}, {ECampaignAction::Walk, {3200, -1976, 0}},
+        {ECampaignAction::Walk, {3248, -2768, 0}}, {ECampaignAction::Walk, {3856, -2864, 0}},
+        {ECampaignAction::Teleport, {3996, -3044, 0}, INDEX_NONE, nullptr, {3872, 3747}},
+        {ECampaignAction::Walk, {3872, 4022, 0}}, {ECampaignAction::Use, {3872, 4064, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 158}, {ECampaignAction::Walk, {3872, 4166, 0}},
+        {ECampaignAction::Walk, {3680, 4760, 0}}, {ECampaignAction::Walk, {3728, 5008, 0}},
+        {ECampaignAction::Walk, {4744, 5080, 0}}, {ECampaignAction::Walk, {5648, 5168, 0}},
+        {ECampaignAction::Walk, {5824, 5608, 0}}, {ECampaignAction::Walk, {6504, 6288, 0}},
+        {ECampaignAction::Walk, {6688, 6448, 0}}, {ECampaignAction::Walk, {6408, 7416, 0}},
+        {ECampaignAction::Teleport, {6336, 7648, 0}, INDEX_NONE, nullptr, {5297, -393}},
+        {ECampaignAction::Walk, {5296, 624, 0}},
+        {ECampaignAction::Teleport, {5300, 732, 0}, INDEX_NONE, nullptr, {1344, 3746}},
+        {ECampaignAction::Walk, {1536, 4128, 0}}, {ECampaignAction::Walk, {1816, 4216, 0}},
+        {ECampaignAction::Walk, {1856, 4956, 0}}, {ECampaignAction::Floor, {0, 0, 0}, 271},
+        {ECampaignAction::Walk, {1856, 5232, 0}}, {ECampaignAction::Walk, {1856, 6248, 0}},
+        {ECampaignAction::Walk, {1808, 6544, 0}}, {ECampaignAction::Walk, {1360, 6688, 0}},
+        {ECampaignAction::Walk, {1352, 6736, 0}},
+        {ECampaignAction::Walk, {1352, 6784, 0}},
+    };
+    const FCampaignAction Campaign44Combat[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 3200}}, {ECampaignAction::ManaAtLeast, {0, 0, 4300}},
+        // Complete the other two plates after the fight so the timed gate stays open during the return.
+        {ECampaignAction::Place, {-268, 1046, 0}},
+        {ECampaignAction::Defeat, {}, NativeWadRules::ElymasNotes, TEXT("Elymas")},
         {ECampaignAction::Place, {-714, -414, 0}}, {ECampaignAction::Walk, {-650, -414, 0}},
         {ECampaignAction::Floor, {0, 0, 320}, 108},
         {ECampaignAction::Place, {54, -416, 0}}, {ECampaignAction::Walk, {-8, -416, 0}},
         {ECampaignAction::Floor, {0, 0, 320}, 107},
-        {ECampaignAction::Place, {-268, 1046, 0}},
-        {ECampaignAction::Defeat, FVector::ZeroVector, NativeWadRules::ElymasNotes, TEXT("Elymas")},
         {ECampaignAction::Ceiling, {0, 0, 112}, 68, TEXT("L44 three pressure plates raise gate 68")},
         {ECampaignAction::Place, {-714, 3060, 0}}, {ECampaignAction::Pickup, {-702, 3090, 44}, NativeWadRules::ElmoreKey3},
         {ECampaignAction::Place, {384, 3166, 0}}, {ECampaignAction::Use, {384, 3136, 42}},
         {ECampaignAction::OpenDoor, {0, 0, 56}, 42, TEXT("L44 Key 3 opens the Town Hall passage")},
         {ECampaignAction::Place, {408, 3264, 0}}, {ECampaignAction::Walk, {384, 3296, 0}},
     };
+    const FCampaignAction Campaign44[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 3200}}, {ECampaignAction::ManaAtLeast, {0, 0, 4300}},
+        {ECampaignAction::Walk, {-3274, 762, 0}}, {ECampaignAction::Use, {-3232, 762, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 93}, {ECampaignAction::Walk, {-3152, 704, 0}},
+        {ECampaignAction::Walk, {-3008, 520, 0}}, {ECampaignAction::Walk, {-2952, 296, 0}},
+        {ECampaignAction::Walk, {-1968, 304, 0}}, {ECampaignAction::Walk, {-1840, 752, 0}},
+        {ECampaignAction::Walk, {-1744, 824, 0}}, {ECampaignAction::Walk, {-1514, 822, 0}},
+        {ECampaignAction::Use, {-1472, 822, 75}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 47},
+        {ECampaignAction::Walk, {-1392, 784, 0}}, {ECampaignAction::Walk, {-1296, -232, 0}},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {-1288, -320, 170}}, {ECampaignAction::Fly, {-1160, -552, 277}},
+        {ECampaignAction::Fly, {-956, -1040, 282}}, {ECampaignAction::Fly, {-956, -1040, 376}},
+        {ECampaignAction::Fly, {-272, -184, 376}, INDEX_NONE, TEXT("L44's first potion reaches the high stairway")},
+        {ECampaignAction::Fly, {-272, -184, 586}}, {ECampaignAction::Fly, {-272, 640, 586}},
+        {ECampaignAction::Fly, {-268, 1046, 580}}, {ECampaignAction::Floor, {0, 0, 512}, 102},
+        {ECampaignAction::Defeat, {}, NativeWadRules::ElymasNotes, TEXT("Elymas")},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {-650, -414, 575}}, {ECampaignAction::Floor, {0, 0, 320}, 108},
+        {ECampaignAction::Fly, {-8, -416, 555}}, {ECampaignAction::Floor, {0, 0, 320}, 107},
+        {ECampaignAction::Ceiling, {0, 0, 112}, 68, TEXT("L44 three pressure plates raise gate 68")},
+        {ECampaignAction::Fly, {56, 600, 400}}, {ECampaignAction::Fly, {160, 1384, 415}},
+        {ECampaignAction::Fly, {160, 1384, 65}}, {ECampaignAction::Fly, {-88, 2384, 64}},
+        {ECampaignAction::Fly, {-116, 2448, 60}}, {ECampaignAction::Fly, {-352, 2840, 58}},
+        {ECampaignAction::Use, {-352, 2896, 42}}, {ECampaignAction::OpenDoor, {0, 0, 64}, 68},
+        {ECampaignAction::Fly, {-368, 3016, 55}}, {ECampaignAction::Fly, {-416, 3040, 55}},
+        {ECampaignAction::Fly, {-446, 3040, 56}}, {ECampaignAction::Use, {-488, 3040, 62}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 96}, {ECampaignAction::Fly, {-558, 3040, 55}},
+        {ECampaignAction::Fly, {-714, 3060, 64}},
+        {ECampaignAction::Pickup, {-702, 3090, 44}, NativeWadRules::ElmoreKey3, TEXT("the original L44 Key 3")},
+        {ECampaignAction::CrossDoor, {-440, 3040, 62}, 96, TEXT("L44's Key 3 vault door on the way back"), {-552, 3040}},
+        {ECampaignAction::Fly, {-376, 3024, 63}}, {ECampaignAction::Fly, {-352, 2930, 55}},
+        {ECampaignAction::UseLockedDoor, {-352, 2896, 42}, 68},
+        {ECampaignAction::Fly, {-328, 2808, 64}}, {ECampaignAction::Fly, {208, 2544, 64}},
+        {ECampaignAction::Fly, {384, 2790, 69}}, {ECampaignAction::Fly, {384, 3088, 54}},
+        {ECampaignAction::UseLockedDoor, {384, 3104, 66}, 42, TEXT("L44 Key 3 opens the Town Hall passage")},
+        {ECampaignAction::Walk, {384, 3166, 0}}, {ECampaignAction::Walk, {384, 3296, 0}},
+    };
     const FCampaignAction Campaign74[] = {
-        {ECampaignAction::Place, {208, 1150, 0}}, {ECampaignAction::Use, {208, 1200, 92}},
+        {ECampaignAction::Rejuvenate, {0, 0, 2800}},
+        {ECampaignAction::ManaAtLeast, {0, 0, 4200}},
+        {ECampaignAction::Walk, {-1120, -216, 0}}, {ECampaignAction::Use, {-1120, -176, 30}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 188}, {ECampaignAction::Walk, {-1120, 574, 0}},
+        {ECampaignAction::Use, {-1120, 618, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 47},
+        {ECampaignAction::Walk, {-1113, 698, 0}}, {ECampaignAction::Walk, {-889, 953, 0}},
+        {ECampaignAction::Walk, {-441, 1001, 0}}, {ECampaignAction::Walk, {-145, 682, 0}},
+        {ECampaignAction::Use, {-145, 640, 107}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 48},
+        {ECampaignAction::Walk, {-49, 569, 0}}, {ECampaignAction::Walk, {24, 568, 0}},
+        {ECampaignAction::Use, {64, 568, 91}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 105},
+        {ECampaignAction::Walk, {138, 568, 0}}, {ECampaignAction::Use, {138, 608, 91}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 108}, {ECampaignAction::Walk, {212, 743, 0}},
+        {ECampaignAction::Use, {232, 784, 92}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 111},
+        {ECampaignAction::DefeatCreature, {}, 38, TEXT("the Bad Knight guarding L74's switch hall")},
+        {ECampaignAction::Walk, {227, 1015, 0}}, {ECampaignAction::Walk, {208, 1150, 0}},
+        {ECampaignAction::Use, {208, 1200, 92}},
         {ECampaignAction::Ceiling, {0, 0, 152}, 104, TEXT("L74's switch raises gate 104")},
         {ECampaignAction::Frame, {208, 1200, 92}, INDEX_NONE, TEXT("city-switch")},
-        {ECampaignAction::Place, {-2145, 2376, 0}}, {ECampaignAction::Walk, {-2145, 2430, 0}},
+        {ECampaignAction::Walk, {232, 839, 0}}, {ECampaignAction::Use, {232, 800, 92}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 111}, {ECampaignAction::Walk, {144, 680, 0}},
+        {ECampaignAction::Use, {144, 640, 91}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 108},
+        {ECampaignAction::Walk, {136, 568, 0}}, {ECampaignAction::Use, {96, 568, 91}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 105}, {ECampaignAction::Walk, {-49, 562, 0}},
+        {ECampaignAction::Walk, {-630, 484, 0}}, {ECampaignAction::Use, {-672, 484, 91}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 24}, {ECampaignAction::Walk, {-929, 457, 0}},
+        {ECampaignAction::Walk, {-1250, 438, 0}}, {ECampaignAction::Use, {-1290, 438, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 187}, {ECampaignAction::Walk, {-1321, 465, 0}},
+        {ECampaignAction::Walk, {-1361, 545, 0}}, {ECampaignAction::Walk, {-1345, 737, 0}},
+        {ECampaignAction::Walk, {-1425, 1249, 0}}, {ECampaignAction::Walk, {-1425, 1553, 0}},
+        {ECampaignAction::Walk, {-2017, 2050, 0}}, {ECampaignAction::Use, {-2040, 2081, 27}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 127}, {ECampaignAction::Walk, {-2145, 2241, 0}},
+        {ECampaignAction::Walk, {-2145, 2430, 0}},
     };
     const FCampaignAction Campaign73[] = {
-        {ECampaignAction::Place, {-226, 1318, 0}},
-        {ECampaignAction::HealthAtLeast, {0, 0, 1800}, INDEX_NONE, TEXT("L73's source recovery sector restores health")},
-        {ECampaignAction::Place, {-4382, 1542, 0}}, {ECampaignAction::Walk, {-4363, 1590, 0}},
-        {ECampaignAction::Place, {-1029, 2782, 0}},
+        {ECampaignAction::Rejuvenate, {0, 0, 2800}}, {ECampaignAction::ManaAtLeast, {0, 0, 4000}},
+        {ECampaignAction::Walk, {-3625, -464, 0}}, {ECampaignAction::Walk, {-3529, -408, 0}},
+        {ECampaignAction::Walk, {-3480, -283, 0}}, {ECampaignAction::Use, {-3480, -241, 180}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 240}, {ECampaignAction::Walk, {-3480, -199, 0}},
+        {ECampaignAction::Walk, {-3377, -48, 0}}, {ECampaignAction::Walk, {-3225, -8, 0}},
+        {ECampaignAction::Walk, {-3073, -112, 0}}, {ECampaignAction::Walk, {-3048, -243, 0}},
+        {ECampaignAction::Use, {-3048, -285, 180}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 246},
+        {ECampaignAction::Walk, {-3146, -450, 0}}, {ECampaignAction::Walk, {-3151, -554, 0}},
+        {ECampaignAction::Walk, {-3128, -562, 0}},
+        {ECampaignAction::Pickup, {-3092, -564, 0}, NativeWadRules::FlyingPotion, TEXT("an original L73 potion of flying")},
+        {ECampaignAction::Walk, {-3048, -343, 0}}, {ECampaignAction::Use, {-3048, -301, 180}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 246},
+        {ECampaignAction::Walk, {-3048, -242, 0}}, {ECampaignAction::Walk, {-3073, -112, 0}},
+        {ECampaignAction::Walk, {-3225, -8, 0}},
+        {ECampaignAction::Walk, {-3257, 316, 0}}, {ECampaignAction::Use, {-3257, 358, 179}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 226}, {ECampaignAction::Walk, {-3268, 618, 0}},
+        {ECampaignAction::Use, {-3268, 660, 91}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 37},
+        {ECampaignAction::Walk, {-3268, 777, 0}}, {ECampaignAction::Use, {-3268, 816, 75}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 249},
+        {ECampaignAction::Walk, {-3273, 1272, 0}},
+        {ECampaignAction::Walk, {-3353, 1344, 0}}, {ECampaignAction::Walk, {-3734, 1346, 0}},
+        {ECampaignAction::Use, {-3776, 1346, 3}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 150},
+        {ECampaignAction::Walk, {-3957, 1347, 0}}, {ECampaignAction::Use, {-3999, 1347, 83}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 119}, {ECampaignAction::Walk, {-4217, 1376, 0}},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {-4382, 1542, 151}}, {ECampaignAction::Fly, {-4363, 1590, 151}},
         {ECampaignAction::Ceiling, {0, 0, 175}, 118},
-        {ECampaignAction::Place, {-4562, 1304, 0}}, {ECampaignAction::Walk, {-4610, 1329, 0}},
-        {ECampaignAction::Place, {-1029, 2782, 0}},
+        {ECampaignAction::Fly, {-4562, 1304, 151}}, {ECampaignAction::Fly, {-4610, 1329, 151}},
         {ECampaignAction::Ceiling, {0, 0, 195}, 118},
-        {ECampaignAction::Place, {-4321, 1125, 0}}, {ECampaignAction::Walk, {-4345, 1078, 0}},
-        {ECampaignAction::Place, {-1029, 2782, 0}},
+        {ECampaignAction::Fly, {-4505, 1318, 151}}, {ECampaignAction::Fly, {-4405, 1220, 151}},
+        {ECampaignAction::Fly, {-4321, 1125, 151}}, {ECampaignAction::Fly, {-4345, 1078, 151}},
         {ECampaignAction::Ceiling, {0, 0, 232}, 118, TEXT("L73's three plates raise gate 118 through all three heights")},
+        {ECampaignAction::Ceiling, {0, 0, 232}, 136},
+        {ECampaignAction::Walk, {-4056, 1347, 0}}, {ECampaignAction::Use, {-4014, 1347, 83}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 119}, {ECampaignAction::Walk, {-3953, 1344, 0}},
+        {ECampaignAction::Walk, {-3825, 1346, 0}},
+        {ECampaignAction::Use, {-3784, 1346, 19}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 150},
+        {ECampaignAction::Walk, {-3329, 1328, 0}},
+        {ECampaignAction::Walk, {-3260, 866, 0}}, {ECampaignAction::Use, {-3260, 824, 59}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 249}, {ECampaignAction::Walk, {-3260, 776, 0}},
+        {ECampaignAction::Walk, {-2729, 784, 0}},
+        {ECampaignAction::Walk, {-2617, 880, 0}}, {ECampaignAction::Walk, {-1969, 920, 0}},
+        {ECampaignAction::Walk, {-1969, 976, 0}}, {ECampaignAction::Walk, {-2025, 1086, 0}},
+        {ECampaignAction::Use, {-2004, 1120, 123}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 18},
+        {ECampaignAction::Walk, {-1129, 1176, 0}},
+        {ECampaignAction::Teleport, {-1040, 1264, 0}, INDEX_NONE, TEXT("L73's source teleporter reaches the recovery wing"), {-619, 1147}},
+        {ECampaignAction::FlightEnded},
+        {ECampaignAction::Walk, {-458, 1168, 0}}, {ECampaignAction::Use, {-416, 1168, 36}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 95},
+        {ECampaignAction::Walk, {-377, 1168, 0}}, {ECampaignAction::Walk, {-226, 1318, 0}},
+        {ECampaignAction::HealthAtLeast, {0, 0, 1800}, INDEX_NONE, TEXT("L73's source recovery sector restores health")},
+        {ECampaignAction::Walk, {-374, 1496, 0}}, {ECampaignAction::Use, {-415, 1496, 51}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 209},
+        {ECampaignAction::Walk, {-454, 1496, 0}}, {ECampaignAction::Walk, {-1441, 1592, 0}},
+        {ECampaignAction::Walk, {-1735, 1608, 0}}, {ECampaignAction::Use, {-1777, 1608, 148}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 214},
+        {ECampaignAction::Walk, {-1816, 1608, 0}}, {ECampaignAction::Walk, {-1865, 1728, 0}},
+        {ECampaignAction::Walk, {-1832, 2184, 0}}, {ECampaignAction::Use, {-1790, 2184, 148}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 206}, {ECampaignAction::Walk, {-1738, 2184, 0}},
+        {ECampaignAction::Walk, {-1137, 2174, 0}}, {ECampaignAction::Use, {-1137, 2216, 148}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 207}, {ECampaignAction::Walk, {-1137, 2284, 0}},
+        {ECampaignAction::Walk, {-1041, 2496, 0}},
         {ECampaignAction::Walk, {-1029, 2864, 0}},
     };
     const FCampaignAction Campaign72[] = {
-        {ECampaignAction::Place, {1460, 946, 0}}, {ECampaignAction::Use, {1485, 946, -12}},
+        {ECampaignAction::Rejuvenate, {0, 0, 3000}}, {ECampaignAction::ManaAtLeast, {0, 0, 4200}},
+        {ECampaignAction::Walk, {2304, 366, 0}}, {ECampaignAction::Walk, {2202, 366, 0}},
+        {ECampaignAction::Use, {2160, 366, -13}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 228},
+        {ECampaignAction::Walk, {2072, 339, 0}}, {ECampaignAction::Walk, {1618, -106, 0}},
+        {ECampaignAction::Use, {1579, -106, -13}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 156},
+        {ECampaignAction::Walk, {1516, -106, 0}}, {ECampaignAction::Walk, {1496, 43, 0}},
+        {ECampaignAction::Walk, {1449, 773, 0}}, {ECampaignAction::Use, {1406, 773, -13}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 158}, {ECampaignAction::Walk, {1376, 803, 0}},
+        {ECampaignAction::Walk, {1384, 899, 0}}, {ECampaignAction::Walk, {1460, 946, 0}},
+        {ECampaignAction::Use, {1485, 946, -12}},
         {ECampaignAction::Floor, {0, 0, -56}, 295, TEXT("L72's wall lowers the hidden floor")},
-        {ECampaignAction::Place, {-3432, 944, 0}}, {ECampaignAction::Pickup, {-3392, 984, 12}, NativeWadRules::WandOfDisintegration,
-            TEXT("the original L72 Wand of Disintegration pickup")},
-        {ECampaignAction::Place, {-3382, 1136, 0}}, {ECampaignAction::Walk, {-3310, 1136, 0}},
+        {ECampaignAction::Walk, {872, 842, 0}}, {ECampaignAction::Walk, {464, 627, 0}},
+        {ECampaignAction::Walk, {-370, 624, 0}}, {ECampaignAction::Use, {-412, 624, 147}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 37}, {ECampaignAction::Walk, {-552, 627, 0}},
+        {ECampaignAction::Walk, {-1472, 1075, 0}}, {ECampaignAction::Walk, {-1592, 1061, 0}},
+        {ECampaignAction::Teleport, {-1592, 1020, 0}, INDEX_NONE, TEXT("L72's portal reaches the Wand chamber"), {-3328, -219}},
+        {ECampaignAction::Walk, {-3392, 942, 0}},
+        {ECampaignAction::Pickup, {-3392, 984, 12}, NativeWadRules::WandOfDisintegration, TEXT("the original L72 Wand of Disintegration pickup")},
+        {ECampaignAction::Walk, {-3312, 934, 0}}, {ECampaignAction::Walk, {-3312, 994, 0}},
+        {ECampaignAction::Walk, {-3312, 1045, 0}}, {ECampaignAction::Jump, {-3312, 1071, 0}, 34},
+        {ECampaignAction::Jump, {-3312, 1136, 0}, 65},
     };
     const FCampaignAction Campaign32[] = {
-        {ECampaignAction::Place, {706, 836, 0}}, {ECampaignAction::Use, {656, 836, 196}},
+        {ECampaignAction::Rejuvenate, {0, 0, 3200}},
+        {ECampaignAction::Walk, {120, 3089, 0}}, {ECampaignAction::Use, {120, 3049, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 133}, {ECampaignAction::Walk, {120, 2396, 0}},
+        {ECampaignAction::Walk, {8, 2280, 0}}, {ECampaignAction::Use, {8, 2242, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 141}, {ECampaignAction::Walk, {8, 2188, 0}},
+        {ECampaignAction::Walk, {-48, 2044, 0}}, {ECampaignAction::Walk, {-200, 1972, 0}},
+        {ECampaignAction::Walk, {-224, 1932, 0}}, {ECampaignAction::Walk, {-208, 1820, 0}},
+        {ECampaignAction::Walk, {-176, 1788, 0}}, {ECampaignAction::Walk, {132, 1788, 0}},
+        {ECampaignAction::Use, {172, 1788, 235}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 218},
+        {ECampaignAction::Walk, {248, 1732, 0}}, {ECampaignAction::Walk, {368, 1596, 0}},
+        {ECampaignAction::Walk, {360, 1540, 0}}, {ECampaignAction::Walk, {272, 1492, 0}},
+        {ECampaignAction::Walk, {-37, 1465, 0}}, {ECampaignAction::Use, {-37, 1425, 163}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 206}, {ECampaignAction::Walk, {-36, 1404, 0}},
+        {ECampaignAction::Walk, {56, 1332, 0}}, {ECampaignAction::Walk, {689, 1382, 0}},
+        {ECampaignAction::Use, {689, 1424, 42}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 207},
+        {ECampaignAction::Walk, {696, 1465, 0}}, {ECampaignAction::Walk, {744, 1512, 0}},
+        {ECampaignAction::Use, {775, 1512, 59}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 208},
+        {ECampaignAction::Walk, {944, 1468, 0}}, {ECampaignAction::Walk, {1016, 1372, 0}},
+        {ECampaignAction::Walk, {1000, 1073, 0}}, {ECampaignAction::Use, {1000, 1032, 195}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 216}, {ECampaignAction::Walk, {1000, 983, 0}},
+        {ECampaignAction::Walk, {936, 932, 0}}, {ECampaignAction::Walk, {832, 924, 0}},
+        {ECampaignAction::Walk, {706, 836, 0}}, {ECampaignAction::Use, {656, 836, 196}},
         {ECampaignAction::Ceiling, {0, 0, 328}, 108}, {ECampaignAction::Ceiling, {0, 0, 280}, 233,
             TEXT("L32's delayed switch opens both gates")},
-        {ECampaignAction::Place, {1890, 1535, 0}}, {ECampaignAction::Walk, {1950, 1535, 0}},
+        {ECampaignAction::Walk, {993, 975, 0}}, {ECampaignAction::Use, {993, 1016, 195}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 216}, {ECampaignAction::Walk, {1039, 1285, 0}},
+        {ECampaignAction::Walk, {1080, 1486, 0}}, {ECampaignAction::Use, {1120, 1492, 75}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 52}, {ECampaignAction::Walk, {1294, 1492, 0}},
+        {ECampaignAction::Use, {1336, 1492, 75}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 220},
+        {ECampaignAction::Walk, {1805, 1536, 0}}, {ECampaignAction::Use, {1845, 1536, 11}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 127}, {ECampaignAction::Walk, {1950, 1535, 0}},
     };
     const FCampaignAction Campaign71[] = {
-        {ECampaignAction::Place, {-746, -64, 0}}, {ECampaignAction::Walk, {-797, -64, 0}},
+        {ECampaignAction::Rejuvenate, {0, 0, 3400}},
+        {ECampaignAction::Walk, {-1240, -1300, 0}}, {ECampaignAction::Walk, {-1240, -1342, 0}},
+        {ECampaignAction::Use, {-1280, -1342, -77}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 73},
+        {ECampaignAction::Walk, {-1353, -1342, 0}}, {ECampaignAction::Walk, {-1808, -1296, 0}},
+        {ECampaignAction::Walk, {-2120, -704, 0}}, {ECampaignAction::Walk, {-2168, -88, 0}},
+        {ECampaignAction::Walk, {-1968, 528, 0}}, {ECampaignAction::Walk, {-1712, 1008, 0}},
+        {ECampaignAction::Walk, {-1480, 2024, 0}}, {ECampaignAction::Walk, {-1392, 2320, 0}},
+        {ECampaignAction::Walk, {-808, 2464, 0}}, {ECampaignAction::Walk, {-528, 2408, 0}},
+        {ECampaignAction::Use, {-528, 2368, 23}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 59},
+        {ECampaignAction::Walk, {-528, 2296, 0}}, {ECampaignAction::Walk, {-392, 1832, 0}},
+        {ECampaignAction::Walk, {-142, 1640, 0}}, {ECampaignAction::Use, {-142, 1600, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 27}, {ECampaignAction::Walk, {-184, 1360, 0}},
+        {ECampaignAction::Walk, {-592, 1128, 0}}, {ECampaignAction::Walk, {-552, 880, 0}},
+        {ECampaignAction::Walk, {272, 472, 0}}, {ECampaignAction::Walk, {442, 153, 0}},
+        {ECampaignAction::Jump, {442, 44, 0}, 112}, {ECampaignAction::Walk, {224, -42, 0}},
+        {ECampaignAction::Walk, {-483, 58, 0}}, {ECampaignAction::Walk, {-746, -64, 0}},
         {ECampaignAction::Floor, {0, 0, 200}, 84, TEXT("L71's entry strip raises platform 84 to Z200")},
-        {ECampaignAction::Place, {-489, -73, 0}}, {ECampaignAction::Use, {-464, -73, 48}},
+        {ECampaignAction::Walk, {-489, -73, 0}}, {ECampaignAction::Use, {-464, -73, 48}},
         {ECampaignAction::Floor, {0, 0, 16}, 84, TEXT("L71's switch lowers platform 84 to Z16")},
         {ECampaignAction::Floor, {0, 0, 200}, 84, TEXT("L71's platform returns to Z200 after the delay")},
-        {ECampaignAction::Place, {500, 4235, 0}}, {ECampaignAction::Walk, {456, 4260, 0}},
+        {ECampaignAction::Walk, {-491, 146, 0}}, {ECampaignAction::Walk, {56, 824, 0}},
+        {ECampaignAction::Use, {56, 866, -77}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 109},
+        {ECampaignAction::Walk, {56, 944, 0}}, {ECampaignAction::Walk, {232, 1224, 0}},
+        {ECampaignAction::Walk, {628, 1225, 0}}, {ECampaignAction::Use, {670, 1225, 83}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 101}, {ECampaignAction::Walk, {800, 1296, 0}},
+        {ECampaignAction::Walk, {1464, 1768, 0}}, {ECampaignAction::Walk, {2448, 2640, 0}},
+        {ECampaignAction::Walk, {2416, 3256, 0}}, {ECampaignAction::Walk, {1992, 3496, 0}},
+        {ECampaignAction::Walk, {1610, 3500, 0}}, {ECampaignAction::Walk, {944, 3904, 0}},
+        {ECampaignAction::Walk, {456, 4260, 0}},
     };
     const FCampaignAction Campaign70[] = {
-        {ECampaignAction::Place, {400, 617, 0}}, {ECampaignAction::Use, {400, 592, -146}},
+        {ECampaignAction::Rejuvenate, {0, 0, 3400}},
+        {ECampaignAction::Walk, {-1346, 496, 0}}, {ECampaignAction::Use, {-1304, 496, -165}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 19}, {ECampaignAction::Walk, {-472, 497, 0}},
+        {ECampaignAction::Use, {-432, 497, -165}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 25},
+        {ECampaignAction::Walk, {-352, 464, 0}},
+        {ECampaignAction::Walk, {-240, 320, 0}}, {ECampaignAction::Walk, {-208, 184, 0}},
+        {ECampaignAction::Walk, {48, 136, 0}}, {ECampaignAction::Walk, {168, 176, 0}},
+        {ECampaignAction::Walk, {360, 128, 0}}, {ECampaignAction::Walk, {584, 176, 0}},
+        {ECampaignAction::Walk, {608, 224, 0}}, {ECampaignAction::TouchSector, {611, 476, 0}, 36},
+        {ECampaignAction::Floor, {0, 0, 0}, 36, TEXT("L70's pressure lift reaches the upper hall")},
+        {ECampaignAction::Walk, {655, 496, 0}}, {ECampaignAction::Use, {672, 496, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 35}, {ECampaignAction::TouchSector, {1270, 496, 0}, 1},
+        {ECampaignAction::Ceiling, {0, 0, -88}, 53, TEXT("L70's upper hall opens the lower passage")},
+        {ECampaignAction::Walk, {730, 496, 0}}, {ECampaignAction::Use, {688, 496, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 35}, {ECampaignAction::Walk, {610, 474, 0}},
+        {ECampaignAction::Walk, {608, 416, 0}}, {ECampaignAction::Walk, {596, 184, 0}},
+        {ECampaignAction::Walk, {544, 160, 0}}, {ECampaignAction::Walk, {240, 136, 0}},
+        {ECampaignAction::Walk, {120, 176, 0}}, {ECampaignAction::Walk, {-72, 128, 0}},
+        {ECampaignAction::Walk, {-200, 176, 0}}, {ECampaignAction::Walk, {-232, 240, 0}},
+        {ECampaignAction::Walk, {-200, 392, 0}}, {ECampaignAction::Walk, {-92, 495, 0}},
+        {ECampaignAction::Walk, {218, 495, 0}}, {ECampaignAction::Walk, {400, 617, 0}},
+        {ECampaignAction::Use, {400, 592, -146}},
         {ECampaignAction::Ceiling, {0, 0, 190}, 56, TEXT("L70's switch raises gate 56")},
-        {ECampaignAction::Place, {1894, 496, 0}}, {ECampaignAction::Walk, {1976, 496, 0}},
+        {ECampaignAction::Walk, {319, 580, 0}}, {ECampaignAction::Jump, {273, 520, 0}, 65},
+        {ECampaignAction::Walk, {-144, 448, 0}}, {ECampaignAction::Walk, {-232, 320, 0}},
+        {ECampaignAction::Walk, {-208, 184, 0}}, {ECampaignAction::Walk, {-160, 160, 0}},
+        {ECampaignAction::Walk, {168, 176, 0}}, {ECampaignAction::Walk, {360, 128, 0}},
+        {ECampaignAction::Walk, {584, 176, 0}}, {ECampaignAction::Walk, {608, 224, 0}},
+        {ECampaignAction::TouchSector, {611, 476, 0}, 36}, {ECampaignAction::Floor, {0, 0, 0}, 36},
+        {ECampaignAction::Walk, {655, 496, 0}}, {ECampaignAction::Use, {672, 496, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 35}, {ECampaignAction::Walk, {1696, 496, 0}},
+        {ECampaignAction::Walk, {1976, 486, 0}},
     };
     const FCampaignAction Campaign61[] = {
-        {ECampaignAction::Place, {-832, 2922, 0}}, {ECampaignAction::Walk, {-832, 2982, 0}},
+        {ECampaignAction::Rejuvenate, {0, 0, 3200}},
+        {ECampaignAction::Walk, {1490, 2720, 0}}, {ECampaignAction::Walk, {1397, 2720, 0}},
+        {ECampaignAction::Jump, {1362, 2720, 0}, 40},
+        {ECampaignAction::Walk, {1368, 2838, 0}}, {ECampaignAction::Walk, {1328, 3028, 0}},
+        {ECampaignAction::Walk, {1160, 3108, 0}}, {ECampaignAction::Walk, {656, 3132, 0}},
+        {ECampaignAction::Walk, {440, 3156, 0}}, {ECampaignAction::Walk, {86, 2275, 0}},
+        {ECampaignAction::Walk, {-18, 2275, 0}}, {ECampaignAction::Walk, {-328, 3154, 0}},
+        {ECampaignAction::Jump, {-416, 3160, 0}, 61},
+        {ECampaignAction::Walk, {-712, 2868, 0}}, {ECampaignAction::Walk, {-776, 2868, 0}},
+        {ECampaignAction::Walk, {-832, 2922, 0}}, {ECampaignAction::Walk, {-832, 2982, 0}},
         {ECampaignAction::Ceiling, {0, 0, 380}, 143}, {ECampaignAction::Ceiling, {0, 0, 264}, 62,
             TEXT("L61's pressure plate opens both ceilings")},
-        {ECampaignAction::Place, {-1588, -712, 0}}, {ECampaignAction::Pickup, {-1628, -672, 148}, NativeWadRules::ElmoreKey8},
-        {ECampaignAction::Place, {-2794, 448, 0}}, {ECampaignAction::Walk, {-2855, 448, 0}},
+        {ECampaignAction::Walk, {-768, 2852, 0}}, {ECampaignAction::Walk, {-215, 2189, 0}},
+        {ECampaignAction::Walk, {-155, 2189, 0}}, {ECampaignAction::Jump, {-96, 2189, 0}, 60},
+        {ECampaignAction::Walk, {-36, 2189, 0}},
+        {ECampaignAction::Walk, {64, 1976, 0}}, {ECampaignAction::Walk, {-960, 1976, 0}},
+        {ECampaignAction::Walk, {-1976, 1776, 0}}, {ECampaignAction::Walk, {-2200, 1776, 0}},
+        {ECampaignAction::Walk, {-2215, 1624, 0}},
+        {ECampaignAction::Walk, {-2220, 1513, 0}}, {ECampaignAction::Use, {-2220, 1472, 51}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 88}, {ECampaignAction::Walk, {-2214, 1390, 0}},
+        {ECampaignAction::Walk, {-2088, 828, 0}}, {ECampaignAction::Walk, {-2090, 766, 0}},
+        {ECampaignAction::Use, {-2048, 766, 91}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 96},
+        {ECampaignAction::Walk, {-1920, 644, 0}}, {ECampaignAction::Walk, {-1900, 254, 0}},
+        {ECampaignAction::Use, {-1860, 254, 147}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 101},
+        {ECampaignAction::Walk, {-1736, 170, 0}}, {ECampaignAction::Walk, {-1624, -158, 0}},
+        {ECampaignAction::Use, {-1624, -200, 179}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 107},
+        {ECampaignAction::Walk, {-1588, -712, 0}},
+        {ECampaignAction::Pickup, {-1628, -672, 148}, NativeWadRules::ElmoreKey8, TEXT("the original L61 Key 8")},
+        {ECampaignAction::Walk, {-1624, -308, 0}}, {ECampaignAction::Use, {-1624, -264, 179}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 107}, {ECampaignAction::Walk, {-1632, 28, 0}},
+        {ECampaignAction::Walk, {-1750, 248, 0}}, {ECampaignAction::Use, {-1792, 248, 147}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 101}, {ECampaignAction::Walk, {-1920, 356, 0}},
+        {ECampaignAction::Walk, {-1943, 759, 0}}, {ECampaignAction::Use, {-1984, 759, 91}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 96}, {ECampaignAction::Walk, {-2120, 740, 0}},
+        {ECampaignAction::Walk, {-2170, 744, 0}}, {ECampaignAction::Use, {-2170, 704, 91}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 95}, {ECampaignAction::Walk, {-2219, 598, 0}},
+        {ECampaignAction::Walk, {-2416, 452, 0}}, {ECampaignAction::Walk, {-2855, 448, 0}},
     };
     const FCampaignAction Campaign40[] = {
-        {ECampaignAction::Place, {-236, -1808, 0}}, {ECampaignAction::Use, {-186, -1808, 884}},
-        {ECampaignAction::Place, {302, -1808, 0}}, {ECampaignAction::Use, {252, -1808, 884}},
+        {ECampaignAction::Rejuvenate, {0, 0, 3400}},
+        {ECampaignAction::Walk, {32, -3650, 0}}, {ECampaignAction::Walk, {32, -2634, 0}},
+        {ECampaignAction::Walk, {-4, -2288, 0}},
+        {ECampaignAction::TouchSector, {-64, -2289, 0}, 51},
+        {ECampaignAction::Floor, {0, 0, 690}, 51, TEXT("L40's west lift reaches the upper platform")},
+        {ECampaignAction::Walk, {-164, -2306, 0}}, {ECampaignAction::Walk, {-331, -2314, 0}},
+        {ECampaignAction::Floor, {0, 0, 840}, 27}, {ECampaignAction::Walk, {-372, -2314, 0}},
+        {ECampaignAction::Walk, {-372, -1860, 0}},
+        {ECampaignAction::Walk, {-236, -1808, 0}}, {ECampaignAction::Use, {-186, -1808, 884}},
+        {ECampaignAction::Walk, {-372, -1860, 0}}, {ECampaignAction::Walk, {-372, -2314, 0}},
+        {ECampaignAction::Walk, {-154, -2294, 0}}, {ECampaignAction::Walk, {-64, -2289, 0}},
+        {ECampaignAction::Walk, {64, -2288, 0}},
+        {ECampaignAction::TouchSector, {128, -2289, 0}, 10},
+        {ECampaignAction::Floor, {0, 0, 690}, 10, TEXT("L40's east lift reaches the upper platform")},
+        {ECampaignAction::Walk, {227, -2306, 0}}, {ECampaignAction::Walk, {364, -2314, 0}},
+        {ECampaignAction::Floor, {0, 0, 840}, 26}, {ECampaignAction::Walk, {404, -2314, 0}},
+        {ECampaignAction::Walk, {404, -1858, 0}},
+        {ECampaignAction::Walk, {302, -1808, 0}}, {ECampaignAction::Use, {252, -1808, 884}},
         {ECampaignAction::Ceiling, {0, 0, 444}, 41, TEXT("L40's two switches open gate 41")},
-        {ECampaignAction::Place, {2267, 3023, 0}}, {ECampaignAction::Pickup, {2304, 3008, 212}, NativeWadRules::OrbOfDestruction,
-            TEXT("the original L40 Orb of Destruction pickup")},
-        {ECampaignAction::Place, {2376, 3040, 0}}, {ECampaignAction::Pickup, {2336, 3040, 212}, NativeWadRules::Key4},
-        {ECampaignAction::Place, {504, 2664, 0}}, {ECampaignAction::Use, {478, 2632, 440}},
+        {ECampaignAction::Walk, {232, -1874, 0}}, {ECampaignAction::Walk, {120, -1850, 0}},
+        {ECampaignAction::Walk, {32, -1754, 0}}, {ECampaignAction::Walk, {32, -1594, 0}},
+        {ECampaignAction::Walk, {32, -690, 0}}, {ECampaignAction::Walk, {0, -340, 0}},
+        {ECampaignAction::Jump, {-24, -270, 0}, 65}, {ECampaignAction::Walk, {-24, -128, 0}},
+        {ECampaignAction::Jump, {-24, -64, 0}, 60}, {ECampaignAction::Walk, {-24, 27, 0}},
+        {ECampaignAction::Jump, {-24, 102, 0}, 67}, {ECampaignAction::Walk, {-24, 125, 0}},
+        {ECampaignAction::Jump, {-24, 199, 0}, 65},
+        {ECampaignAction::Walk, {-31, 261, 0}},
+        {ECampaignAction::Floor, {0, 0, 700}, 6, TEXT("L40's main lift reaches the flight supplies")},
+        {ECampaignAction::Walk, {-41, 336, 0}},
+        {ECampaignAction::Pickup, {-56, 372, 715}, NativeWadRules::FlyingPotion, TEXT("the original L40 potion of flying")},
+        {ECampaignAction::Pickup, {-16, 347, 714}, NativeWadRules::FlyingAmulet, TEXT("the original L40 amulet of flying")},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {-31, 256, 790}}, {ECampaignAction::Fly, {-32, 128, 790}},
+        {ECampaignAction::Fly, {160, 128, 650}}, {ECampaignAction::Fly, {160, 740, 520}},
+        {ECampaignAction::Fly, {-64, 1810, 490}},
+        {ECampaignAction::Fly, {-64, 2028, 450}, INDEX_NONE, TEXT("L40's potion carries the player over the raised gate ledge")},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingAmulet},
+        {ECampaignAction::Fly, {-576, 2510, 445}}, {ECampaignAction::Fly, {-1235, 2990, 445}},
+        {ECampaignAction::Fly, {-1336, 3142, 445}}, {ECampaignAction::Fly, {-1336, 3444, 431}},
+        {ECampaignAction::Fly, {-1224, 3590, 431}}, {ECampaignAction::Fly, {-208, 3686, 412}},
+        {ECampaignAction::Fly, {-56, 3714, 412}}, {ECampaignAction::Fly, {-56, 3714, 35}},
+        {ECampaignAction::Fly, {808, 3878, 35}}, {ECampaignAction::Fly, {1072, 3822, 35}},
+        {ECampaignAction::Fly, {1368, 3350, 35}}, {ECampaignAction::Fly, {1430, 3322, 285}},
+        {ECampaignAction::Fly, {1880, 3126, 285}}, {ECampaignAction::Fly, {2267, 3023, 234}},
+        {ECampaignAction::Frame, {2304, 3008, 220}, INDEX_NONE, TEXT("orb-island")},
+        {ECampaignAction::Pickup, {2304, 3008, 212}, NativeWadRules::OrbOfDestruction, TEXT("the original L40 Orb of Destruction pickup")},
+        {ECampaignAction::Fly, {2376, 3040, 234}}, {ECampaignAction::Pickup, {2336, 3040, 212}, NativeWadRules::Key4},
+        {ECampaignAction::Fly, {1880, 3126, 285}}, {ECampaignAction::Fly, {1430, 3322, 285}},
+        {ECampaignAction::Fly, {1368, 3350, 35}}, {ECampaignAction::Fly, {1072, 3822, 35}},
+        {ECampaignAction::Fly, {808, 3878, 35}}, {ECampaignAction::Fly, {-56, 3714, 35}},
+        {ECampaignAction::Fly, {-56, 3714, 420}}, {ECampaignAction::Fly, {-208, 3686, 420}},
+        {ECampaignAction::Fly, {-1224, 3590, 431}}, {ECampaignAction::Fly, {-1336, 3444, 431}},
+        {ECampaignAction::Fly, {-1336, 3142, 445}}, {ECampaignAction::Fly, {-1235, 2990, 445}},
+        {ECampaignAction::Fly, {-576, 2510, 445}}, {ECampaignAction::Fly, {456, 2502, 443}},
+        {ECampaignAction::Fly, {496, 2582, 443}}, {ECampaignAction::Use, {515, 2624, 465}},
         {ECampaignAction::OpenDoor, {0, 0, 56}, 123, TEXT("L40 Key 4 opens door 123")},
-        {ECampaignAction::Frame, {478, 2632, 445}, INDEX_NONE, TEXT("last-key-gate")},
-        {ECampaignAction::Place, {-190, 3296, 0}}, {ECampaignAction::Walk, {-122, 3296, 0}},
+        {ECampaignAction::Fly, {552, 2646, 443}}, {ECampaignAction::Fly, {680, 2630, 433}},
+        {ECampaignAction::Fly, {752, 2558, 423}}, {ECampaignAction::Use, {752, 2512, 445}},
+        {ECampaignAction::Floor, {0, 0, 430}, 128, TEXT("L40's last switch lowers the platforms and opens the exit route")},
+        {ECampaignAction::Fly, {680, 2630, 441}}, {ECampaignAction::Fly, {556, 2646, 441}},
+        {ECampaignAction::Use, {526, 2624, 465}}, {ECampaignAction::OpenDoor, {0, 0, 56}, 123},
+        {ECampaignAction::Fly, {456, 2502, 443}}, {ECampaignAction::Fly, {0, 2526, 441}},
+        {ECampaignAction::Fly, {-184, 2894, 439}}, {ECampaignAction::Fly, {-122, 3296, 439}},
     };
     const FCampaignAction Campaign64[] = {
         {ECampaignAction::Rejuvenate, {0, 0, 2050}}, {ECampaignAction::ManaAtLeast, {0, 0, 3350}},
@@ -820,13 +1278,437 @@ namespace
         {ECampaignAction::Use, {2733, 1619, 42}}, {ECampaignAction::OpenDoor, {0, 0, 58}, 172},
         {ECampaignAction::Walk, {2852, 1619, 0}},
     };
+    const FCampaignAction Campaign34[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2100}}, {ECampaignAction::ManaAtLeast, {0, 0, 3400}},
+        {ECampaignAction::Walk, {914, 1273, 0}}, {ECampaignAction::Walk, {306, 1233, 0}},
+        {ECampaignAction::Walk, {106, 921, 0}}, {ECampaignAction::Walk, {114, 745, 0}},
+        {ECampaignAction::Walk, {282, 585, 0}}, {ECampaignAction::Walk, {288, 448, 0}},
+        {ECampaignAction::Walk, {288, 359, 0}},
+        {ECampaignAction::Walk, {202, 305, 0}}, {ECampaignAction::Walk, {170, 321, 0}},
+        {ECampaignAction::Walk, {116, 385, 0}},
+        {ECampaignAction::Walk, {-174, 657, 0}}, {ECampaignAction::Walk, {-214, 657, 0}},
+        {ECampaignAction::Walk, {-350, 502, 0}}, {ECampaignAction::Use, {-384, 490, 40}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 12}, {ECampaignAction::Walk, {-454, 497, 0}},
+        {ECampaignAction::Walk, {-462, 505, 0}}, {ECampaignAction::Walk, {-950, 1521, 0}},
+        {ECampaignAction::Walk, {-982, 1681, 0}}, {ECampaignAction::Walk, {-1062, 1786, 0}},
+        {ECampaignAction::Use, {-1101, 1786, 78}}, {ECampaignAction::OpenDoor, {0, 0, 94}, 107},
+        {ECampaignAction::Walk, {-1134, 1817, 0}}, {ECampaignAction::Walk, {-1126, 1889, 0}},
+        {ECampaignAction::Walk, {-1014, 1977, 0}}, {ECampaignAction::Walk, {-846, 1953, 0}},
+        {ECampaignAction::Walk, {-742, 1801, 0}}, {ECampaignAction::Walk, {-718, 1801, 0}},
+        {ECampaignAction::Walk, {-702, 1833, 0}}, {ECampaignAction::Walk, {-726, 1961, 0}},
+        {ECampaignAction::Walk, {-902, 2073, 0}}, {ECampaignAction::Walk, {-1305, 2035, 0}},
+        {ECampaignAction::Pickup, {-1334, 2031, 772}, 258, TEXT("the lighthouse stairway key")},
+        {ECampaignAction::Walk, {-846, 2065, 0}}, {ECampaignAction::Walk, {-702, 1913, 0}},
+        {ECampaignAction::Walk, {-710, 1809, 0}}, {ECampaignAction::Walk, {-742, 1801, 0}},
+        {ECampaignAction::Walk, {-862, 1961, 0}}, {ECampaignAction::Walk, {-1062, 1961, 0}},
+        {ECampaignAction::Walk, {-1134, 1841, 0}}, {ECampaignAction::Walk, {-1157, 1786, 0}},
+        {ECampaignAction::Use, {-1119, 1786, 93}}, {ECampaignAction::OpenDoor, {0, 0, 94}, 107},
+        {ECampaignAction::Walk, {-1062, 1786, 0}}, {ECampaignAction::Walk, {-982, 1681, 0}},
+        {ECampaignAction::Walk, {-950, 1654, 0}}, {ECampaignAction::Walk, {-950, 1517, 0}},
+        {ECampaignAction::Walk, {-558, 601, 0}},
+        {ECampaignAction::Walk, {-462, 505, 0}}, {ECampaignAction::Walk, {-428, 490, 0}},
+        {ECampaignAction::Use, {-392, 490, 40}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 12},
+        {ECampaignAction::Walk, {-358, 497, 0}}, {ECampaignAction::Walk, {-206, 657, 0}},
+        {ECampaignAction::Walk, {-96, 675, 0}}, {ECampaignAction::Walk, {-96, 486, 0}},
+        {ECampaignAction::Walk, {78, 478, 0}},
+        {ECampaignAction::Walk, {143, 520, 0}}, {ECampaignAction::Use, {161, 544, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 155}, {ECampaignAction::Walk, {197, 580, 0}},
+        {ECampaignAction::Teleport, {210, 601, 0}, INDEX_NONE, TEXT("L34's first teleporter reaches the mountain passage"), {-1012, -1572}},
+        {ECampaignAction::Rejuvenate, {0, 0, 2050}}, {ECampaignAction::ManaAtLeast, {0, 0, 3400}},
+        {ECampaignAction::Walk, {-989, -1572, 0}}, {ECampaignAction::Use, {-951, -1572, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 135}, {ECampaignAction::Walk, {-884, -1572, 0}},
+        {ECampaignAction::Walk, {-884, -1434, 0}},
+        {ECampaignAction::Jump, {-532, -1434, 0}, 148, TEXT("the player jumps over L34's lowered passage")},
+        {ECampaignAction::Walk, {-311, -1598, 0}}, {ECampaignAction::Walk, {-307, -1890, 0}},
+        {ECampaignAction::Walk, {-795, -1896, 0}}, {ECampaignAction::Use, {-795, -1948, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 134}, {ECampaignAction::Walk, {-795, -2168, 0}},
+        // Trigger the crusher, retreat, and cross during its reset.
+        {ECampaignAction::Walk, {-795, -2232, 0}}, {ECampaignAction::Walk, {-795, -2168, 0}},
+        {ECampaignAction::CeilingAtMost, {0, 0, 90}, 160, TEXT("L34's crusher is in its closing cycle")},
+        {ECampaignAction::OpenDoor, {0, 0, 64}, 160},
+        {ECampaignAction::Walk, {-795, -2406, 0}}, {ECampaignAction::Walk, {-795, -2560, 0}},
+        {ECampaignAction::Use, {-795, -2605, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 163},
+        {ECampaignAction::Walk, {-793, -3088, 0}}, {ECampaignAction::Use, {-793, -3136, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 143}, {ECampaignAction::Walk, {-793, -3545, 0}},
+        {ECampaignAction::Use, {-793, -3585, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 164},
+        {ECampaignAction::Walk, {-771, -3631, 0}}, {ECampaignAction::Walk, {-486, -3743, 0}},
+        {ECampaignAction::Walk, {486, -3642, 0}}, {ECampaignAction::Walk, {538, -3600, 0}},
+        {ECampaignAction::Use, {546, -3567, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 181},
+        {ECampaignAction::Walk, {482, -3471, 0}}, {ECampaignAction::Walk, {450, -3160, 0}},
+        {ECampaignAction::Walk, {480, -3110, 0}}, {ECampaignAction::Walk, {611, -3088, 0}},
+        {ECampaignAction::Use, {656, -3088, 40}},
+        {ECampaignAction::Floor, {0, 0, 32}, 33, TEXT("L34's original switch lowers the lighthouse exit floor")},
+        {ECampaignAction::Walk, {480, -3110, 0}}, {ECampaignAction::Walk, {450, -3160, 0}},
+        {ECampaignAction::Walk, {482, -3471, 0}}, {ECampaignAction::Walk, {540, -3532, 0}},
+        {ECampaignAction::Use, {546, -3564, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 181},
+        {ECampaignAction::Walk, {538, -3611, 0}}, {ECampaignAction::Walk, {-486, -3743, 0}},
+        {ECampaignAction::Walk, {-793, -3645, 0}}, {ECampaignAction::Use, {-793, -3601, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 164}, {ECampaignAction::Walk, {-793, -3197, 0}},
+        {ECampaignAction::Use, {-793, -3152, 44}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 143},
+        {ECampaignAction::Walk, {-795, -2665, 0}}, {ECampaignAction::Use, {-795, -2621, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 163}, {ECampaignAction::Walk, {-795, -2406, 0}},
+        {ECampaignAction::Walk, {-795, -2346, 0}}, {ECampaignAction::Walk, {-795, -2406, 0}},
+        {ECampaignAction::CeilingAtMost, {0, 0, 90}, 160}, {ECampaignAction::OpenDoor, {0, 0, 64}, 160},
+        {ECampaignAction::Walk, {-795, -2011, 0}}, {ECampaignAction::Use, {-795, -1964, 44}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 134}, {ECampaignAction::Walk, {-794, -1887, 0}},
+        {ECampaignAction::Walk, {-304, -1882, 0}}, {ECampaignAction::Walk, {-306, -1620, 0}},
+        {ECampaignAction::Walk, {-610, -1609, 0}}, {ECampaignAction::Use, {-611, -1639, -54}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 172}, {ECampaignAction::Walk, {-611, -1708, 0}},
+        {ECampaignAction::Walk, {-646, -1752, 0}}, {ECampaignAction::Walk, {-1086, -1791, 0}},
+        {ECampaignAction::Walk, {-1180, -1824, 0}}, {ECampaignAction::Use, {-1220, -1824, -54}},
+        {ECampaignAction::Floor, {0, 0, -96}, 175, TEXT("L34's hidden switch opens the return passage")},
+        {ECampaignAction::Walk, {-878, -1765, 0}}, {ECampaignAction::Walk, {-641, -1754, 0}},
+        {ECampaignAction::Walk, {-611, -1700, 0}}, {ECampaignAction::Use, {-611, -1647, -54}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 172}, {ECampaignAction::Walk, {-611, -1444, 0}},
+        {ECampaignAction::Use, {-611, -1408, -54}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 176},
+        {ECampaignAction::Walk, {-593, -1330, 0}}, {ECampaignAction::Walk, {-545, -1296, 0}},
+        {ECampaignAction::Walk, {-542, -1271, 0}}, {ECampaignAction::Walk, {-521, -1222, 0}},
+        {ECampaignAction::Checkpoint, {}, INDEX_NONE, LighthouseReturnSlot},
+        {ECampaignAction::Walk, {-558, -1111, 0}}, {ECampaignAction::Walk, {-593, -1106, 0}},
+        {ECampaignAction::Pickup, {-612, -1098, -88}, HealingPotion, TEXT("an authored lighthouse healing potion")},
+        {ECampaignAction::Walk, {-579, -1075, 0}}, {ECampaignAction::Pickup, {-608, -1058, -88}, HealingPotion},
+        {ECampaignAction::Walk, {-493, -1100, 0}}, {ECampaignAction::Pickup, {-468, -1096, -88}, HealingPotion},
+        {ECampaignAction::Pickup, {-480, -1064, -88}, HealingPotion},
+        {ECampaignAction::Walk, {-527, -1216, 0}},
+        {ECampaignAction::Teleport, {-441, -1216, 0}, INDEX_NONE, TEXT("L34's return teleporter reaches the lighthouse"), {-1038, 144}},
+        {ECampaignAction::Rejuvenate, {0, 0, 2050}}, {ECampaignAction::ManaAtLeast, {0, 0, 3400}},
+        {ECampaignAction::Walk, {-1006, -263, 0}}, {ECampaignAction::Walk, {-791, -271, 0}},
+        {ECampaignAction::Walk, {-750, -177, 0}}, {ECampaignAction::Walk, {-702, 753, 0}},
+        {ECampaignAction::Walk, {-480, 978, 0}}, {ECampaignAction::Walk, {-381, 959, 0}},
+        {ECampaignAction::Walk, {-381, 918, 0}},
+        {ECampaignAction::DefeatCreature, {}, 213, TEXT("the skeleton guarding L34's lowered gate")},
+        {ECampaignAction::DefeatCreature, {}, 215, TEXT("the skeleton beyond L34's glowers")},
+        {ECampaignAction::Jump, {-381, 841, 0}, 82},
+        {ECampaignAction::Walk, {-351, 830, 0}},
+        {ECampaignAction::Jump, {-240, 830, 0}, 113},
+        {ECampaignAction::Walk, {-135, 830, 0}}, {ECampaignAction::Walk, {-29, 868, 0}},
+    };
+    const FCampaignAction Campaign151[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2000}}, {ECampaignAction::ManaAtLeast, {0, 0, 2000}},
+        {ECampaignAction::Walk, {531, 3418, 0}}, {ECampaignAction::Walk, {563, 3362, 0}},
+        {ECampaignAction::Walk, {787, 2882, 0}}, {ECampaignAction::Walk, {1675, 2778, 0}},
+        {ECampaignAction::Walk, {2083, 2538, 0}}, {ECampaignAction::Walk, {2307, 2378, 0}},
+        {ECampaignAction::Walk, {2363, 2330, 0}}, {ECampaignAction::Walk, {2819, 1842, 0}},
+        {ECampaignAction::Walk, {3403, 1858, 0}}, {ECampaignAction::Walk, {3507, 1882, 0}},
+        {ECampaignAction::Walk, {3595, 1986, 0}}, {ECampaignAction::Walk, {3539, 2298, 0}},
+        {ECampaignAction::Walk, {2819, 3018, 0}}, {ECampaignAction::Walk, {2624, 3051, 0}},
+        {ECampaignAction::Pickup, {2586, 3051, -52}, NativeWadRules::ElmoreKey5, TEXT("the L151 cave key")},
+        {ECampaignAction::Walk, {2915, 3186, 0}}, {ECampaignAction::Walk, {2979, 4066, 0}},
+        {ECampaignAction::Walk, {2667, 4162, 0}}, {ECampaignAction::Walk, {2624, 4204, 0}},
+        {ECampaignAction::Use, {2624, 4256, 9}}, {ECampaignAction::OpenDoor, {0, 0, 58}, 48},
+        {ECampaignAction::Walk, {2624, 4336, 0}},
+    };
+    const FCampaignAction Campaign152[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 1950}}, {ECampaignAction::ManaAtLeast, {0, 0, 3200}},
+        {ECampaignAction::Walk, {1446, 2066, 0}}, {ECampaignAction::Use, {1446, 2019, 121}},
+        {ECampaignAction::OpenDoor, {0, 0, 64}, 50}, {ECampaignAction::Walk, {1446, 1992, 0}},
+        {ECampaignAction::Walk, {1470, 1816, 0}}, {ECampaignAction::Walk, {1742, 1488, 0}},
+        {ECampaignAction::Walk, {1734, 1320, 0}}, {ECampaignAction::Walk, {1638, 1032, 0}},
+        {ECampaignAction::Walk, {1630, 1024, 0}}, {ECampaignAction::Walk, {822, 608, 0}},
+        {ECampaignAction::Walk, {742, 544, 0}}, {ECampaignAction::Walk, {-274, 544, 0}},
+        {ECampaignAction::Walk, {-602, 504, 0}}, {ECampaignAction::Walk, {-658, 448, 0}},
+        {ECampaignAction::Walk, {-634, 312, 0}}, {ECampaignAction::Walk, {-390, 66, 0}},
+        {ECampaignAction::Jump, {-390, -45, 0}, 106}, {ECampaignAction::Walk, {-421, -107, 0}},
+        {ECampaignAction::Pickup, {-388, -130, 140}, NativeWadRules::ElmoreKey6, TEXT("the L152 reservoir key")},
+        {ECampaignAction::Walk, {-568, -152, 0}}, {ECampaignAction::Use, {-531.5, -134, 77}},
+        {ECampaignAction::Floor, {0, 0, -476}, 27, TEXT("L152's hidden switch lowers the reservoir floor")},
+        {ECampaignAction::Walk, {-308, -321, 0}}, {ECampaignAction::Walk, {-306, -460, 0}},
+        {ECampaignAction::Pickup, {-324, -487, -464}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Pickup, {-296, -486, -464}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Pickup, {-269, -486, -464}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {-306, -322, -407}}, {ECampaignAction::Fly, {-302, -258, -395}},
+        {ECampaignAction::Fly, {-302, -258, 170}}, {ECampaignAction::Fly, {-565, -135, 170}},
+        {ECampaignAction::FlightEnded, {}, INDEX_NONE, TEXT("L152's flight supplies leave two carried potions")},
+        {ECampaignAction::Walk, {-658, 448, 0}}, {ECampaignAction::Jump, {-490, 536, 0}, 180},
+        {ECampaignAction::Walk, {-378, 488, 0}}, {ECampaignAction::Walk, {-42, 49, 0}},
+        {ECampaignAction::Use, {-48, -3, 40}}, {ECampaignAction::OpenDoor, {0, 0, 64}, 54},
+        {ECampaignAction::Walk, {-25, -94, 0}}, {ECampaignAction::Walk, {-16, -250, 0}},
+    };
+    const FCampaignAction Campaign153[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2050}}, {ECampaignAction::ManaAtLeast, {0, 0, 3200}},
+        {ECampaignAction::Walk, {1552, 2433, 0}}, {ECampaignAction::Use, {1552, 2395, 64}},
+        {ECampaignAction::OpenDoor, {0, 0, 75}, 66}, {ECampaignAction::Walk, {1466, 2216, 0}},
+        {ECampaignAction::Walk, {531, 1895, 0}}, {ECampaignAction::Walk, {471, 1891, 0}},
+        {ECampaignAction::Jump, {471, 1799, 0}, 105},
+        {ECampaignAction::Walk, {130, 1848, 0}},
+        {ECampaignAction::Walk, {-886, 1560, 0}}, {ECampaignAction::Walk, {-1526, 1200, 0}},
+        {ECampaignAction::Walk, {-1638, 1072, 0}}, {ECampaignAction::Walk, {-1570, 675, 0}},
+        {ECampaignAction::Jump, {-1558, 585, 0}, 90},
+        {ECampaignAction::Walk, {-918, 120, 0}}, {ECampaignAction::Walk, {-942, -273, 0}},
+        {ECampaignAction::Pickup, {-940, -306, -68}, NativeWadRules::ElmoreKey8, TEXT("the L153 eastern vault key")},
+        {ECampaignAction::Walk, {-918, 120, 0}}, {ECampaignAction::Walk, {-998, 160, 0}},
+        {ECampaignAction::Jump, {-1110, 120, 0}, 115}, {ECampaignAction::Walk, {-1126, -360, 0}},
+        {ECampaignAction::Walk, {-542, -568, 0}}, {ECampaignAction::Walk, {-406, -568, 0}},
+        {ECampaignAction::Walk, {-206, -536, 0}}, {ECampaignAction::Walk, {330, -320, 0}},
+        {ECampaignAction::Walk, {378, -280, 0}}, {ECampaignAction::Walk, {818, 112, 0}},
+        {ECampaignAction::Walk, {913, 179, 0}}, {ECampaignAction::Use, {940, 191, 72}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 212}, {ECampaignAction::Walk, {1018, 246, 0}},
+        {ECampaignAction::Walk, {1088, 254, 0}}, {ECampaignAction::Use, {1088, 224, 72}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 96}, {ECampaignAction::Walk, {1088, -202, 0}},
+        {ECampaignAction::Walk, {1026, -272, 0}}, {ECampaignAction::Walk, {1010, -392, 0}},
+        {ECampaignAction::Walk, {890, -423, 0}}, {ECampaignAction::Use, {864, -448, 72}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 107}, {ECampaignAction::Walk, {864, -528, 0}},
+        {ECampaignAction::Use, {864, -560, 64}},
+        {ECampaignAction::Ceiling, {0, 0, 108}, 102, TEXT("L153's first switch opens the passage to the key doors")},
+        {ECampaignAction::Walk, {864, -490, 0}}, {ECampaignAction::Use, {864, -464, 72}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 107}, {ECampaignAction::Walk, {906, -416, 0}},
+        {ECampaignAction::Walk, {1002, -400, 0}}, {ECampaignAction::Walk, {1042, -240, 0}},
+        {ECampaignAction::Walk, {1088, -176, 0}}, {ECampaignAction::Walk, {1088, 173, 0}},
+        {ECampaignAction::Use, {1088, 208, 72}}, {ECampaignAction::OpenDoor, {0, 0, 70}, 96},
+        {ECampaignAction::Walk, {1108, 320, 0}}, {ECampaignAction::Use, {1152, 320, 72}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 92}, {ECampaignAction::Walk, {1476, 320, 0}},
+        {ECampaignAction::Walk, {1504, 299, 0}}, {ECampaignAction::Walk, {1504, 72, 0}},
+        {ECampaignAction::Use, {1504, 32, 15}}, {ECampaignAction::OpenDoor, {0, 0, 70}, 112},
+        {ECampaignAction::Walk, {1490, -136, 0}}, {ECampaignAction::Walk, {1410, -216, 0}},
+        // The west plate closes the gate behind the player. The bank releases it for the return.
+        {ECampaignAction::Walk, {1426, -360, 0}}, {ECampaignAction::Walk, {1450, -384, 0}},
+        {ECampaignAction::Walk, {1618, -448, 0}}, {ECampaignAction::Walk, {1682, -504, 0}},
+        {ECampaignAction::Walk, {1682, -552, 0}}, {ECampaignAction::Walk, {1738, -592, 0}},
+        {ECampaignAction::Walk, {1794, -664, 0}}, {ECampaignAction::Walk, {1850, -712, 0}},
+        {ECampaignAction::Walk, {1823, -854, 0}}, {ECampaignAction::Ceiling, {0, 0, -16}, 218},
+        {ECampaignAction::Walk, {1826, -1152, 0}}, {ECampaignAction::Walk, {1890, -1232, 0}},
+        {ECampaignAction::Walk, {1842, -1760, 0}}, {ECampaignAction::Walk, {1818, -1792, 0}},
+        {ECampaignAction::Walk, {1754, -1808, 0}}, {ECampaignAction::Walk, {1746, -1864, 0}},
+        {ECampaignAction::Walk, {1778, -1992, 0}}, {ECampaignAction::Walk, {1840, -2035, 0}},
+        {ECampaignAction::Use, {1840, -2064, 0}},
+        {ECampaignAction::Ceiling, {0, 0, 200}, 218, TEXT("L153's west switch combination reopens the gate")},
+        {ECampaignAction::Walk, {1778, -1992, 0}}, {ECampaignAction::Walk, {1746, -1840, 0}},
+        {ECampaignAction::Walk, {1770, -1792, 0}}, {ECampaignAction::Walk, {1842, -1768, 0}},
+        {ECampaignAction::Walk, {1890, -1272, 0}}, {ECampaignAction::Walk, {1826, -1136, 0}},
+        {ECampaignAction::Walk, {1842, -696, 0}}, {ECampaignAction::Walk, {1786, -656, 0}},
+        {ECampaignAction::Walk, {1690, -560, 0}}, {ECampaignAction::Walk, {1682, -504, 0}},
+        {ECampaignAction::Walk, {1642, -464, 0}}, {ECampaignAction::Walk, {1434, -368, 0}},
+        {ECampaignAction::Walk, {1410, -328, 0}}, {ECampaignAction::Walk, {1394, -166, 0}},
+        {ECampaignAction::Walk, {1250, -156, 0}}, {ECampaignAction::Use, {1250, -192, 14}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 118}, {ECampaignAction::Walk, {1234, -520, 0}},
+        {ECampaignAction::Walk, {1210, -544, 0}}, {ECampaignAction::Walk, {1050, -560, 0}},
+        {ECampaignAction::Walk, {1034, -584, 0}}, {ECampaignAction::Walk, {1042, -648, 0}},
+        {ECampaignAction::Walk, {1106, -696, 0}}, {ECampaignAction::Walk, {1106, -744, 0}},
+        {ECampaignAction::Walk, {1018, -784, 0}}, {ECampaignAction::Walk, {978, -936, 0}},
+        {ECampaignAction::Walk, {954, -960, 0}}, {ECampaignAction::Walk, {858, -976, 0}},
+        {ECampaignAction::Walk, {832, -995, 0}}, {ECampaignAction::Use, {832, -1033, 155}},
+        {ECampaignAction::OpenDoor, {0, 0, 64}, 162}, {ECampaignAction::Walk, {810, -1128, 0}},
+        {ECampaignAction::Walk, {486, -1452, 0}},
+        {ECampaignAction::Pickup, {460, -1480, 124}, NativeWadRules::ElmoreKey3, TEXT("the L153 center vault key")},
+        {ECampaignAction::Walk, {834, -1082, 0}}, {ECampaignAction::Use, {832, -1049, 155}},
+        {ECampaignAction::OpenDoor, {0, 0, 64}, 162}, {ECampaignAction::Walk, {850, -984, 0}},
+        {ECampaignAction::Walk, {874, -960, 0}}, {ECampaignAction::Walk, {970, -944, 0}},
+        {ECampaignAction::Walk, {1010, -792, 0}}, {ECampaignAction::Walk, {1106, -744, 0}},
+        {ECampaignAction::Walk, {1106, -696, 0}}, {ECampaignAction::Walk, {1050, -656, 0}},
+        {ECampaignAction::Walk, {1034, -632, 0}}, {ECampaignAction::Walk, {1042, -568, 0}},
+        {ECampaignAction::Walk, {1226, -528, 0}}, {ECampaignAction::Walk, {1250, -488, 0}},
+        {ECampaignAction::Walk, {1250, -241, 0}}, {ECampaignAction::Use, {1250, -208, 12}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 118}, {ECampaignAction::Walk, {1290, -160, 0}},
+        {ECampaignAction::Walk, {1522, -144, 0}}, {ECampaignAction::Walk, {1600, -157, 0}},
+        {ECampaignAction::Use, {1600, -128, 18}}, {ECampaignAction::OpenDoor, {0, 0, 64}, 116},
+        {ECampaignAction::Walk, {1618, -56, 0}}, {ECampaignAction::Walk, {1642, -32, 0}},
+        {ECampaignAction::Walk, {1770, -48, 0}}, {ECampaignAction::Walk, {1778, -136, 0}},
+        {ECampaignAction::Walk, {1802, -160, 0}}, {ECampaignAction::Walk, {1944, -160, 0}},
+        {ECampaignAction::Use, {1984, -160, -107}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 130},
+        {ECampaignAction::Walk, {2498, -144, 0}}, {ECampaignAction::Walk, {2562, -80, 0}},
+        {ECampaignAction::Walk, {2626, -48, 0}}, {ECampaignAction::Walk, {2674, -64, 0}},
+        {ECampaignAction::Walk, {2747, -160, 0}}, {ECampaignAction::Use, {2784, -160, -105}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 137}, {ECampaignAction::Walk, {3083, -160, 0}},
+        {ECampaignAction::Use, {3120, -160, -105}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 174},
+        {ECampaignAction::Walk, {3410, -160, 0}}, {ECampaignAction::Walk, {3722, -160, 0}},
+        {ECampaignAction::Use, {3760, -160, -105}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 193},
+        {ECampaignAction::Walk, {4330, -176, 0}}, {ECampaignAction::Walk, {4394, -240, 0}},
+        {ECampaignAction::Use, {4432, -240, -112}},
+        {ECampaignAction::Floor, {0, 0, -148}, 202, TEXT("L153's orb switch combination opens the vault")},
+        {ECampaignAction::Walk, {4394, -160, 0}}, {ECampaignAction::Walk, {4485, -160, 0}},
+        {ECampaignAction::Walk, {4590, -195, 0}}, {ECampaignAction::Walk, {4612, -291, 0}},
+        {ECampaignAction::Pickup, {4612, -330, -136}, NativeWadRules::OrbOfDefense, TEXT("the original Orb of Defense")},
+        {ECampaignAction::Walk, {4594, -208, 0}}, {ECampaignAction::Walk, {4490, -160, 0}},
+        {ECampaignAction::Use, {4448, -160, -106}}, {ECampaignAction::Floor, {0, 0, -148}, 202},
+        {ECampaignAction::Walk, {3810, -160, 0}}, {ECampaignAction::Use, {3768, -160, -105}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 193}, {ECampaignAction::Walk, {3474, -160, 0}},
+        {ECampaignAction::Walk, {3180, -160, 0}}, {ECampaignAction::Use, {3144, -160, -105}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 174}, {ECampaignAction::Walk, {2835, -160, 0}},
+        {ECampaignAction::Use, {2800, -160, -105}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 137},
+        {ECampaignAction::Walk, {2690, -80, 0}}, {ECampaignAction::Walk, {2626, -48, 0}},
+        {ECampaignAction::Walk, {2578, -64, 0}}, {ECampaignAction::Walk, {2458, -160, 0}},
+        {ECampaignAction::Walk, {2040, -160, 0}}, {ECampaignAction::Use, {2000, -160, -105}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 130}, {ECampaignAction::Walk, {1786, -144, 0}},
+        {ECampaignAction::Walk, {1778, -56, 0}}, {ECampaignAction::Walk, {1754, -32, 0}},
+        {ECampaignAction::Walk, {1614, -57, 0}}, {ECampaignAction::Walk, {1600, -80, 0}},
+        {ECampaignAction::Use, {1600, -112, 16}}, {ECampaignAction::OpenDoor, {0, 0, 64}, 116},
+        {ECampaignAction::Walk, {1530, -144, 0}}, {ECampaignAction::Walk, {1506, -104, 0}},
+        {ECampaignAction::Walk, {1504, -19, 0}}, {ECampaignAction::Use, {1504, 16, 15}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 112}, {ECampaignAction::Walk, {1504, 309, 0}},
+        {ECampaignAction::Walk, {1206, 320, 0}}, {ECampaignAction::Use, {1168, 320, 72}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 92}, {ECampaignAction::Walk, {1020, 246, 0}},
+        {ECampaignAction::Walk, {976, 232, 0}}, {ECampaignAction::Use, {950, 207, 72}},
+        {ECampaignAction::OpenDoor, {0, 0, 70}, 212}, {ECampaignAction::Walk, {867, 152, 0}},
+        {ECampaignAction::Walk, {834, -32, 0}}, {ECampaignAction::Walk, {834, -208, 0}},
+        {ECampaignAction::Walk, {832, -282, 0}},
+    };
+    const FCampaignAction Campaign231[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2700}}, {ECampaignAction::ManaAtLeast, {0, 0, 2000}},
+        {ECampaignAction::Walk, {-2216, 3432, 0}}, {ECampaignAction::Walk, {-2216, 3480, 0}},
+        {ECampaignAction::Walk, {-1200, 4496, 0}}, {ECampaignAction::Walk, {-1136, 4680, 0}},
+        {ECampaignAction::Walk, {-536, 4680, 0}}, {ECampaignAction::Walk, {-128, 4152, 0}},
+        {ECampaignAction::Walk, {-112, 3136, 0}}, {ECampaignAction::Walk, {-112, 2924, 0}},
+        {ECampaignAction::Use, {-112, 2879, 252}}, {ECampaignAction::OpenDoor, {0, 0, 64}, 255},
+        {ECampaignAction::Walk, {-56, 2776, 0}}, {ECampaignAction::Walk, {381, 2236, 0}},
+        {ECampaignAction::Use, {423, 2236, 250}}, {ECampaignAction::OpenDoor, {0, 0, 80}, 271},
+        {ECampaignAction::Walk, {448, 2224, 0}}, {ECampaignAction::Walk, {888, 2176, 0}},
+        {ECampaignAction::Walk, {935, 2048, 0}}, {ECampaignAction::Use, {936, 2007, 186}},
+        {ECampaignAction::OpenDoor, {0, 0, 72}, 17}, {ECampaignAction::Walk, {936, 1742, 0}},
+        {ECampaignAction::Use, {936, 1698, 186}}, {ECampaignAction::OpenDoor, {0, 0, 64}, 16},
+        {ECampaignAction::Walk, {936, 1480, 0}}, {ECampaignAction::Walk, {664, 1376, 0}},
+        {ECampaignAction::Walk, {648, 360, 0}}, {ECampaignAction::Walk, {760, 288, 0}},
+        {ECampaignAction::Walk, {936, 232, 0}}, {ECampaignAction::Walk, {928, -96, 0}},
+        {ECampaignAction::Walk, {862, -157, 0}}, {ECampaignAction::Use, {862, -194, 188}},
+        {ECampaignAction::OpenDoor, {0, 0, 64}, 268}, {ECampaignAction::Walk, {864, -256, 0}},
+        {ECampaignAction::Walk, {864, -320, 0}},
+    };
+    const FCampaignAction Campaign75[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2700}}, {ECampaignAction::ManaAtLeast, {0, 0, 2200}},
+        {ECampaignAction::Walk, {2099, 2742, 0}}, {ECampaignAction::Use, {2099, 2700, 30}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 156}, {ECampaignAction::Walk, {2099, 2526, 0}},
+        {ECampaignAction::Walk, {2104, 1956, 0}}, {ECampaignAction::Use, {2104, 1914, 30}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 99}, {ECampaignAction::Walk, {2104, 1856, 0}},
+        {ECampaignAction::Walk, {2323, 1822, 0}}, {ECampaignAction::Walk, {2511, 1510, 0}},
+        {ECampaignAction::Walk, {2435, 1186, 0}}, {ECampaignAction::Walk, {2271, 1054, 0}},
+        {ECampaignAction::Walk, {1999, 1082, 0}}, {ECampaignAction::Walk, {1900, 1180, 0}},
+        {ECampaignAction::TouchSector, {1900, 1240, 0}, 35}, {ECampaignAction::Walk, {1900, 1180, 0}},
+        {ECampaignAction::Floor, {0, 0, -16}, 192, TEXT("L75's pit trigger lowers the passage platform")},
+        {ECampaignAction::Walk, {1999, 1082, 0}}, {ECampaignAction::Walk, {2271, 1054, 0}},
+        {ECampaignAction::Walk, {2435, 1186, 0}}, {ECampaignAction::Walk, {2511, 1510, 0}},
+        {ECampaignAction::Walk, {2323, 1822, 0}}, {ECampaignAction::Walk, {2059, 1859, 0}},
+        {ECampaignAction::Walk, {1819, 1794, 0}}, {ECampaignAction::Walk, {1646, 1789, 0}},
+        {ECampaignAction::Walk, {1635, 1806, 0}}, {ECampaignAction::Walk, {1547, 1904, 0}},
+        {ECampaignAction::Walk, {1511, 1921, 0}}, {ECampaignAction::Use, {1472, 1921, -22}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 106}, {ECampaignAction::Walk, {1447, 1910, 0}},
+        {ECampaignAction::Walk, {1207, 1538, 0}}, {ECampaignAction::Walk, {1235, 1398, 0}},
+        {ECampaignAction::Walk, {1523, 1210, 0}}, {ECampaignAction::Walk, {1507, 990, 0}},
+        {ECampaignAction::Walk, {1479, 962, 0}}, {ECampaignAction::Walk, {1323, 982, 0}},
+        {ECampaignAction::Walk, {1291, 1014, 0}}, {ECampaignAction::Walk, {1267, 1178, 0}},
+        {ECampaignAction::Walk, {1079, 1186, 0}}, {ECampaignAction::Walk, {1001, 1039, 0}},
+        {ECampaignAction::Walk, {981, 766, 0}}, {ECampaignAction::Use, {981, 729, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 13}, {ECampaignAction::Walk, {923, 678, 0}},
+        {ECampaignAction::Walk, {415, 302, 0}}, {ECampaignAction::Walk, {100, 284, 0}},
+        {ECampaignAction::Use, {60, 284, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 5},
+        {ECampaignAction::Walk, {-93, 322, 0}}, {ECampaignAction::Walk, {-248, 413, 0}},
+        {ECampaignAction::Use, {-248, 449, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 3},
+        {ECampaignAction::Walk, {-249, 494, 0}}, {ECampaignAction::Walk, {-219, 680, 0}},
+        {ECampaignAction::Walk, {-220, 751, 0}}, {ECampaignAction::Walk, {-379, 751, 0}},
+        {ECampaignAction::Walk, {-389, 786, 0}},
+        {ECampaignAction::Use, {-429, 786, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 45},
+        {ECampaignAction::Walk, {-480, 786, 0}}, {ECampaignAction::Walk, {-481, 862, 0}},
+        {ECampaignAction::Walk, {-465, 970, 0}}, {ECampaignAction::Walk, {-257, 1022, 0}},
+        {ECampaignAction::Walk, {1, 1023, 0}}, {ECampaignAction::Use, {29, 1023, 44}},
+        {ECampaignAction::Floor, {0, 0, 16}, 48, TEXT("L75's exit switch lowers the first lift")},
+        {ECampaignAction::Walk, {-469, 974, 0}}, {ECampaignAction::Walk, {-749, 167, 0}},
+        {ECampaignAction::Use, {-749, 129, 129}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 58},
+        {ECampaignAction::Walk, {-837, -67, 0}}, {ECampaignAction::Use, {-841, -110, 131}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 103}, {ECampaignAction::Walk, {-845, -153, 0}},
+        {ECampaignAction::Walk, {-888, -210, 0}}, {ECampaignAction::Use, {-928, -210, 131}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 100}, {ECampaignAction::Walk, {-1050, -210, 0}},
+    };
+    const FCampaignAction Campaign10[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 2700}}, {ECampaignAction::ManaAtLeast, {0, 0, 2200}},
+        {ECampaignAction::Walk, {-1210, -674, 0}}, {ECampaignAction::Use, {-1210, -708, 210}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 192}, {ECampaignAction::Walk, {-1165, -734, 0}},
+        {ECampaignAction::Walk, {-1117, -734, 0}}, {ECampaignAction::Walk, {-957, -526, 0}},
+        {ECampaignAction::Walk, {-957, -442, 0}}, {ECampaignAction::Walk, {-931, -370, 0}},
+        {ECampaignAction::Walk, {-864, -326, 0}}, {ECampaignAction::Walk, {-709, -174, 0}},
+        {ECampaignAction::Walk, {-499, -48, 0}},
+        {ECampaignAction::Use, {-471, -48, 164}},
+        {ECampaignAction::Floor, {0, 0, 100}, 120, TEXT("L10's first switch lowers the key platform to Z100")},
+        {ECampaignAction::Walk, {-837, -254, 0}}, {ECampaignAction::Walk, {-1053, -238, 0}},
+        {ECampaignAction::Walk, {-1061, -230, 0}}, {ECampaignAction::Walk, {-1274, 309, 0}},
+        {ECampaignAction::Use, {-1312, 309, 160}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 70},
+        {ECampaignAction::Walk, {-1845, 370, 0}}, {ECampaignAction::Walk, {-1989, 714, 0}},
+        {ECampaignAction::Walk, {-1925, 1130, 0}}, {ECampaignAction::Walk, {-2103, 1408, 0}},
+        {ECampaignAction::Use, {-2139, 1440, 142}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 211},
+        {ECampaignAction::Walk, {-2397, 1698, 0}}, {ECampaignAction::Walk, {-2417, 1696, 0}},
+        {ECampaignAction::Use, {-2445, 1696, 44}},
+        {ECampaignAction::Floor, {0, 0, 0}, 120, TEXT("L10's second switch lowers the key platform to Z0")},
+        {ECampaignAction::Walk, {-2116, 1698, 0}}, {ECampaignAction::Use, {-2076, 1698, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 27}, {ECampaignAction::Walk, {-1694, 1698, 0}},
+        {ECampaignAction::Use, {-1640, 1698, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 206},
+        {ECampaignAction::Walk, {-1397, 1698, 0}}, {ECampaignAction::Walk, {-983, 1793, 0}},
+        {ECampaignAction::Pickup, {-956, 1771, 12}, NativeWadRules::ElmoreKey6, TEXT("the original L10 platform key")},
+        {ECampaignAction::Walk, {-957, 2274, 0}}, {ECampaignAction::Walk, {-1189, 2586, 0}},
+        {ECampaignAction::Walk, {-1157, 2698, 0}}, {ECampaignAction::Walk, {-969, 2905, 0}},
+        {ECampaignAction::Use, {-969, 2932, 128}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 200},
+        {ECampaignAction::Walk, {-949, 3092, 0}}, {ECampaignAction::Walk, {-917, 3138, 0}},
+        {ECampaignAction::Walk, {-720, 3168, 0}},
+    };
+    const FCampaignAction Campaign12[] = {
+        {ECampaignAction::Rejuvenate, {0, 0, 3200}}, {ECampaignAction::ManaAtLeast, {0, 0, 4300}},
+        {ECampaignAction::Walk, {3510, 1168, 0}}, {ECampaignAction::Walk, {2630, 1472, 0}},
+        {ECampaignAction::Walk, {2526, 1816, 0}}, {ECampaignAction::Walk, {2606, 2320, 0}},
+        {ECampaignAction::Walk, {3334, 2432, 0}}, {ECampaignAction::Walk, {3734, 3104, 0}},
+        {ECampaignAction::Use, {3780, 3104, 43}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 172},
+        {ECampaignAction::Walk, {4294, 3120, 0}}, {ECampaignAction::Walk, {4318, 3168, 0}},
+        {ECampaignAction::Walk, {4302, 3592, 0}}, {ECampaignAction::Walk, {4266, 3616, 0}},
+        {ECampaignAction::Use, {4224, 3616, 43}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 229},
+        {ECampaignAction::Walk, {4142, 3600, 0}}, {ECampaignAction::Walk, {4040, 3340, 0}},
+        {ECampaignAction::Pickup, {4040, 3376, 12}, NativeWadRules::Key1, TEXT("the original L12 key")},
+        {ECampaignAction::Walk, {4150, 3616, 0}}, {ECampaignAction::Use, {4192, 3616, 43}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 229}, {ECampaignAction::Walk, {4294, 3600, 0}},
+        {ECampaignAction::Walk, {4318, 3552, 0}}, {ECampaignAction::Walk, {4302, 3128, 0}},
+        {ECampaignAction::Walk, {4254, 3104, 0}}, {ECampaignAction::Walk, {3838, 3104, 0}},
+        {ECampaignAction::Use, {3796, 3104, 43}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 172},
+        {ECampaignAction::Walk, {3502, 3128, 0}},
+        {ECampaignAction::Walk, {2486, 3176, 0}}, {ECampaignAction::Walk, {1568, 3320, 0}},
+        {ECampaignAction::Use, {1568, 3360, 63}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 170},
+        {ECampaignAction::Walk, {1568, 3420, 0}}, {ECampaignAction::Walk, {1512, 3540, 0}},
+        {ECampaignAction::Walk, {1352, 3553, 0}}, {ECampaignAction::Walk, {1320, 3616, 0}},
+        {ECampaignAction::Use, {1276, 3616, 63}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 81},
+        {ECampaignAction::Walk, {1088, 3613, 0}}, {ECampaignAction::TouchSector, {1088, 3551, 0}, 52},
+        {ECampaignAction::Walk, {1088, 3616, 0}},
+        {ECampaignAction::Floor, {0, 0, 30}, 56, TEXT("L12's timed plate raises the passage floor")},
+        {ECampaignAction::Walk, {650, 3616, 0}}, {ECampaignAction::Walk, {40, 3616, 0}},
+        {ECampaignAction::Use, {0, 3616, 63}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 287},
+        {ECampaignAction::Walk, {-248, 3616, 0}}, {ECampaignAction::Walk, {-290, 3552, 0}},
+        {ECampaignAction::Walk, {-266, 3272, 0}}, {ECampaignAction::Walk, {-162, 3120, 0}},
+        {ECampaignAction::Walk, {-186, 3040, 0}}, {ECampaignAction::Walk, {-449, 2944, 0}},
+        {ECampaignAction::Floor, {0, 0, -120}, 136, TEXT("L12's lower corridor opens the descent")},
+        {ECampaignAction::Walk, {-1290, 2992, 0}}, {ECampaignAction::Walk, {-1306, 3024, 0}},
+        {ECampaignAction::Walk, {-1298, 3080, 0}}, {ECampaignAction::Walk, {-1250, 3104, 0}},
+        {ECampaignAction::Walk, {-738, 3120, 0}}, {ECampaignAction::Walk, {-602, 3328, 0}},
+        {ECampaignAction::Walk, {-626, 3472, 0}}, {ECampaignAction::Walk, {-914, 3616, 0}},
+        {ECampaignAction::Walk, {-1344, 3600, 0}}, {ECampaignAction::Use, {-1376, 3600, -517}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 285}, {ECampaignAction::Walk, {-1436, 3600, 0}},
+        {ECampaignAction::Walk, {-1704, 3600, 0}}, {ECampaignAction::Use, {-1744, 3600, -537}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 28}, {ECampaignAction::Walk, {-1784, 3600, 0}},
+        {ECampaignAction::Use, {-1810, 3600, -537}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 27},
+        {ECampaignAction::Walk, {-2042, 3600, 0}}, {ECampaignAction::Use, {-2082, 3600, -537}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 39}, {ECampaignAction::Walk, {-2124, 3600, 0}},
+        {ECampaignAction::Use, {-2148, 3600, -537}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 33},
+        {ECampaignAction::Walk, {-2380, 3600, 0}}, {ECampaignAction::Use, {-2420, 3600, -537}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 32}, {ECampaignAction::Walk, {-2462, 3600, 0}},
+        {ECampaignAction::Use, {-2486, 3600, -537}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 45},
+        {ECampaignAction::Walk, {-2718, 3600, 0}}, {ECampaignAction::Use, {-2758, 3600, -537}},
+        {ECampaignAction::OpenDoor, {0, 0, 60}, 40}, {ECampaignAction::Walk, {-2946, 3600, 0}},
+        {ECampaignAction::Walk, {-3724, 3670, 0}}, {ECampaignAction::Walk, {-3806, 3671, 0}},
+        {ECampaignAction::Walk, {-3895, 3671, 0}},
+        {ECampaignAction::Floor, {0, 0, 0}, 294, TEXT("L12's boss chamber plate opens the Town Hall exit")},
+        {ECampaignAction::Defeat, {}, NativeWadRules::OrbOfTheUndead, TEXT("Exiguus")},
+        {ECampaignAction::Floor, {0, 0, -496}, 13},
+        {ECampaignAction::Teleport, {-3970, 3600, 0}, 320, TEXT("L12's chamber portal returns to the entrance tunnels"), {2400, 3000}},
+        {ECampaignAction::Walk, {2526, 2104, 0}}, {ECampaignAction::Walk, {2462, 1512, 0}},
+        {ECampaignAction::Walk, {1880, 960, 0}},
+    };
     const FCampaignRoute CampaignRoutes[] = {
         {25, 1, 20, 85, {298, 1636}, Campaign25},
         {20, 1, 60, 138, {-1084, 4630}, Campaign20},
         {60, 1, 0, 284, {-3076, -3}, Campaign60},
         {64, 2, 65, 227, {1984, 2704}, Campaign64},
         {65, 2, 34, 239, {-852, 2282}, Campaign65},
-        {34, 2, 151, 180, {912, 1596}, {}},
+        {34, 2, 151, 180, {912, 1596}, Campaign34},
+        {151, 2, 152, 84, {176, 3464}, Campaign151},
+        {152, 2, 153, 266, {1484, 2315}, Campaign152},
+        {153, 2, 0, 537, {1596, 2544}, Campaign153},
+        {231, 3, 75, 141, {-2208, 2416}, Campaign231},
+        {75, 3, 10, 140, {2096, 3034}, Campaign75},
+        {10, 3, 12, 234, {-1268, -531}, Campaign10},
+        {12, 3, 0, 576, {4530, 1171}, Campaign12},
+        {51, 4, 52, 234, {-160, -189}, Campaign51},
         {52, 4, 41, 238, {760, 3540}, Campaign52},
         {41, 4, 44, 323, {7104, 4152}, Campaign41},
         {44, 4, 0, 71, {-3572, 758}, Campaign44},
@@ -841,6 +1723,8 @@ namespace
     };
     const FCampaignTurnIn CampaignQuests[] = {
         {1, 25, NativeWadRules::AndrewNecklace, 20, 0},
+        {2, 64, NativeWadRules::OrbOfDefense, 0, 150000},
+        {3, 231, NativeWadRules::OrbOfTheUndead, 50, 0},
         {4, 51, NativeWadRules::ElymasNotes, 35, 200000},
         {5, 74, NativeWadRules::WandOfDisintegration, 75, 0},
         {6, 32, NativeWadRules::OrbOfDestruction, 100, 350000},
@@ -985,6 +1869,9 @@ namespace
         bool bSecondMap = false;
         bool bCampaign = false;
         bool bFreshCampaign = false;
+        bool bWholeCampaign = false;
+        bool bCampaignBoughtSupplies = false;
+        bool bCampaignArrivalVerified = false;
         bool bArrivalCaptured = false;
         bool bCheckpointReview = false;
         bool bCheckpointVerified = false;
@@ -1022,7 +1909,14 @@ namespace
         bool bCampaignChain = false;
         bool bCampaignMovementSample = false;
         bool bCampaignArrivedInRun = false;
+        bool bCombatBacking = false;
+        double NextElymasCombatSample = 0.0;
+        int32 BossPreparationPoint = 0;
+        int32 CombatWeapon = INDEX_NONE;
         double CampaignStepTime = -1.0;
+        double LastCampaignJumpTime = -1.0;
+        double CampaignNextUseTime = 0.0;
+        double CampaignJumpPeak = 0.0;
         double PreviousCampaignFrame = 0.0;
         double LongestWalkFrame = 0.0;
         int32 WalkFrameCount = 0;
@@ -1049,6 +1943,7 @@ namespace
         int32 TrapHealth = 0;
         FVector2D TrapHitPosition = FVector2D::ZeroVector;
         bool bWalking = false;
+        bool bFlightThrust = false;
         bool bCapturedEncounter = false;
         bool bRequestedInventoryFrame = false;
         int32 InventoryFrameHold = 0;
@@ -1071,9 +1966,17 @@ namespace
             {
                 SendKey(*Player, EKeys::W, IE_Released);
             }
+            if (Player && bCombatBacking)
+            {
+                SendKey(*Player, EKeys::S, IE_Released);
+            }
             if (Player && HeldKey)
             {
                 SendKey(*Player, HeldKey.GetValue(), IE_Released);
+            }
+            if (Player)
+            {
+                SetFlightThrust(*Player, false);
             }
             if (ASceneCapture2D* Actor = Camera.Get())
             {
@@ -1111,6 +2014,8 @@ namespace
         void BeginCampaignMap(UWorld& Current, ANativeWadPlayer& Player)
         {
             Stop(Player);
+            SetFlightThrust(Player, false);
+            bCampaignArrivalVerified = false;
             if (HeldKey)
             {
                 SendKey(Player, HeldKey.GetValue(), IE_Released);
@@ -1132,7 +2037,9 @@ namespace
             const FVector2D Offset = Target - FVector2D(Player.GetActorLocation());
             const double AcceptanceRadius = bRiverReview ? 16.0 : bRavineReview || bLiftCheckpointReview ? 12.0
                 : bSecondMap || Stage == EStage::Arrival ? 14.0
-                : CampaignRoute && CampaignRoute->Map == 60 ? 12.0
+                : CampaignRoute && (CampaignRoute->Map == 34 || CampaignRoute->Map == 60
+                    || CampaignRoute->Map == 151 || CampaignRoute->Map == 152 || CampaignRoute->Map == 153
+                    || CampaignRoute->Quest == 3) ? 12.0
                 : CampaignRoute && (CampaignRoute->Map == 20 || CampaignRoute->Map == 64 || CampaignRoute->Map == 65) ? 8.0 : 5.0;
             if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
@@ -1144,8 +2051,22 @@ namespace
             return false;
         }
 
+        void SetFlightThrust(ANativeWadPlayer& Player, bool bEnabled)
+        {
+            if (bFlightThrust != bEnabled)
+            {
+                SendKey(Player, EKeys::SpaceBar, bEnabled ? IE_Pressed : IE_Released);
+                bFlightThrust = bEnabled;
+            }
+        }
+
         bool CaptureView(ANativeWadPlayer& Player, const TCHAR* Name, bool& bSaved, double BackUp = 0.0)
         {
+            if (bWholeCampaign && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            {
+                bSaved = true;
+                return true;
+            }
             const FRotator Rotation = Player.GetControlRotation();
             const FVector ViewPosition = Player.GetPawnViewLocation() - Rotation.Vector() * BackUp;
             if (!Camera.IsValid())
@@ -1331,6 +2252,11 @@ namespace
 
         bool CaptureTownFrame(const TCHAR* Name, bool& bSaved)
         {
+            if ((bWholeCampaign || CampaignLaunch) && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            {
+                bSaved = true;
+                return true;
+            }
             const FString Image = FPaths::GetPath(Output) / (FPaths::GetBaseFilename(Output) + TEXT("-") + Name + TEXT(".png"));
             if (CaptureFrames++ == 0)
             {
@@ -1678,7 +2604,6 @@ namespace
         bool TickItemUseReview(ANativeWadPlayer& Player)
         {
             constexpr int32 Cherries = 245;
-            constexpr int32 HealingPotion = 800;
             constexpr int32 IronShortSword = 203;
             constexpr int32 Armor[] = {704, 705, 707};
             if (HeldKey)
@@ -1892,6 +2817,14 @@ namespace
                     return Finish(&Player, TEXT("the town form capture was not written"));
                 }
                 UE_LOG(LogTemp, Display, TEXT("Completed the original L22 spawn-to-town route, turned in the journal for ten gold, and saved the original town result."));
+                if (bWholeCampaign)
+                {
+                    CampaignLaunch = &CampaignQuests[0];
+                    TownReview = ETownReview::None;
+                    bFreshCampaign = false;
+                    BeginCampaignMap(Current, Player);
+                    return true;
+                }
                 return Finish(&Player);
             }
             return true;
@@ -4399,6 +5332,82 @@ namespace
             return true;
         }
 
+        bool FightCampaignEncounter(ANativeWadPlayer& Player, ANativeWadGuardian& Boss)
+        {
+            const FVector Target = Boss.GetActorLocation();
+            const double Distance = FVector::Dist2D(Player.GetActorLocation(), Target);
+            const bool bExiguus = Boss.GetEncounterName() == TEXT("Exiguus");
+            const bool bElymas = Boss.GetEncounterName() == TEXT("Elymas");
+            const bool bSkeleton = Boss.GetEncounterName() == TEXT("Skeleton Knight");
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            if (bElymas && Now >= NextElymasCombatSample)
+            {
+                UE_LOG(LogTemp, Display, TEXT("Elymas combat: boss health %d, player health %d, distance %.1f."),
+                    Boss.GetEncounterHealth(), Player.GetHealth(), Distance);
+                NextElymasCombatSample = Now + 5.0;
+            }
+            // Keep Exiguus outside his melee range while staying clear of the chamber's outer drop.
+            const FVector2D Location(Player.GetActorLocation());
+            const FVector2D Retreat = Location + (Location - FVector2D(Target)).GetSafeNormal() * 24.0;
+            const bool bExiguusRetreat = bExiguus && Distance < 61.0 && Retreat.X > -4110 && Retreat.X < -3610
+                && Retreat.Y > 3480 && Retreat.Y < 3715;
+            const bool bElymasRetreat = bElymas && Distance < 61.0 && Retreat.X > -360 && Retreat.X < -227
+                && Retreat.Y > 975 && Retreat.Y < 1100;
+            const bool bBack = !Boss.IsDefeated() && (bExiguusRetreat || bElymasRetreat || (bSkeleton && Distance < 43.0));
+            if (bBack != bCombatBacking)
+            {
+                SendKey(Player, EKeys::S, bBack ? IE_Pressed : IE_Released);
+                bCombatBacking = bBack;
+            }
+            if (Boss.IsDefeated())
+            {
+                Stop(Player);
+                return true;
+            }
+            if (CombatWeapon == INDEX_NONE)
+            {
+                CombatWeapon = Player.GetItemCount(IronLongSword) > 0 ? IronLongSword : Player.GetEquippedWeapon();
+                if (CombatWeapon <= 0 && Player.GetItemCount(NativeWadRules::IronDagger) > 0)
+                {
+                    CombatWeapon = NativeWadRules::IronDagger;
+                }
+            }
+            if (Distance > (bExiguus || bElymas ? 77.0 : bSkeleton ? 64.0 : 54.0))
+            {
+                WalkTo(Player, FVector2D(Target));
+            }
+            else
+            {
+                Stop(Player);
+            }
+            Aim(Player, Target);
+            const int32 Potion = Player.GetItemCount(GreaterHealingPotion) > 0 ? GreaterHealingPotion : HealingPotion;
+            if (Player.GetHealth() < Player.GetMaxHealth() / 2 && Player.GetItemCount(Potion) > 0)
+            {
+                if (Player.GetReadyItem() != Potion || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, Potion);
+                }
+                else
+                {
+                    Press(Player, EKeys::LeftControl);
+                }
+                return false;
+            }
+            if (Player.GetHealth() < Player.GetMaxHealth() / 2 && Player.GetMana() >= NativeWadRules::RejuvenateCost)
+            {
+                CastCampaignRejuvenate(Player);
+                return false;
+            }
+            if (CombatWeapon > 0 && (Player.GetReadyItem() != CombatWeapon || Player.IsInventoryOpen()))
+            {
+                ReadyCampaignItem(Player, CombatWeapon);
+                return false;
+            }
+            if (Distance < 96.0) { Press(Player, EKeys::LeftControl); }
+            return false;
+        }
+
         bool TickUndeadBoss(ANativeWadLevel& Level, ANativeWadPlayer& Player)
         {
             ANativeWadGuardian* Boss = nullptr;
@@ -4452,6 +5461,18 @@ namespace
             }
             else if (NextPoint == 5 && Player.GetCharacterMovement()->IsMovingOnGround())
             {
+                if (FParse::Param(FCommandLine::Get(), TEXT("WadReviewPlayerCombat")))
+                {
+                    // Pass the northern edge of the chamber and use the original plate to halt the generators.
+                    static const FVector2D Approach[] = {{-3724, 3670}, {-3806, 3671}, {-3895, 3671}};
+                    if (BossPreparationPoint < UE_ARRAY_COUNT(Approach))
+                    {
+                        BossPreparationPoint += WalkTo(Player, Approach[BossPreparationPoint]) ? 1 : 0;
+                        return true;
+                    }
+                    if (FightCampaignEncounter(Player, *Boss)) { ++NextPoint; }
+                    return true;
+                }
                 Aim(Player, Boss->GetActorLocation());
                 bool bSaved = false;
                 if (CaptureTownFrame(TEXT("exiguus"), bSaved))
@@ -4469,6 +5490,13 @@ namespace
                 {
                     return Finish(&Player, TEXT("Exiguus did not drop the Orb of the Undead on defeat"));
                 }
+                if (FParse::Param(FCommandLine::Get(), TEXT("WadReviewPlayerCombat"))
+                    && FVector::DistSquared2D(Player.GetActorLocation(), Orb->GetActorLocation()) > FMath::Square(42.0))
+                {
+                    WalkTo(Player, FVector2D(Orb->GetActorLocation()));
+                    return true;
+                }
+                Stop(Player);
                 Aim(Player, Orb->GetActorLocation());
                 Press(Player, EKeys::E);
                 ++NextPoint;
@@ -4480,9 +5508,10 @@ namespace
                     return Finish(&Player, TEXT("E did not collect Exiguus's orb"));
                 }
                 bool bSaved = false;
-                if (CaptureTownFrame(TEXT("orb-of-the-undead"), bSaved))
+                const bool bHeadless = FParse::Param(FCommandLine::Get(), TEXT("nullrhi"));
+                if (bHeadless || CaptureTownFrame(TEXT("orb-of-the-undead"), bSaved))
                 {
-                    if (!bSaved || !Player.SaveWadCheckpoint(UndeadOrbSlot))
+                    if ((!bSaved && !bHeadless) || !Player.SaveWadCheckpoint(UndeadOrbSlot))
                     {
                         return Finish(&Player, TEXT("could not save Exiguus's defeat and the collected orb"));
                     }
@@ -4842,9 +5871,9 @@ namespace
             return true;
         }
 
-        bool CollectCampaignItem(ANativeWadPlayer& Player, int32 Type, const FVector& Position)
+        bool CollectCampaignItem(ANativeWadPlayer& Player, int32 Type, const FVector& Position, bool bAirborne = false)
         {
-            if (CampaignPickupCount == INDEX_NONE && Player.GetCharacterMovement()->IsMovingOnGround())
+            if (CampaignPickupCount == INDEX_NONE && (Player.GetCharacterMovement()->IsMovingOnGround() || Player.CanFly() || bAirborne))
             {
                 CampaignPickupCount = Player.GetItemCount(Type);
                 Aim(Player, Position);
@@ -4874,14 +5903,20 @@ namespace
             }
         }
 
-        void ReadyCampaignHealingPotion(ANativeWadPlayer& Player)
+        void ReadyCampaignItem(ANativeWadPlayer& Player, int32 Type)
         {
             if (Player.IsInventoryOpen())
             {
-                const int32 Slot = Player.GetCarriedItems().Find(GreaterHealingPotion);
+                const int32 Slot = Player.GetCarriedItems().Find(Type);
                 APlayerController* Controller = Player.GetController<APlayerController>();
                 ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
-                if (Hud && Slot != INDEX_NONE)
+                if (Slot != INDEX_NONE && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                {
+                    // Without a canvas the HUD has no hit targets. Use its inventory handlers directly.
+                    Player.ClickInventorySlot(Slot);
+                    Player.ClickInventorySlot(INDEX_NONE);
+                }
+                else if (Hud && Slot != INDEX_NONE)
                 {
                     Hud->ClickHUD(Hud->InventorySlotCenter(Slot));
                     Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
@@ -4899,67 +5934,256 @@ namespace
             case ECampaignAction::Walk:
             {
                 const bool bElmore = CampaignRoute->Quest == 2;
-                if (bElmore && Player.GetItemCount(GreaterHealingPotion) > 0)
+                const int32 Potion = Player.GetItemCount(GreaterHealingPotion) > 0 ? GreaterHealingPotion : HealingPotion;
+                const int32 HealBelow = CampaignRoute->Map == 73 || CampaignRoute->Map == 51 || CampaignRoute->Map == 44 ? 2300
+                    : Potion == GreaterHealingPotion ? 1050 : 1300;
+                const bool bNeedsHealing = Player.GetHealth() < HealBelow;
+                const bool bUsePotion = bElmore || ((bNeedsHealing || Player.IsInventoryOpen())
+                    && (CampaignRoute->Quest == 3 || CampaignRoute->Quest == 5 || CampaignRoute->Map == 51 || CampaignRoute->Map == 44
+                        || FParse::Param(FCommandLine::Get(), TEXT("WadReviewPlayerCombat"))));
+                if (bUsePotion && Player.GetItemCount(Potion) > 0)
                 {
-                    if (Player.GetReadyItem() != GreaterHealingPotion || Player.IsInventoryOpen())
+                    if (Player.GetReadyItem() != Potion || Player.IsInventoryOpen())
                     {
-                        ReadyCampaignHealingPotion(Player);
+                        ReadyCampaignItem(Player, Potion);
                         return false;
                     }
-                    if (Player.GetHealth() < 1050)
+                    if (bNeedsHealing)
                     {
                         Press(Player, EKeys::LeftControl);
                     }
                 }
-                else if ((CampaignRoute->Map == 20 || CampaignRoute->Map == 60 || bElmore)
-                    && (Player.GetHealth() < 1050 || !Player.GetRunes().IsEmpty()))
+                else if ((CampaignRoute->Map == 20 || CampaignRoute->Map == 60 || CampaignRoute->Quest == 3
+                    || CampaignRoute->Quest == 5 || bElmore)
+                    && (Player.GetHealth() < (CampaignRoute->Map == 34 ? 1450 : 1050) || !Player.GetRunes().IsEmpty()))
                 {
                     CastCampaignRejuvenate(Player);
                 }
                 return WalkTo(Player, FVector2D(Step.Target));
             }
-            case ECampaignAction::Teleport:
-                if (FVector2D(Player.GetActorLocation()).Equals(Step.Destination, 6.0))
+            case ECampaignAction::TouchSector:
+                if (Level.FindWadSector(FVector2D(Player.GetActorLocation())) == Step.Index)
                 {
                     Stop(Player);
                     return true;
                 }
                 WalkTo(Player, FVector2D(Step.Target));
                 return false;
+            case ECampaignAction::Teleport:
+            {
+                const FVector2D Location(Player.GetActorLocation());
+                const bool bArrived = Step.Index > 0 ? FVector2D::DistSquared(Location, Step.Destination) <= FMath::Square(double(Step.Index))
+                    : Location.Equals(Step.Destination, 6.0);
+                if (bArrived)
+                {
+                    Stop(Player);
+                    return true;
+                }
+                WalkTo(Player, FVector2D(Step.Target));
+                return false;
+            }
+            case ECampaignAction::UseFlightItem:
+                if (bCampaignActionStarted)
+                {
+                    return Player.CanFly();
+                }
+                if (Player.GetReadyItem() != Step.Index || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, Step.Index);
+                    return false;
+                }
+                if (Step.Index == NativeWadRules::FlyingAmulet)
+                {
+                    return Player.CanFly();
+                }
+                Press(Player, EKeys::LeftControl);
+                bCampaignActionStarted = true;
+                return false;
+            case ECampaignAction::FlightEnded:
+                return !Player.CanFly() && Player.GetCharacterMovement()->IsMovingOnGround();
+            case ECampaignAction::Fly:
+            {
+                if (CampaignRoute->Map == 73 && (Player.GetHealth() < 2300 || Player.IsInventoryOpen()))
+                {
+                    const int32 Potion = Player.GetItemCount(GreaterHealingPotion) > 0 ? GreaterHealingPotion : HealingPotion;
+                    if (Player.GetItemCount(Potion) > 0)
+                    {
+                        if (Player.GetReadyItem() != Potion || Player.IsInventoryOpen())
+                        {
+                            ReadyCampaignItem(Player, Potion);
+                        }
+                        else
+                        {
+                            Press(Player, EKeys::LeftControl);
+                        }
+                        return false;
+                    }
+                }
+                if (!Player.CanFly())
+                {
+                    return false;
+                }
+                const double Difference = Step.Target.Z - Player.GetActorLocation().Z;
+                SetFlightThrust(Player, Difference > 12.0);
+                if (FMath::Abs(Difference) > 30.0)
+                {
+                    Stop(Player);
+                    return false;
+                }
+                if (!WalkTo(Player, FVector2D(Step.Target)))
+                {
+                    return false;
+                }
+                SetFlightThrust(Player, false);
+                return true;
+            }
             case ECampaignAction::Jump:
             {
+                if ((CampaignRoute->Map == 73 || CampaignRoute->Map == 51) && Player.GetItemCount(GreaterHealingPotion) > 0
+                    && (Player.GetHealth() < 2300 || Player.IsInventoryOpen()))
+                {
+                    if (Player.GetReadyItem() != GreaterHealingPotion || Player.IsInventoryOpen())
+                    {
+                        ReadyCampaignItem(Player, GreaterHealingPotion);
+                    }
+                    else
+                    {
+                        Press(Player, EKeys::LeftControl);
+                    }
+                    return false;
+                }
                 const FVector2D Target(Step.Target);
                 const bool bOnGround = Player.GetCharacterMovement()->IsMovingOnGround();
                 const bool bAtTarget = WalkTo(Player, Target);
                 // Keep the running speed and jump when the remaining distance reaches the takeoff range.
-                if (!bCampaignActionStarted && bOnGround
+                const double Now = Level.GetWorld()->GetTimeSeconds();
+                const bool bRetryJump = CampaignRoute->Map == 71 || CampaignRoute->Map == 153;
+                if ((!bCampaignActionStarted || (bRetryJump && !bAtTarget && Now - LastCampaignJumpTime > 1.0))
+                    && bOnGround
                     && FVector2D::DistSquared(Target, FVector2D(Player.GetActorLocation())) <= FMath::Square(Step.Index))
                 {
                     Press(Player, EKeys::SpaceBar);
+                    if (!bCampaignActionStarted) { CampaignJumpPeak = Player.GetActorLocation().Z; }
                     bCampaignActionStarted = true;
+                    LastCampaignJumpTime = Now;
                     return false;
                 }
+                if (bCampaignActionStarted) { CampaignJumpPeak = FMath::Max(CampaignJumpPeak, Player.GetActorLocation().Z); }
                 return bAtTarget && bOnGround;
             }
+            case ECampaignAction::CornerJump:
+            {
+                const FVector2D ToCorner = Step.Destination - FVector2D(Player.GetActorLocation());
+                if (FVector2D::DotProduct(ToCorner, FVector2D(Step.Target) - Step.Destination) <= 0.0)
+                {
+                    return WalkTo(Player, FVector2D(Step.Target)) && Player.GetCharacterMovement()->IsMovingOnGround();
+                }
+                Player.GetController()->SetControlRotation(FVector(ToCorner, 0).Rotation());
+                Walk(Player);
+                if (!bCampaignActionStarted && ToCorner.SizeSquared() <= FMath::Square(Step.Index)
+                    && Player.GetCharacterMovement()->IsMovingOnGround())
+                {
+                    Press(Player, EKeys::SpaceBar);
+                    bCampaignActionStarted = true;
+                }
+                return false;
+            }
             case ECampaignAction::Use:
-                if (!Player.GetCharacterMovement()->IsMovingOnGround())
+                if (!Player.GetCharacterMovement()->IsMovingOnGround() && !Player.CanFly())
                 {
                     return false;
                 }
                 Aim(Player, Step.Target);
                 Press(Player, EKeys::E);
                 return true;
+            case ECampaignAction::UseLockedDoor:
+            {
+                FVector2D Heights;
+                if (Level.GetSectorSurfaceHeights(Step.Index, Heights) && Heights.Y - Heights.X >= 56.0)
+                {
+                    return true;
+                }
+                const double Now = Level.GetWorld()->GetTimeSeconds();
+                if (!bCampaignActionStarted || Now >= CampaignNextUseTime)
+                {
+                    Aim(Player, Step.Target);
+                    Press(Player, EKeys::E);
+                    CampaignNextUseTime = Now + 0.4;
+                    bCampaignActionStarted = true;
+                }
+                return false;
+            }
+            case ECampaignAction::CrossDoor:
+            {
+                const FVector2D FarSide(Step.Target);
+                const FVector2D DoorCenter = (FarSide + Step.Destination) * 0.5;
+                const FVector2D Across = (FarSide - Step.Destination).GetSafeNormal();
+                const FVector2D Location(Player.GetActorLocation());
+                if (FVector2D::DotProduct(Location - DoorCenter, Across) >= 8.0)
+                {
+                    return WalkTo(Player, FarSide);
+                }
+
+                FVector2D Heights;
+                if (bCampaignActionStarted && Level.GetSectorSurfaceHeights(Step.Index, Heights)
+                    && Heights.Y - Heights.X >= 65.0)
+                {
+                    return WalkTo(Player, FarSide);
+                }
+                if (!WalkTo(Player, Step.Destination))
+                {
+                    return false;
+                }
+                const double Now = Level.GetWorld()->GetTimeSeconds();
+                if (!bCampaignActionStarted || Now >= CampaignNextUseTime)
+                {
+                    Aim(Player, FVector(DoorCenter - Across * 8.0, Step.Target.Z));
+                    Press(Player, EKeys::E);
+                    CampaignNextUseTime = Now + 0.4;
+                    bCampaignActionStarted = true;
+                }
+                return false;
+            }
             case ECampaignAction::Floor:
             case ECampaignAction::Ceiling:
+            case ECampaignAction::CeilingAtMost:
             case ECampaignAction::OpenDoor:
             {
                 FVector2D Heights;
                 return Level.GetSectorSurfaceHeights(Step.Index, Heights)
                     && (Step.Action == ECampaignAction::OpenDoor ? Heights.Y - Heights.X >= Step.Target.Z
+                        : Step.Action == ECampaignAction::CeilingAtMost ? Heights.Y <= Step.Target.Z
                         : FMath::IsNearlyEqual(Step.Action == ECampaignAction::Floor ? Heights.X : Heights.Y, Step.Target.Z, 0.01));
             }
             case ECampaignAction::Pickup:
-                return CollectCampaignItem(Player, Step.Index, Step.Target);
+            {
+                FVector Position = Step.Target;
+                if (Position.Z == 0.0)
+                {
+                    // The original XY can sit beside solid scenery. Use the imported pickup's mounted height.
+                    for (TActorIterator<ANativeWadPickup> Item(Player.GetWorld()); Item; ++Item)
+                    {
+                        if (Item->GetItemType() == Step.Index && FVector2D(Item->GetActorLocation()).Equals(FVector2D(Position), 1.0))
+                        {
+                            Position = Item->GetActorLocation();
+                            break;
+                        }
+                    }
+                }
+                return CollectCampaignItem(Player, Step.Index, Position);
+            }
+            case ECampaignAction::JumpPickup:
+                if (!bCampaignActionStarted)
+                {
+                    Press(Player, EKeys::SpaceBar);
+                    bCampaignActionStarted = true;
+                    return false;
+                }
+                if (CampaignPickupCount == INDEX_NONE && Player.GetPawnViewLocation().Z < Step.Target.Z + 10.0)
+                {
+                    return false;
+                }
+                return CollectCampaignItem(Player, Step.Index, Step.Target, true);
             case ECampaignAction::HealthAtLeast:
                 return Player.GetHealth() >= Step.Target.Z;
             case ECampaignAction::ManaAtLeast:
@@ -5002,21 +6226,55 @@ namespace
                 {
                     return false;
                 }
-                if (!bCampaignActionStarted && !Drop->IsAvailable() && Player.GetCharacterMovement()->IsMovingOnGround())
+                if (!bCampaignActionStarted && !Drop->IsAvailable()
+                    && (Player.GetCharacterMovement()->IsMovingOnGround() || Player.CanFly()))
                 {
                     for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
                     {
-                        if (It->GetEncounterName() == Step.Label && !It->IsDefeated())
+                        if (It->GetEncounterName() == Step.Label)
                         {
-                            bCampaignActionStarted = It->TakeMeleeHit(Player, It->GetEncounterHealth());
+                            bCampaignActionStarted = FightCampaignEncounter(Player, **It);
                             break;
                         }
                     }
                 }
-                return bCampaignActionStarted && Drop->IsAvailable() && CollectCampaignItem(Player, Step.Index, Drop->GetActorLocation());
+                else if (Drop->IsAvailable() && !bCampaignActionStarted)
+                {
+                    Stop(Player);
+                    if (bCombatBacking)
+                    {
+                        SendKey(Player, EKeys::S, IE_Released);
+                        bCombatBacking = false;
+                    }
+                    bCampaignActionStarted = true;
+                }
+                if (!bCampaignActionStarted || !Drop->IsAvailable())
+                {
+                    return false;
+                }
+                if (FVector::DistSquared2D(Player.GetActorLocation(), Drop->GetActorLocation()) > FMath::Square(42.0))
+                {
+                    WalkTo(Player, FVector2D(Drop->GetActorLocation()));
+                    return false;
+                }
+                Stop(Player);
+                return CollectCampaignItem(Player, Step.Index, Drop->GetActorLocation());
+            }
+            case ECampaignAction::DefeatCreature:
+            {
+                const FName Tag(*FString::Printf(TEXT("WAD Creature Thing %d"), Step.Index));
+                for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->ActorHasTag(Tag)) { return FightCampaignEncounter(Player, **It); }
+                }
+                return false;
             }
             case ECampaignAction::Frame:
             {
+                if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                {
+                    return true;
+                }
                 bool bSaved = false;
                 Aim(Player, Step.Target);
                 return CaptureTownFrame(Step.Label, bSaved) && bSaved;
@@ -5063,13 +6321,17 @@ namespace
             const bool bTown = Current.GetAuthGameMode<ANativeWadTownGameMode>() != nullptr;
             if (bTown && CampaignLaunch)
             {
-                if (!Player.HasRestoredWadCheckpoint() || Quest.ResultQuest != CampaignLaunch->Quest - 1 || !Quest.bSucceeded)
+                if ((!bWholeCampaign && !Player.HasRestoredWadCheckpoint()) || Quest.ResultQuest != CampaignLaunch->Quest - 1 || !Quest.bSucceeded)
                 {
                     return Finish(&Player, TEXT("the next quest needs the previous successful Town Hall checkpoint"));
                 }
                 if (Quest.bShowResult)
                 {
                     Press(Player, EKeys::Enter);
+                }
+                else if (bWholeCampaign && CampaignLaunch->Quest >= 3 && CampaignLaunch->Quest <= 5 && !bCampaignBoughtSupplies)
+                {
+                    return TickTownServices(Current, Player, Quest, true);
                 }
                 else if (NextPoint == 0 && Quest.Selected == CampaignLaunch->Quest - 1)
                 {
@@ -5109,15 +6371,24 @@ namespace
                     return Finish(&Player, TEXT("the Town Hall return did not apply the source quest reward and item turn-in"));
                 }
                 bool bSaved = false;
-                if (CaptureTownFrame(TEXT("town-success"), bSaved))
+                const bool bHeadless = FParse::Param(FCommandLine::Get(), TEXT("nullrhi"));
+                if (bHeadless || CaptureTownFrame(TEXT("town-success"), bSaved))
                 {
                     const FString Slot = FString::Printf(TEXT("NativeWadCampaignTown%dReview"), Reward->Quest);
-                    if (!bSaved || !Player.SaveWadCheckpoint(Slot))
+                    if ((!bSaved && !bHeadless) || !Player.SaveWadCheckpoint(Slot))
                     {
                         return Finish(&Player, TEXT("could not save the successful campaign return"));
                     }
                     UE_LOG(LogTemp, Display, TEXT("Verified campaign quest %d turn-in: %d gold, %d experience."),
                         Reward->Quest, Reward->Gold, Reward->Experience);
+                    if (bWholeCampaign && Reward->Quest < UE_ARRAY_COUNT(CampaignQuests))
+                    {
+                        CampaignLaunch = &CampaignQuests[Reward->Quest];
+                        CampaignRoute = nullptr;
+                        bCampaignBoughtSupplies = false;
+                        BeginCampaignMap(Current, Player);
+                        return true;
+                    }
                     return Finish(&Player);
                 }
                 return true;
@@ -5129,14 +6400,19 @@ namespace
                 const auto* Arrival = Algo::FindByPredicate(CampaignRoutes,
                     [Destination](const FCampaignRoute& Entry) { return Entry.Map == Destination; });
                 const FString Source = CampaignRoute ? FString::Printf(TEXT("/Game/Maps/L%d"), CampaignRoute->Map) : FString();
-                if (!Arrival || Quest.Active != QuestId || !Current.GetMapName().EndsWith(FString::Printf(TEXT("L%d"), Destination))
-                    || !FVector2D(Player.GetActorLocation()).Equals(Arrival->Spawn, 5.0)
-                    || (CampaignLaunch && !MatchesTownCharacter(Player))
-                    || (Destination == 32 && !Travel->JournalPages.Contains(603))
-                    || (CampaignRoute && (Quest.ResumeMaps.FindRef(QuestId) != Destination || !Travel->VisitedLevels.Contains(Source))))
+                if (!bCampaignArrivalVerified)
                 {
-                    return Finish(&Player, TEXT("the campaign did not reach the authored spawn with its previous state"));
+                    if (!Arrival || Quest.Active != QuestId || !Current.GetMapName().EndsWith(FString::Printf(TEXT("L%d"), Destination))
+                        || !FVector2D(Player.GetActorLocation()).Equals(Arrival->Spawn, 5.0)
+                        || (CampaignLaunch && !MatchesTownCharacter(Player))
+                        || (Destination == 32 && !Travel->JournalPages.Contains(603))
+                        || (CampaignRoute && (Quest.ResumeMaps.FindRef(QuestId) != Destination || !Travel->VisitedLevels.Contains(Source))))
+                    {
+                        return Finish(&Player, TEXT("the campaign did not reach the authored spawn with its previous state"));
+                    }
+                    bCampaignArrivalVerified = true;
                 }
+                // Verify the handoff before settling, since an active potion can delay checkpointing past a recovery tick.
                 if (Player.GetCharacterMovement()->IsMovingOnGround())
                 {
                     const FString Slot = FString::Printf(TEXT("NativeWadCampaignL%dReview"), Destination);
@@ -5180,11 +6456,31 @@ namespace
                 }
                 NextPoint = static_cast<int32>(Saved - CampaignRoute->Actions.GetData()) + 1;
             }
-            if (!CampaignRoute->Actions.IsValidIndex(NextPoint))
+            if (NextPoint == 0 && CampaignRoute->Map == 34 && !bCampaignArrivedInRun
+                && FCString::Stricmp(Current.URL.GetOption(TEXT("WadLoad="), TEXT("")), LighthouseReturnSlot) == 0)
+            {
+                const auto* Saved = Algo::FindByPredicate(CampaignRoute->Actions,
+                    [](const FCampaignAction& Action) { return Action.Action == ECampaignAction::Checkpoint; });
+                if (!Saved || !FVector2D(Player.GetActorLocation()).Equals({-521, -1222}, 16.0))
+                {
+                    return Finish(&Player, TEXT("the lighthouse return checkpoint requires the authored foothold"));
+                }
+                NextPoint = static_cast<int32>(Saved - CampaignRoute->Actions.GetData()) + 1;
+            }
+            TConstArrayView<FCampaignAction> Actions = CampaignRoute->Actions;
+            if (CampaignRoute->Map == 52 && FCString::Stricmp(Current.URL.GetOption(TEXT("WadLoad="), TEXT("")), TempleExitSlot) == 0)
+            {
+                Actions = Campaign52Exit;
+            }
+            if (!bWholeCampaign && CampaignRoute->Map == 44 && FParse::Param(FCommandLine::Get(), TEXT("WadReviewPlayerCombat")))
+            {
+                Actions = Campaign44Combat;
+            }
+            if (!Actions.IsValidIndex(NextPoint))
             {
                 return Finish(&Player, TEXT("the original exit did not start travel"));
             }
-            if (NextPoint == CampaignRoute->Actions.Num() - 1 && !bCampaignExitRecorded)
+            if (NextPoint == Actions.Num() - 1 && !bCampaignExitRecorded)
             {
                 const FAAWadNativeLevelLink* Link = Level->GetLevelLinks().FindByPredicate([&](const auto& Entry)
                 {
@@ -5198,24 +6494,47 @@ namespace
                 CampaignGoldBeforeExit = Quest.Gold;
                 ExperienceBeforeTravel = Player.GetExperience();
             }
-            const FCampaignAction& Step = CampaignRoute->Actions[NextPoint];
+            const FCampaignAction& Step = Actions[NextPoint];
+            if (CampaignRoute->Map == 34 && Step.Action == ECampaignAction::OpenDoor
+                && (Player.GetHealth() < 1450 || !Player.GetRunes().IsEmpty()))
+            {
+                CastCampaignRejuvenate(Player);
+            }
             const double Now = Current.GetTimeSeconds();
             if (CampaignStepTime < 0.0)
             {
                 CampaignStepTime = Now;
             }
-            else if (Now - CampaignStepTime > (Step.Action == ECampaignAction::Rejuvenate
-                || Step.Action == ECampaignAction::ManaAtLeast ? 240.0 : 30.0))
+            else if (Now - CampaignStepTime > (Step.Action == ECampaignAction::Rejuvenate || Step.Action == ECampaignAction::ManaAtLeast
+                || Step.Action == ECampaignAction::FlightEnded || Step.Action == ECampaignAction::DefeatCreature
+                || Step.Action == ECampaignAction::Defeat ? 240.0 : 30.0))
             {
                 FVector2D Heights;
-                if ((Step.Action == ECampaignAction::Floor || Step.Action == ECampaignAction::Ceiling
+                if ((Step.Action == ECampaignAction::Floor || Step.Action == ECampaignAction::Ceiling || Step.Action == ECampaignAction::CeilingAtMost
                     || Step.Action == ECampaignAction::OpenDoor) && (*Level)->GetSectorSurfaceHeights(Step.Index, Heights))
                 {
                     UE_LOG(LogTemp, Error, TEXT("Campaign sector %d has floor Z%.6f and ceiling Z%.6f, expected %.6f for action %d."),
                         Step.Index, Heights.X, Heights.Y, Step.Target.Z, int32(Step.Action));
                 }
-                return Finish(&Player, *FString::Printf(TEXT("L%d step %d timed out waiting for action %d"), CampaignRoute->Map,
-                    NextPoint, int32(Step.Action)));
+                if (Step.Action == ECampaignAction::UseLockedDoor)
+                {
+                    UE_LOG(LogTemp, Error, TEXT("Campaign door interaction said: %s."), *Player.GetInteractionMessage());
+                }
+                if (Step.Action == ECampaignAction::Walk || Step.Action == ECampaignAction::Jump || Step.Action == ECampaignAction::Fly)
+                {
+                    const UCapsuleComponent* Capsule = Player.GetCapsuleComponent();
+                    const FVector Start = Player.GetActorLocation();
+                    const FVector End(Step.Target.X, Step.Target.Y, Start.Z);
+                    FCollisionQueryParams Trace(SCENE_QUERY_STAT(CampaignWalkFailure), false, &Player);
+                    Trace.bFindInitialOverlaps = false;
+                    FHitResult Hit;
+                    Current.SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Pawn,
+                        FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), Trace);
+                    UE_LOG(LogTemp, Display, TEXT("Campaign movement at Z%.2f hit %s at %s. Jump peak Z%.2f."),
+                        Start.Z, *GetNameSafe(Hit.GetComponent()), *Hit.ImpactPoint.ToCompactString(), CampaignJumpPeak);
+                }
+                return Finish(&Player, *FString::Printf(TEXT("L%d step %d timed out waiting for action %d toward %s"), CampaignRoute->Map,
+                    NextPoint, int32(Step.Action), *Step.Target.ToCompactString()));
             }
             if (TickCampaignAction(**Level, Player, Step))
             {
@@ -5488,6 +6807,168 @@ namespace
         }
 
 
+        bool TickTownServices(UWorld& Current, ANativeWadPlayer& Player, const FWadQuestProgress& Progress, bool bCampaignShop = false)
+        {
+            constexpr int32 Potion = 800;
+            const auto* Content = NativeWadTown::FindContent(Current);
+            APlayerController* Controller = Player.GetController<APlayerController>();
+            ANativeWadTownHUD* Hud = Controller ? Controller->GetHUD<ANativeWadTownHUD>() : nullptr;
+            if (!Content || !Hud || (!bCampaignShop && !Player.HasRestoredWadCheckpoint()))
+            {
+                return Finish(&Player, TEXT("town services need a restored Town Hall save"));
+            }
+            if (TownReview == ETownReview::ServicesReload)
+            {
+                if (Progress.GetWalletCopper() != 50 || Progress.BankCopper != 700 || Player.GetItemCount(Potion) != 1)
+                {
+                    return Finish(&Player, TEXT("the bank balance, purse, or bought item did not survive reload"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the bank balance, purse and bought potion after restart."));
+                return Finish(&Player);
+            }
+            if (Progress.bShowResult)
+            {
+                Press(Player, EKeys::Enter);
+                return true;
+            }
+            int32 Width = 0;
+            int32 Height = 0;
+            Controller->GetViewportSize(Width, Height);
+            const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+            const bool bHeadlessShop = bCampaignShop && FParse::Param(FCommandLine::Get(), TEXT("nullrhi"));
+            if (Scale <= 0 && !bHeadlessShop) { return true; }
+            const FVector2D Origin((Width - 320 * Scale) / 2, (Height - 200 * Scale) / 2);
+            const auto Click = [&](double X, double Y) { Hud->ClickAction(Origin + FVector2D(X, Y) * Scale); };
+            const auto SelectStock = [&](int32 Item)
+            {
+                int32 Index = 0;
+                for (const auto& [Type, Tier] : Content->StoreStock)
+                {
+                    Index += Type < Item && Tier <= Progress.ShopTier;
+                }
+                for (int32 Page = 0; Page < Index / 42; ++Page) { Click(103, 133); }
+                Index %= 42;
+                Click(18 + Index % 6 * 17, 32 + Index / 6 * 14);
+            };
+            if (TownReview == ETownReview::ServicesLoadout || bCampaignShop)
+            {
+                const bool bBuySword = Player.GetItemCount(IronLongSword) == 0;
+                const int64 Before = Progress.GetWalletCopper();
+                const int32 SwordPrice = bBuySword ? 600 : 0;
+                const int32 BuyCount = Progress.ResultQuest == 2 ? 6 : int32(FMath::Clamp<int64>((Before - SwordPrice) / 300, 0, 18));
+                const int32 Price = SwordPrice + 300 * BuyCount;
+                const int32 PotionsBefore = Player.GetItemCount(GreaterHealingPotion);
+                if (Progress.ResultQuest < 2 || !Progress.bSucceeded || BuyCount < 6 || Before < Price)
+                {
+                    return Finish(&Player, TEXT("the provisioned combat run needs a post-Elmore save and enough earned gold"));
+                }
+                const auto Buy = [&](int32 Type, int32 Count)
+                {
+                    if (bHeadlessShop)
+                    {
+                        for (int32 Index = 0; Index < Count; ++Index) { Player.TradeWadTownItem(Type, false, false); }
+                    }
+                    else
+                    {
+                        Click(122, 24);
+                        SelectStock(Type);
+                        for (int32 Index = 0; Index < Count; ++Index) { Click(43, 165); }
+                        Click(183, 165);
+                    }
+                };
+                if (bBuySword)
+                {
+                    Buy(IronLongSword, 1);
+                }
+                Buy(GreaterHealingPotion, BuyCount);
+                if (Progress.GetWalletCopper() != Before - Price || Player.GetItemCount(IronLongSword) != 1
+                    || Player.GetItemCount(GreaterHealingPotion) != PotionsBefore + BuyCount
+                    || !Player.SaveWadCheckpoint(Progress.ResultQuest == 2 ? TEXT("NativeWadUndeadProvisionedTown")
+                        : TEXT("NativeWadProvisionedTownReview")))
+                {
+                    return Finish(&Player, TEXT("could not buy and save the campaign sword and healing supplies"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the campaign character spends earned gold and carries a longsword and %d more healing potions."), BuyCount);
+                if (bCampaignShop)
+                {
+                    bCampaignBoughtSupplies = true;
+                    return true;
+                }
+                return Finish(&Player);
+            }
+            bool bSaved = false;
+            switch (NextPoint)
+            {
+            case 0:
+                if (Content->StoreStock.Num() != 187 || Content->BankStock.Num() != 21 || Progress.GetWalletCopper() != 1000
+                    || Progress.ShopTier != 1 || Progress.BankCopper != 0 || Player.GetItemCount(Potion) != 0)
+                {
+                    return Finish(&Player, TEXT("the authored stock or opening Town Hall wallet is incorrect"));
+                }
+                Click(168, 24);
+                Click(123, 36);
+                Click(137, 45);
+                if (Progress.GetWalletCopper() != 100 || Progress.BankCopper != 900)
+                {
+                    return Finish(&Player, *FString::Printf(TEXT("bank deposit or withdrawal produced purse %lld, bank %lld"),
+                        Progress.GetWalletCopper(), Progress.BankCopper));
+                }
+                break;
+            case 1:
+                if (!CaptureTownFrame(TEXT("bank"), bSaved)) { return true; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not capture the Bank form")); }
+                Click(183, 165);
+                Click(122, 24);
+                SelectStock(Potion);
+                Click(43, 165);
+                if (Progress.GetWalletCopper() != 100 || Player.GetItemCount(Potion) != 0)
+                {
+                    return Finish(&Player, TEXT("the store allowed an unaffordable purchase"));
+                }
+                break;
+            case 2:
+                Click(183, 165);
+                Click(168, 24);
+                Click(137, 45);
+                Click(137, 45);
+                Click(183, 165);
+                Click(122, 24);
+                SelectStock(Potion);
+                Click(43, 165);
+                if (Progress.GetWalletCopper() != 150 || Progress.BankCopper != 700 || Player.GetItemCount(Potion) != 1)
+                {
+                    return Finish(&Player, TEXT("buying the 150-copper potion changed the wrong balance or inventory"));
+                }
+                break;
+            case 3:
+            {
+                if (!CaptureTownFrame(TEXT("store"), bSaved)) { return true; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not capture the Store form")); }
+                const int32 Slot = Player.GetCarriedItems().Find(Potion);
+                for (int32 Page = 0; Page < Slot / 8; ++Page) { Click(306, 141); }
+                Click(248, 43 + Slot % 8 * 12);
+                Click(115, 165);
+                if (Progress.GetWalletCopper() != 200 || Player.GetItemCount(Potion) != 0)
+                {
+                    return Finish(&Player, TEXT("selling the potion did not return its original 50-copper resale value"));
+                }
+                Click(183, 165);
+                Click(122, 24);
+                SelectStock(Potion);
+                Click(43, 165);
+                Click(183, 165);
+                if (Progress.GetWalletCopper() != 50 || !Player.SaveWadCheckpoint(TEXT("NativeWadTownServicesReview")))
+                {
+                    return Finish(&Player, TEXT("could not save the bank and store result"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified Town Hall deposits, withdrawals, affordability, buying and selling."));
+                return Finish(&Player);
+            }
+            }
+            ++NextPoint;
+            return true;
+        }
+
         bool TickTown(UWorld& Current, ANativeWadPlayer& Player)
         {
             if (HeldKey)
@@ -5508,6 +6989,10 @@ namespace
             if (!Travel)
             {
                 return Finish(&Player, TEXT("native town lost its campaign state"));
+            }
+            if (TownReview == ETownReview::Services || TownReview == ETownReview::ServicesReload || TownReview == ETownReview::ServicesLoadout)
+            {
+                return bTown ? TickTownServices(Current, Player, Travel->Quest) : Finish(&Player, TEXT("town services left Town Hall"));
             }
             if (TownReview == ETownReview::Tour || TownReview == ETownReview::Failure)
             {
@@ -5672,7 +7157,14 @@ namespace
             {
                 const int32 Button = Player.GetSelectedInventorySlot() == Slot ? INDEX_NONE : Slot;
                 // Drive the same screen-space hit test used by a mouse click, including in offscreen runs.
-                HUD->ClickHUD(HUD->InventorySlotCenter(Button));
+                if (bWholeCampaign && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                {
+                    Player.ClickInventorySlot(Button);
+                }
+                else
+                {
+                    HUD->ClickHUD(HUD->InventorySlotCenter(Button));
+                }
             }
             return false;
         }
@@ -6288,6 +7780,12 @@ namespace
                 break;
             case ERiverStage::Encounter:
             {
+                if (bWholeCampaign && Player.GetMana() > NativeWadRules::RejuvenateCost
+                    && (Player.GetHealth() < 1750 || !Player.GetRunes().IsEmpty()))
+                {
+                    CastCampaignRejuvenate(Player);
+                    break;
+                }
                 const TActorIterator<ANativeWadGuardian> Encounter(&Current);
                 if (!Encounter)
                 {
@@ -7395,8 +8893,9 @@ bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 I
 
 bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, const FString& Mode)
 {
-    const bool bFreshCampaign = Mode == TEXT("freshcampaign");
-    const bool bCampaignChain = Mode.StartsWith(TEXT("campaign")) && Mode.EndsWith(TEXT("chain"));
+    const bool bWholeCampaign = Mode == TEXT("freshcampaignchain");
+    const bool bFreshCampaign = Mode == TEXT("freshcampaign") || bWholeCampaign;
+    const bool bCampaignChain = bWholeCampaign || (Mode.StartsWith(TEXT("campaign")) && Mode.EndsWith(TEXT("chain")));
     const bool bCampaignMovementSample = Mode == TEXT("campaignl20timing");
     const FString CampaignMode = bCampaignMovementSample ? TEXT("campaignl20") : bCampaignChain ? Mode.LeftChop(5) : Mode;
     const auto* CampaignRoute = Algo::FindByPredicate(CampaignRoutes,
@@ -7434,9 +8933,14 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const ETownReview TownReview = Mode == TEXT("towntour") ? ETownReview::Tour : Mode == TEXT("townfailure") ? ETownReview::Failure
         : Mode == TEXT("townreload") || L25Review == EL25Review::Exit ? ETownReview::Reload
         : Mode == TEXT("townstart") || bFreshCampaign ? ETownReview::Start
-        : Mode == TEXT("townscroll") ? ETownReview::Scroll : ETownReview::None;
+        : Mode == TEXT("townscroll") ? ETownReview::Scroll
+        : Mode == TEXT("townservices") ? ETownReview::Services : Mode == TEXT("townservicesreload") ? ETownReview::ServicesReload
+        : Mode == TEXT("townservicesloadout") ? ETownReview::ServicesLoadout
+        : ETownReview::None;
     const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start
-        || TownReview == ETownReview::Scroll || L25Review == EL25Review::ElmoreLaunch
+        || TownReview == ETownReview::Scroll || TownReview == ETownReview::Services || TownReview == ETownReview::ServicesReload
+        || TownReview == ETownReview::ServicesLoadout
+        || L25Review == EL25Review::ElmoreLaunch
         || UndeadReview == EUndeadReview::Launch || TempleReview == ETempleReview::Launch || CampaignLaunch;
     const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
         : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
@@ -7498,6 +9002,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bCampaignChain = bCampaignChain;
     Review->bCampaignMovementSample = bCampaignMovementSample;
     Review->bFreshCampaign = bFreshCampaign;
+    Review->bWholeCampaign = bWholeCampaign;
     Review->L25Review = L25Review;
     FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Review](float) { return Review->Tick(); }));
     return true;
