@@ -380,17 +380,20 @@ Use L30 as the first end-to-end import. Verify the geometry and sector movement 
 147. **Carry flight and supplies into The Lost City.** The Windows replay verifies the authored L74 spawn with the remaining Temple flight effect, then waits to save until the character is on the ground. In L73 the character collects an original Potion of Flying and uses it to reach all three plates through the skeleton room. It takes the authored teleport, lands in the recovery wing, and collects the Wand in L72. The same character then completes Destruction in a separate replay without additional supplies.
 148. **Verify the uninterrupted Windows campaign and final save.** `FreshCampaignChain` starts from an empty profile and completes all seven Town Hall quests across all 30 maps in one Windows process. The character fights Exiguus and Elymas through regular combat and earns the final 100 gold and 350,000 XP reward. A second process reopens that run’s `NativeWadCampaignTown6Review` save. The tested archive is `Saved/Builds/Campaign-FreshChain-Win64/Windows`. The muted full run is recorded in `Saved/Logs/WindowsFreshNativeCampaign.log`. The same Windows build passes the rendered Bank and Store transaction and restart checks, and the Editor build passes all 13 WAD automation tests.
 149. **Correct the Bank and Store controls.** Both forms use the classic player inventory grid, its page arrows and equipment toggle, and the authored close and counter buttons. Clicking a stock item buys it into the mouse hand. Clicking the inventory stows it, and clicking the counter with a held bag item offers it for sale. The rendered review checks those controls along with the transaction totals and save reload.
+150. **Connect authored coin pickups to the Bank.** Coins credit the purse by denomination. Older checkpoints convert carried coin objects into purse money on load. The `EconomyWater` review picks up L30 Thing 302 using the regular interaction, spends that silver as the last 10 copper of the 25-gold Ring of Water Walking through the Bank controls, and equips it in L301. The ring lifts the player to the water surface and stops the current. `EconomyWaterReload` reopens the same character and purse, then checks that unreadying the ring returns the character to the submerged floor.
+151. **Trace the initial movement hitches in L30.** The Play-in-Editor route recorded three early frames over 100 ms, with a 461.4 ms maximum and no later movement stall. Unreal Insights shows the Game Thread waiting on a worker allocating render targets and later waiting through Lumen lighting and D3D12 resource allocation. A comparison run with `-NoEOS` recorded one 199.2 ms hitch. Both runs used the same walking route. The primary trace is `Saved/BankCombatL30PIEMovement.utrace`.
+152. **Use a normal crossbow bolt and timed potions in play.** `RangedAndTimed` spends one bolt from a normal quiver, damages the L30 Guardian by the authored 300 points, and awards combat XP. The review also checks the shield bonus, featherfall speed cap, and timed water walking. `TimedItemReload` restores the three potion effects and verifies their expiration.
+153. **Restore L73’s acid launcher and recovery cost.** The authored script launches 4004 acid balls using the original missile art and damage value. Activity 204 restores health and water and subtracts 4,000 mana, clamped at zero. The campaign replay triggered the launcher, measured mana falling from 6,320 to 2,320, collected the Wand in L72, and returned to Town Hall for 75 gold.
 
 ### Next campaign verification
 
-- Reproduce the reported Editor movement hitch, visibility through walls, and stuck position on the affected route. Continue checking the classic HUD and authored audio along the continuous routes.
+- Reproduce the reported multi-second Editor hitch, visibility through walls, and stuck position on the affected route. Continue checking the classic HUD and authored audio along the continuous routes.
 
 ### Gameplay parity follow-ups
 
-- [ ] Complete remaining effects for Bank jewelry and route authored coin pickups into the purse.
-- [ ] Verify melee hits from the expanded ready-hand weapons in a live encounter and complete remaining item behavior, including timed consumables and ranged weapons.
+- [ ] Complete the other Bank jewelry effects beyond water walking.
+- [ ] Verify the remaining ready-hand weapons and finish the other crossbow ammunition, wand attacks, and timed consumables.
 - [ ] Port L41's remaining wizard generators and scripted projectile effects. Match Elymas's homing projectile and palette in L44.
-- [ ] Match L73's acid projectile and the mana drain in the recovery sector.
 - [ ] Port L32's homing missile and the remaining creature generators in L71, L70, and L61. Implement L61's deferred scripted effects.
 
 ### Asset follow-ups

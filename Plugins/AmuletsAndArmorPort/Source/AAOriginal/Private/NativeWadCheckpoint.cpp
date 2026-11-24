@@ -427,6 +427,7 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
         Travel->JournalPages = Save->JournalPages;
         Travel->ArrivingFromMap = 0;
     }
+    MoveLegacyCoinsToPurse();
     bCheckpointRestored = true;
     UE_LOG(LogTemp, Display, TEXT("Restored WAD checkpoint in %s."), *Save->LevelPackage);
 }

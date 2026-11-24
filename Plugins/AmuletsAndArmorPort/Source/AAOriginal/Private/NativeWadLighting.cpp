@@ -38,6 +38,7 @@ namespace
 void ANativeWadLevel::BeginPlay()
 {
     Super::BeginPlay();
+    InitializeWaterSurfaces();
     for (const auto& Entry : PickupGenerators)
     {
         if (IsValid(Entry.Value.Pickup))

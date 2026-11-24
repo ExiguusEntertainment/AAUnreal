@@ -315,13 +315,38 @@ double ANativeWadLevel::GetWalkingHeight(int32 Sector) const
     return 0.0;
 }
 
-FVector2D ANativeWadLevel::GetCurrentInput(const FVector& Feet) const
+void ANativeWadLevel::InitializeWaterSurfaces()
+{
+    for (const FAAWadNativeSector& Sector : Sectors)
+    {
+        if (Sector.bWater && Sector.Floor && Sector.WalkingFloor)
+        {
+            Sector.Floor->SetCollisionObjectType(WaterSurfaceChannel);
+            Sector.Floor->SetCollisionResponseToAllChannels(ECR_Ignore);
+            Sector.Floor->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+            Sector.Floor->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        }
+    }
+}
+
+TOptional<double> ANativeWadLevel::FindWaterSurfaceZ(const FVector& Position) const
+{
+    const int32 Index = FindWadSector(FVector2D(Position));
+    if (const FAAWadNativeSector* Sector = Sectors.IsValidIndex(Index) ? &Sectors[Index] : nullptr;
+        Sector && Sector->bWater && Sector->Floor && Sector->WalkingFloor)
+    {
+        return Sector->Floor->GetComponentLocation().Z;
+    }
+    return {};
+}
+
+FVector2D ANativeWadLevel::GetCurrentInput(const FVector& Feet, bool bWaterWalking) const
 {
     const FVector Local = GetActorTransform().InverseTransformPosition(Feet);
     for (int32 Sector : FlowSectors)
     {
         const FAAWadNativeSector& Entry = Sectors[Sector];
-        if ((!Entry.bWater || Local.Z <= Entry.Floor->GetRelativeLocation().Z + 2.5)
+        if ((!Entry.bWater || (!bWaterWalking && Local.Z <= Entry.Floor->GetRelativeLocation().Z + 2.5))
             && ContainsSectorPoint(Sector, FVector2D(Local)))
         {
             // Keep current strength relative to the movement speed of the native first-person character.

@@ -29,6 +29,7 @@ ANativeWadPlayer::ANativeWadPlayer(const FObjectInitializer& ObjectInitializer)
 {
     GetCapsuleComponent()->InitCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
     GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+    GetCapsuleComponent()->SetCollisionResponseToChannel(ANativeWadLevel::WaterSurfaceChannel, ECR_Ignore);
     BaseEyeHeight = 22.0f;
     bUseControllerRotationYaw = true;
     GetCharacterMovement()->MaxWalkSpeed = 190.0f;
@@ -54,6 +55,10 @@ void ANativeWadPlayer::BeginPlay()
     }
     ReadTravelOptions(GetWorld()->URL);
     bRestoreCheckpointOnTick = GetWorld()->URL.HasOption(TEXT("WadLoad"));
+    if (!bRestoreCheckpointOnTick)
+    {
+        MoveLegacyCoinsToPurse();
+    }
     if (IsInWadTown())
     {
         GetCharacterMovement()->DisableMovement();
@@ -88,14 +93,22 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
     ReadStat(TEXT("WadXP="), Experience, 0, MAX_int32);
     ReadStat(TEXT("WadCasts="), SuccessfulCasts, 0, MAX_int32);
     ReadStat(TEXT("WadPoison="), PoisonLevel, 0, MAX_int16);
-    FlightSeconds = 0.0;
-    if (const TCHAR* Option = URL.GetOption(TEXT("WadFlight="), nullptr))
+    const auto ReadDuration = [&URL](const TCHAR* Key, double Limit)
     {
         double Seconds = 0.0;
-        if (LexTryParseString(Seconds, Option) && FMath::IsFinite(Seconds))
+        if (const TCHAR* Option = URL.GetOption(Key, nullptr);
+            Option && LexTryParseString(Seconds, Option) && FMath::IsFinite(Seconds))
         {
-            FlightSeconds = FMath::Clamp(Seconds, 0.0, FlyingScrollSeconds);
+            return FMath::Clamp(Seconds, 0.0, Limit);
         }
+        return 0.0;
+    };
+    FlightSeconds = ReadDuration(TEXT("WadFlight="), FlyingScrollSeconds);
+    WaterWalkSeconds = ReadDuration(TEXT("WadWaterWalk="), WaterWalkPotionSeconds);
+    FeatherfallSeconds = ReadDuration(TEXT("WadFeatherfall="), FeatherfallPotionSeconds);
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
+    {
+        ShieldSeconds[Index] = ReadDuration(*FString::Printf(TEXT("WadShield%d="), Index), ShieldPotionSeconds);
     }
     if (const TCHAR* Option = URL.GetOption(TEXT("WadParalysis="), nullptr))
     {
@@ -249,6 +262,12 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         const float Forward = float(Player->IsInputKeyDown(EKeys::W)) - float(Player->IsInputKeyDown(EKeys::S));
         const float Right = float(Player->IsInputKeyDown(EKeys::D)) - float(Player->IsInputKeyDown(EKeys::A));
         FlightSeconds = FMath::Max(0.0, FlightSeconds - DeltaSeconds);
+        WaterWalkSeconds = FMath::Max(0.0, WaterWalkSeconds - DeltaSeconds);
+        FeatherfallSeconds = FMath::Max(0.0, FeatherfallSeconds - DeltaSeconds);
+        for (double& Seconds : ShieldSeconds)
+        {
+            Seconds = FMath::Max(0.0, Seconds - DeltaSeconds);
+        }
         UCharacterMovementComponent* Movement = GetCharacterMovement();
         const bool bFlying = CanFly();
         if (bFlying && !Movement->IsFlying())
@@ -271,8 +290,9 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         }
         if (const ANativeWadLevel* Level = NativeLevel.Get())
         {
+            UpdateWaterWalking(*Level);
             const FVector Feet = GetActorLocation() - FVector(0, 0, CapsuleHalfHeight);
-            const FVector2D CurrentInput = Level->GetCurrentInput(Feet);
+            const FVector2D CurrentInput = Level->GetCurrentInput(Feet, bOnWaterSurface);
             AddMovementInput(FVector(CurrentInput.GetSafeNormal(), 0), CurrentInput.Size());
         }
         if (ShouldShowEncounterHUD())
@@ -350,9 +370,19 @@ FString ANativeWadPlayer::MakeTravelOptions() const
         TEXT("?WadLevel=%d?WadNextXP=%d?WadMaxHealth=%d?WadMaxMana=%d?WadPoison=%d?WadParalysis=%.6f?WadAttributes=%s"),
         Health, Mana, Food, Water, Experience, ReadySlot, SuccessfulCasts, CharacterLevel, ExperienceNeeded, MaxHealth, MaxMana,
         PoisonLevel, ParalysisSeconds, *FString::JoinBy(GetAttributes(), TEXT(","), [](int32 Value) { return LexToString(Value); }));
-    if (FlightSeconds > 0.0)
+    const auto WriteDuration = [&Options](const TCHAR* Key, double Seconds)
     {
-        Options += FString::Printf(TEXT("?WadFlight=%.6f"), FlightSeconds);
+        if (Seconds > 0.0)
+        {
+            Options += FString::Printf(TEXT("?%s=%.6f"), Key, Seconds);
+        }
+    };
+    WriteDuration(TEXT("WadFlight"), FlightSeconds);
+    WriteDuration(TEXT("WadWaterWalk"), WaterWalkSeconds);
+    WriteDuration(TEXT("WadFeatherfall"), FeatherfallSeconds);
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
+    {
+        WriteDuration(*FString::Printf(TEXT("WadShield%d"), Index), ShieldSeconds[Index]);
     }
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
@@ -547,14 +577,79 @@ void ANativeWadPlayer::StartWadEarthquake(double Duration)
     ShowInteractionMessage(TEXT("The ground shakes around you!!"));
 }
 
-void ANativeWadPlayer::CollectItem(int32 Type)
+void ANativeWadPlayer::UpdateWaterWalking(const ANativeWadLevel& Level)
 {
-    CarriedItems.Add(Type);
+    const bool bRequested = GetReadyItem() == WaterWalkRing || WaterWalkSeconds > 0.0;
+    if (bRequested == bOnWaterSurface)
+    {
+        return;
+    }
+    const FVector Position = GetActorLocation();
+    const TOptional<double> Surface = Level.FindWaterSurfaceZ(Position);
+    if (bRequested)
+    {
+        const double StandingZ = Surface.Get(0.0) + GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+        if (Surface.IsSet() && Position.Z < StandingZ)
+        {
+            // Rise from the submerged floor before enabling the water surface for this pawn.
+            SetActorLocation(FVector(Position.X, Position.Y, StandingZ + 1.0), true);
+            if (GetActorLocation().Z < StandingZ)
+            {
+                return;
+            }
+        }
+    }
+    bOnWaterSurface = bRequested;
+    GetCapsuleComponent()->SetCollisionResponseToChannel(ANativeWadLevel::WaterSurfaceChannel,
+        bOnWaterSurface ? ECR_Block : ECR_Ignore);
+    if (Surface.IsSet() && GetCharacterMovement()->IsMovingOnGround())
+    {
+        GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+    }
+}
+
+bool ANativeWadPlayer::AddCoinsToPurse(int32 Type)
+{
+    const int32 Copper = CoinValueCopper(Type);
+    UNativeWadTravelState* Travel = GetGameInstance() ? GetGameInstance()->GetSubsystem<UNativeWadTravelState>() : nullptr;
+    if (Copper == 0 || !Travel || Travel->Quest.GetWalletCopper() > FWadQuestProgress::WalletLimit - Copper)
+    {
+        return false;
+    }
+    Travel->Quest.SetWalletCopper(Travel->Quest.GetWalletCopper() + Copper);
+    UE_LOG(LogTemp, Display, TEXT("Collected WAD coin %d for %d copper. Purse %lld."), Type, Copper, Travel->Quest.GetWalletCopper());
+    return true;
+}
+
+void ANativeWadPlayer::MoveLegacyCoinsToPurse()
+{
+    for (int32 Slot = CarriedItems.Num() - 1; Slot >= 0; --Slot)
+    {
+        if (CoinValueCopper(CarriedItems[Slot]) > 0 && AddCoinsToPurse(CarriedItems[Slot]))
+        {
+            RemoveInventorySlot(Slot);
+        }
+    }
+}
+
+bool ANativeWadPlayer::CollectItem(int32 Type)
+{
+    const bool bCoin = CoinValueCopper(Type) > 0;
+    if (bCoin && !AddCoinsToPurse(Type))
+    {
+        ShowInteractionMessage(TEXT("Your purse cannot hold any more coins."));
+        return false;
+    }
+    if (!bCoin)
+    {
+        CarriedItems.Add(Type);
+        UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
+    }
     const FString Description = GetInventoryItemDescription(Type);
     FString Name;
     ShowInteractionMessage(FString::Printf(TEXT("Picked up %s"),
         Description.Split(TEXT(" ["), &Name, nullptr) ? *Name : *Description));
-    UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
+    return true;
 }
 
 void ANativeWadPlayer::RestoreWadVital(int32 Effect, int32 Amount)
@@ -563,7 +658,16 @@ void ANativeWadPlayer::RestoreWadVital(int32 Effect, int32 Amount)
     {
     case 8: Water += FMath::Clamp(Amount, 0, MaxFood - Water); break;
     case 9: Health += FMath::Clamp(Amount, 0, MaxHealth - Health); break;
-    case 10: Mana += FMath::Clamp(Amount, 0, MaxMana - Mana); break;
+    case 10:
+    {
+        const int32 Before = Mana;
+        Mana += FMath::Clamp(Amount, -Mana, MaxMana - Mana);
+        if (Amount < 0)
+        {
+            UE_LOG(LogTemp, Display, TEXT("WAD activity changed mana from %d to %d (authored drain %lld)."), Before, Mana, -int64(Amount));
+        }
+        break;
+    }
     default: break;
     }
 }

@@ -695,6 +695,7 @@ void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
         : Command.Target == 4012 ? EWadBoltEffect::LockDoor : EWadBoltEffect::Damage;
     const int32 Damage = Command.Target == NativeWadRules::PoisonCrossbowBolt ? PoisonCrossbowDamage
         : Effect == EWadBoltEffect::Poison ? PoisonMissileDamage
+        : Command.Target == NativeWadRules::AcidBall ? NativeWadRules::AcidBallDamage
         : Command.Target == 4005 ? 750 : Command.Target == 4006 ? 1000
         : Command.Target == NativeWadRules::PiercingCrossbowBolt ? NativeWadRules::ChurchBoltDamage : 100;
     UMaterialInterface* Art = ScriptMissileMaterials.FindRef(Command.Target).Get();

@@ -1314,7 +1314,8 @@ struct FAAWadNativeImport
                 }
                 else if (Command.Operation == EWadScriptOperation::LaunchMissile && !Actor.ScriptMissileMaterials.Contains(Command.Target))
                 {
-                    const TCHAR* Resource = Command.Target == 4005 ? TEXT("MISSILE6/1.CPC") : Command.Target == 4006 ? TEXT("MISSILE7/1.CPC")
+                    const TCHAR* Resource = Command.Target == NativeWadRules::AcidBall ? TEXT("MISSILE5/1.CPC")
+                        : Command.Target == 4005 ? TEXT("MISSILE6/1.CPC") : Command.Target == 4006 ? TEXT("MISSILE7/1.CPC")
                         : Command.Target == 4012 ? TEXT("MISSIL13/1.CPC") : Command.Target == 4015 ? TEXT("MISSIL16/1.CPC")
                         : Command.Target == 4016 ? TEXT("EARTHBND/1.CPC")
                         : Command.Target == NativeWadRules::PoisonCrossbowBolt ? TEXT("ARROW2/1.CPC") : nullptr;

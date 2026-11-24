@@ -22,6 +22,7 @@
 #include "Misc/Paths.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
+#include "NativeWadHudData.h"
 #include "UnrealClient.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
@@ -1886,6 +1887,10 @@ namespace
         bool bRavineReview = false;
         bool bAmbientReview = false;
         bool bClassicHudReview = false;
+        bool bEconomyReview = false;
+        bool bEconomyReload = false;
+        bool bRangedReview = false;
+        bool bTimedItemReload = false;
         bool bInventoryReview = false;
         bool bInventoryReload = false;
         bool bItemUseReview = false;
@@ -8554,6 +8559,275 @@ namespace
             return true;
         }
 
+        bool TickEconomy(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr int32 Silver = 102;
+            constexpr const TCHAR* Slot = TEXT("NativeWadEconomyWaterWalk");
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+            const FWadInventoryDetails* Ring = Catalog ? Catalog->ItemDetails.Find(WaterWalkRing) : nullptr;
+            if (!Travel || !Ring || Ring->ValueCopper < CoinValueCopper(Silver) || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the economy review needs the authored ring and a living character"));
+            }
+            FWadQuestProgress& Progress = Travel->Quest;
+            if (Current.GetMapName().EndsWith(TEXT("L30")))
+            {
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                ANativeWadPickup* Coin = nullptr;
+                for (TActorIterator<ANativeWadPickup> It(&Current); It; ++It)
+                {
+                    if (It->ActorHasTag(TEXT("WAD Item Thing 302"))) { Coin = *It; break; }
+                }
+                if (NextPoint == 0)
+                {
+                    if (!Level || !Coin || Coin->GetItemType() != Silver || !PlaceReviewPlayer(**Level, Player, {3344, 3258}))
+                    {
+                        return Finish(&Player, TEXT("could not reach L30's original silver coin"));
+                    }
+                    Progress.SetWalletCopper(Ring->ValueCopper - CoinValueCopper(Silver));
+                    Aim(Player, Coin->GetActorLocation());
+                    if (!Player.Use())
+                    {
+                        return Finish(&Player, TEXT("Use could not reach the authored silver coin"));
+                    }
+                    ++NextPoint;
+                }
+                if (Progress.GetWalletCopper() != Ring->ValueCopper || Player.GetItemCount(Silver) != 0)
+                {
+                    return Finish(&Player, TEXT("the silver pickup did not complete the purse balance"));
+                }
+                ++NextPoint;
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(NativeWadTown::ObjectPath)));
+                return true;
+            }
+            if (Current.GetMapName().EndsWith(TEXT("WadTown")))
+            {
+                const auto* Snapshot = Travel->VisitedLevels.Find(TEXT("/Game/Maps/L30"));
+                APlayerController* Controller = Player.GetController<APlayerController>();
+                auto* Hud = Controller ? Controller->GetHUD<ANativeWadTownHUD>() : nullptr;
+                if (!Hud || !Snapshot || Snapshot->RemainingPickups.Contains(TEXT("WAD Item Thing 302")))
+                {
+                    return Finish(&Player, TEXT("the coin was still present in the archived dungeon"));
+                }
+                int32 Width = 0, Height = 0;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                if (Scale <= 0.0) { return true; }
+                const FVector2D Origin((Width - 320 * Scale) * 0.5, (Height - 200 * Scale) * 0.5);
+                const auto Click = [Hud, Origin, Scale](double X, double Y) { Hud->ClickAction(Origin + FVector2D(X, Y) * Scale); };
+                Click(168, 24);
+                Click(18, 88);
+                Click(220, 22);
+                Click(200, 9);
+                if (Progress.GetWalletCopper() != 0 || Player.GetItemCount(WaterWalkRing) != 1)
+                {
+                    return Finish(&Player, TEXT("the Bank did not sell the ring for the exact purse balance"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the authored L30 coin paid the last %d copper of the %d-copper Bank ring."),
+                    CoinValueCopper(Silver), Ring->ValueCopper);
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                return true;
+            }
+
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level || !Current.GetMapName().EndsWith(TEXT("L301")))
+            {
+                return Finish(&Player, TEXT("the economy review did not reach L301"));
+            }
+            constexpr double Surface = 32.0;
+            const FVector Position = Player.GetActorLocation();
+            const double Feet = Position.Z - ANativeWadPlayer::CapsuleHalfHeight;
+            const bool bStanding = Player.GetCharacterMovement()->IsMovingOnGround();
+            if (bEconomyReload)
+            {
+                if (NextPoint == 0)
+                {
+                    if (!Player.HasRestoredWadCheckpoint() || !bStanding) { return true; }
+                    if (!Player.IsWaterWalking() || Player.GetReadyItem() != WaterWalkRing
+                        || Progress.GetWalletCopper() != 0 || !FMath::IsNearlyEqual(Feet, Surface, 3.0))
+                    {
+                        return Finish(&Player, TEXT("the saved purse, ready ring, or water surface was not restored"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the Bank ring, purse, and standing on the water surface after process restart."));
+                    ++NextPoint;
+                    Press(Player, EKeys::I);
+                    return true;
+                }
+                if (NextPoint == 1)
+                {
+                    if (!Player.IsInventoryOpen()) { Press(Player, EKeys::I); return true; }
+                    Player.ClickInventorySlot(INDEX_NONE);
+                    Press(Player, EKeys::I);
+                    ++NextPoint;
+                    return true;
+                }
+                if (Player.IsWaterWalking() || !bStanding || !FMath::IsNearlyEqual(Feet, Surface - 20.0, 3.0)) { return true; }
+                UE_LOG(LogTemp, Display, TEXT("Verified unreadying the ring returns the character to the submerged floor."));
+                return Finish(&Player);
+            }
+            if (NextPoint == 2)
+            {
+                if (!PlaceReviewPlayer(**Level, Player, {2256, 3168}))
+                {
+                    return Finish(&Player, TEXT("could not position the water walking comparison"));
+                }
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 3)
+            {
+                if (!bStanding || !FMath::IsNearlyEqual(Feet, Surface - 20.0, 3.0)) { return true; }
+                if (Level->GetCurrentInput(Position - FVector(0, 0, ANativeWadPlayer::CapsuleHalfHeight)).IsNearlyZero())
+                {
+                    return Finish(&Player, TEXT("the submerged comparison did not have its original current"));
+                }
+                ++NextPoint;
+            }
+            if (Player.GetReadyItem() != WaterWalkRing || Player.IsInventoryOpen())
+            {
+                ReadyCampaignItem(Player, WaterWalkRing);
+                return true;
+            }
+            if (!bStanding || !Player.IsWaterWalking() || !FMath::IsNearlyEqual(Feet, Surface, 3.0)) { return true; }
+            if (!Level->GetCurrentInput(Position - FVector(0, 0, ANativeWadPlayer::CapsuleHalfHeight), true).IsNearlyZero()
+                || !Player.SaveWadCheckpoint(Slot))
+            {
+                return Finish(&Player, TEXT("the ring failed to suppress the river current or save on its surface"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Verified the ring raises the player from the submerged L301 floor to the surface and suppresses the current."));
+            return Finish(&Player);
+        }
+
+        bool TickRangedAndTimed(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr const TCHAR* TimedSlot = TEXT("NativeWadTimedItemsReview");
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            const TActorIterator<ANativeWadGuardian> Guardian(&Current);
+            if (!Level || !Guardian || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the combat review lost its player or target"));
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            if (bTimedItemReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                const double Now = Current.GetTimeSeconds();
+                if (NextPoint == 0)
+                {
+                    if (!Player.HasFeatherfall() || Player.GetArmorRating() != 10 || !Player.IsWaterWalking())
+                    {
+                        return Finish(&Player, TEXT("the timed effects did not survive a process restart"));
+                    }
+                    StageTime = Now;
+                    ++NextPoint;
+                }
+                if (Now - StageTime < ShieldPotionSeconds + 1.0) { return true; }
+                if (Player.HasFeatherfall() || Player.GetArmorRating() != 0 || Player.IsWaterWalking())
+                {
+                    return Finish(&Player, TEXT("the featherfall, shield, or water walk potion failed to expire"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the timed shield, featherfall, and water walk effects persist across restart and expire."));
+                return Finish(&Player);
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                Player.CollectItem(Crossbow);
+                Player.CollectItem(NormalQuiver);
+                Player.CollectItem(ShieldPotionFirst);
+                Player.CollectItem(FeatherfallPotion);
+                Player.CollectItem(WaterWalkPotion);
+                ExperienceBeforeTravel = Player.GetExperience();
+                HealthBeforeTravel = Guardian->GetEncounterHealth();
+                ++NextPoint;
+                break;
+            case 1:
+                if (Player.GetReadyItem() != ShieldPotionFirst || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, ShieldPotionFirst); break; }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 2:
+                if (Player.GetItemCount(ShieldPotionFirst) || Player.GetArmorRating() != 10)
+                {
+                    return Finish(&Player, TEXT("the timed shield potion did not apply ten armor points"));
+                }
+                if (Player.GetReadyItem() != FeatherfallPotion || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, FeatherfallPotion); break; }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetItemCount(FeatherfallPotion) || !Player.HasFeatherfall())
+                {
+                    return Finish(&Player, TEXT("the featherfall potion did not activate"));
+                }
+                if (Player.GetReadyItem() != WaterWalkPotion || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, WaterWalkPotion); break; }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 4:
+                if (Player.GetItemCount(WaterWalkPotion) || !Player.IsWaterWalking())
+                {
+                    return Finish(&Player, TEXT("the timed water walk potion did not activate"));
+                }
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!Player.SaveWadCheckpoint(TimedSlot))
+                {
+                    return Finish(&Player, TEXT("could not save the active effects at the L30 spawn"));
+                }
+                Player.SetActorLocation(Player.GetActorLocation() + FVector(0, 0, 35), true);
+                Player.GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+                Player.GetCharacterMovement()->Velocity.Z = -300.0;
+                ++NextPoint;
+                break;
+            case 5:
+                if (!Player.GetCharacterMovement()->IsFalling()) { break; }
+                if (!FMath::IsNearlyEqual(Player.GetVelocity().Z, -FeatherfallSpeed, 1.0))
+                {
+                    return Finish(&Player, TEXT("featherfall did not cap the player's fall speed"));
+                }
+                ++NextPoint;
+                break;
+            case 6:
+                if (Player.GetReadyItem() != Crossbow || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, Crossbow); break; }
+                {
+                    const FVector Target = Guardian->GetActorLocation();
+                    if (!PlaceReviewPlayer(**Level, Player, FVector2D(Target) + FVector2D(-150, 0)))
+                    {
+                        return Finish(&Player, TEXT("could not set up an outside-melee-range crossbow shot"));
+                    }
+                    Aim(Player, Target);
+                    Press(Player, EKeys::LeftControl);
+                    ++NextPoint;
+                }
+                break;
+            case 7:
+                if (Player.GetItemCount(NormalQuiver) || Player.GetItemCount(NormalAmmoBolt) != NormalQuiverBolts - 1)
+                {
+                    return Finish(&Player, TEXT("the crossbow did not consume one round from the quiver"));
+                }
+                if (Guardian->GetEncounterHealth() != HealthBeforeTravel - CrossbowDamage) { break; }
+                if (Player.GetExperience() != ExperienceBeforeTravel + CrossbowDamage)
+                {
+                    return Finish(&Player, TEXT("projectile damage did not award combat experience"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the ranged hit, one normal bolt spent, and the shield, featherfall, and water walk potions."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool Tick()
         {
             UWorld* Current = World();
@@ -8569,6 +8843,14 @@ namespace
             if (!Player)
             {
                 return true;
+            }
+            if (bEconomyReview)
+            {
+                return TickEconomy(*Current, *Player);
+            }
+            if (bRangedReview)
+            {
+                return TickRangedAndTimed(*Current, *Player);
             }
             if (bClassicHudReview)
             {
@@ -8985,6 +9267,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bClassicHud = Mode == TEXT("classichud");
     const bool bInventory = Mode == TEXT("inventory") || Mode == TEXT("inventoryreload");
     const bool bItemUse = Mode == TEXT("itemuse") || Mode == TEXT("itemusereload");
+    const bool bEconomy = Mode == TEXT("economywater") || Mode == TEXT("economywaterreload");
+    const bool bEconomyReload = Mode == TEXT("economywaterreload");
+    const bool bRanged = Mode == TEXT("rangedandtimed") || Mode == TEXT("timeditemreload");
     const bool bL22Journey = Mode == TEXT("l31tol22");
     const bool bL22Trap = Mode == TEXT("l22trap");
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
@@ -9003,7 +9288,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review >= EL25Review::ElmoreL64 ? TEXT("L64")
         : L25Review >= EL25Review::L60Reload ? TEXT("L60")
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
-        : bInventory || bItemUse ? TEXT("L30")
+        : bEconomyReload ? TEXT("L301")
+        : bInventory || bItemUse || bEconomy || bRanged ? TEXT("L30")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
         : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");
@@ -9020,6 +9306,10 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->Size = ImageSize;
     Review->bAmbientReview = bAmbient;
     Review->bClassicHudReview = bClassicHud;
+    Review->bEconomyReview = bEconomy;
+    Review->bEconomyReload = bEconomyReload;
+    Review->bRangedReview = bRanged;
+    Review->bTimedItemReload = Mode == TEXT("timeditemreload");
     Review->bInventoryReview = bInventory;
     Review->bInventoryReload = Mode == TEXT("inventoryreload");
     Review->bItemUseReview = bItemUse;

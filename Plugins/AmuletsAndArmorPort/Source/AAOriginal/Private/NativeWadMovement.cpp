@@ -2,6 +2,17 @@
 
 #include "Components/PrimitiveComponent.h"
 #include "NativeWadLevel.h"
+#include "NativeWadPlayer.h"
+
+FVector UNativeWadMovement::NewFallVelocity(const FVector& InitialVelocity, const FVector& Gravity, float DeltaTime) const
+{
+    FVector Result = Super::NewFallVelocity(InitialVelocity, Gravity, DeltaTime);
+    if (const auto* Player = Cast<ANativeWadPlayer>(CharacterOwner); Player && Player->HasFeatherfall())
+    {
+        Result.Z = FMath::Max(Result.Z, -NativeWadRules::FeatherfallSpeed);
+    }
+    return Result;
+}
 
 bool UNativeWadMovement::ResolvePenetrationImpl(const FVector& Adjustment, const FHitResult& Hit, const FQuat& NewRotation)
 {

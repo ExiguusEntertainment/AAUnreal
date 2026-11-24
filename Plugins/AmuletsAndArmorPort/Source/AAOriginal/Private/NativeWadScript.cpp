@@ -310,12 +310,14 @@ namespace
                     Command.Operation = EWadScriptOperation::Earthquake;
                     Command.Ticks = Args[1];
                 }
-                else if (Opcode == 52 && Args[0] >= 8 && Args[0] <= 10 && Args[1] == 0 && Args[2] == 0 && Args[3] > 0)
+                else if (Opcode == 52 && Args[0] >= 8 && Args[0] <= 10 && Args[1] == 0 && Args[2] == 0
+                    && (Args[3] > 0 || (Args[0] == 10 && Args[3] < 0)))
                 {
                     Command.Operation = EWadScriptOperation::RestoreVitals;
                     Command.Value = Args[3];
                 }
-                else if (Opcode == 54 && (Args[0] == 4005 || Args[0] == 4006 || Args[0] == 4011 || Args[0] == 4012
+                else if (Opcode == 54 && (Args[0] == NativeWadRules::AcidBall
+                    || Args[0] == 4005 || Args[0] == 4006 || Args[0] == 4011 || Args[0] == 4012
                     || Args[0] == 4015 || Args[0] == 4016
                     || Args[0] == NativeWadRules::PoisonCrossbowBolt
                     || Args[0] == NativeWadRules::PiercingCrossbowBolt) && Args[7] > 0)

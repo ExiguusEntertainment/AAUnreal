@@ -260,9 +260,11 @@ public:
     void CheckActivitySector(ANativeWadPlayer& Player, int32& PreviousSector);
     int32 FindActivitySector(const FVector2D& Position, double Radius = 0.0, int32 PreviousSector = INDEX_NONE) const;
     int32 FindWadSector(const FVector2D& Position) const;
+    static constexpr ECollisionChannel WaterSurfaceChannel = ECC_GameTraceChannel2;
+    TOptional<double> FindWaterSurfaceZ(const FVector& Position) const;
     double GetWalkingHeight(int32 Sector) const;
     bool AttachActorToWadFloor(AActor& Actor, int32 Sector) const;
-    FVector2D GetCurrentInput(const FVector& Feet) const;
+    FVector2D GetCurrentInput(const FVector& Feet, bool bWaterWalking = false) const;
     int32 CountPlayingAmbientEmitters(int32 Sound) const;
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
     int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
@@ -286,6 +288,7 @@ private:
     friend struct FAAWadNativeImport;
 
     void InitializeTopology();
+    void InitializeWaterSurfaces();
     bool UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player);
     void ActivatePickupGenerator(int32 Id);
     void TickPickupGenerators(float DeltaSeconds);

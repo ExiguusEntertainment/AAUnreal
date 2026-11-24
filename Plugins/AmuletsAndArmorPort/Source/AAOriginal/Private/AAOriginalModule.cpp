@@ -1129,6 +1129,8 @@ public:
                     || Review == TEXT("freshcampaign") || Review == TEXT("freshcampaignchain")
                     || Review == TEXT("inventory") || Review == TEXT("inventoryreload")
                     || Review == TEXT("itemuse") || Review == TEXT("itemusereload")
+                    || Review == TEXT("economywater") || Review == TEXT("economywaterreload")
+                    || Review == TEXT("rangedandtimed") || Review == TEXT("timeditemreload")
                     || Review == TEXT("churchpassages") || Review == TEXT("churchkeyreload") || Review == TEXT("churchdoorreload")
                     || Review == TEXT("churchknights") || Review == TEXT("churchjourney") || Review == TEXT("churchl20reload")
                     || Review == TEXT("churchscenery") || Review == TEXT("churchl20scenery")

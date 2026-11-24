@@ -62,6 +62,8 @@ public:
     void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
     bool CanFly() const { return FlightSeconds > 0.0 || GetReadyItem() == NativeWadRules::FlyingAmulet; }
+    bool HasFeatherfall() const { return FeatherfallSeconds > 0.0; }
+    bool IsWaterWalking() const { return bOnWaterSurface; }
     void StartWadEarthquake(double Duration);
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
     bool SaveWadCheckpoint(const FString& Slot = FString()) const;
@@ -72,7 +74,7 @@ public:
     void WadSave();
     UFUNCTION(Exec)
     void WadLoad();
-    void CollectItem(int32 Type);
+    bool CollectItem(int32 Type);
     bool ConsumeItem(int32 Type);
     bool TradeWadTownItem(int32 Selection, bool bSelling, bool bBank);
     void AwardExperience(int32 Amount);
@@ -86,6 +88,7 @@ private:
     void MoveInViewDirection(float Forward, float Right);
     void UsePressed();
     void AttackPressed();
+    void FireCrossbow();
     void ResolveMeleeHit(int32 Damage);
     const FWadInventoryDetails* GetItemRules(int32 Type) const;
     bool RemoveInventorySlot(int32 Slot);
@@ -122,6 +125,9 @@ private:
     void TickNeeds(float DeltaSeconds);
     void CheckLevelLink();
     void ReadTravelOptions(const FURL& URL);
+    void MoveLegacyCoinsToPurse();
+    bool AddCoinsToPurse(int32 Type);
+    void UpdateWaterWalking(const ANativeWadLevel& Level);
     FString MakeTravelOptions() const;
     void RestoreWadCheckpoint();
     bool ArchiveDeparture();
@@ -151,6 +157,10 @@ private:
     int32 PoisonLevel = 0;
     double ParalysisSeconds = 0.0;
     double FlightSeconds = 0.0;
+    double WaterWalkSeconds = 0.0;
+    double FeatherfallSeconds = 0.0;
+    double ShieldSeconds[NativeWadRules::ShieldPotionLast - NativeWadRules::ShieldPotionFirst + 1] = {};
+    bool bOnWaterSurface = false;
     double QuakeTime = 0.0;
     bool bRestoreCheckpointOnTick = false;
     bool bRestoreVisitedOnTick = true;

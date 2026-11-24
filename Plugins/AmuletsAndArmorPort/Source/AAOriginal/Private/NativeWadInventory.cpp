@@ -3,8 +3,10 @@
 #include "Algo/Find.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Materials/MaterialInterface.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
 #include "NativeWadLevel.h"
@@ -125,7 +127,7 @@ int32 ANativeWadPlayer::GetEquippedWeapon() const
 {
     const int32 Type = GetReadyItem();
     const FWadInventoryDetails* Details = GetItemRules(Type);
-    return Type == IronDagger || (Details && Details->WeaponDamage > 0 && Details->HitFrame > 0) ? Type : 0;
+    return Type == IronDagger || Type == Crossbow || (Details && Details->WeaponDamage > 0 && Details->HitFrame > 0) ? Type : 0;
 }
 
 bool ANativeWadPlayer::IsWornInventorySlot(int32 Slot) const
@@ -141,7 +143,15 @@ int32 ANativeWadPlayer::GetArmorRating() const
         const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Slot) ? GetItemRules(CarriedItems[Slot]) : nullptr;
         return Rules ? Rules->ArmorValue : 0;
     };
-    const int32 Shield = Rating(ShieldSlot);
+    int32 Shield = Rating(ShieldSlot);
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
+    {
+        if (ShieldSeconds[Index] > 0.0)
+        {
+            Shield += 10 + 5 * Index;
+        }
+    }
+    Shield = FMath::Min(Shield, 100);
     return (2 * (FMath::Max(Shield, Rating(HeadSlot)) + FMath::Max(Shield, Rating(RightArmSlot)) + FMath::Max(Shield, Rating(LeftArmSlot)))
         + 4 * (FMath::Max(Shield, Rating(LegsSlot)) + FMath::Max(Shield, Rating(ChestSlot)))) / 14;
 }
@@ -202,6 +212,11 @@ void ANativeWadPlayer::UseReadyHand()
         return;
     }
     const int32 Type = GetReadyItem();
+    if (Type == Crossbow)
+    {
+        FireCrossbow();
+        return;
+    }
     if (Type == 0 || GetEquippedWeapon() != 0)
     {
         AttackPressed();
@@ -218,6 +233,32 @@ void ANativeWadPlayer::UseReadyHand()
         }
         return;
     }
+    if (Type == WaterWalkPotion || Type == FeatherfallPotion)
+    {
+        if (RemoveInventorySlot(ReadySlot))
+        {
+            if (Type == WaterWalkPotion)
+            {
+                WaterWalkSeconds = WaterWalkPotionSeconds;
+                Water = FMath::Clamp(Water + 200, 0, MaxFood);
+            }
+            else
+            {
+                FeatherfallSeconds = FeatherfallPotionSeconds;
+            }
+            ShowInteractionMessage(FString::Printf(TEXT("Used %s"), *GetInventoryItemDescription(Type)));
+        }
+        return;
+    }
+    if (Type >= ShieldPotionFirst && Type <= ShieldPotionLast)
+    {
+        if (RemoveInventorySlot(ReadySlot))
+        {
+            ShieldSeconds[Type - ShieldPotionFirst] = ShieldPotionSeconds;
+            ShowInteractionMessage(TEXT("You feel protected!"));
+        }
+        return;
+    }
     if (const FWadInventoryDetails* Rules = GetItemRules(Type); Rules && Rules->bUsable)
     {
         UseConsumable(*Rules);
@@ -229,6 +270,53 @@ void ANativeWadPlayer::UseReadyHand()
         BerryRules.bConsumed = true;
         UseConsumable(BerryRules);
     }
+}
+
+void ANativeWadPlayer::FireCrossbow()
+{
+    const double Now = GetWorld()->GetTimeSeconds();
+    if (IsParalyzed() || Now < NextMeleeTime)
+    {
+        return;
+    }
+    const int32 AmmoSlot = CarriedItems.Find(NormalAmmoBolt);
+    const int32 QuiverSlot = AmmoSlot == INDEX_NONE ? CarriedItems.Find(NormalQuiver) : INDEX_NONE;
+    if (AmmoSlot == INDEX_NONE && QuiverSlot == INDEX_NONE)
+    {
+        ShowInteractionMessage(TEXT("No normal bolts."));
+        return;
+    }
+
+    const FVector Direction = GetControlRotation().Vector();
+    const FVector Start = GetPawnViewLocation();
+    FActorSpawnParameters Parameters;
+    Parameters.Owner = this;
+    Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    ANativeWadBolt* Bolt = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Direction.Rotation(), Parameters);
+    if (!Bolt)
+    {
+        return;
+    }
+    if (QuiverSlot != INDEX_NONE)
+    {
+        RemoveInventorySlot(QuiverSlot);
+        for (int32 Index = 1; Index < NormalQuiverBolts; ++Index)
+        {
+            CarriedItems.Add(NormalAmmoBolt);
+        }
+    }
+    else
+    {
+        RemoveInventorySlot(AmmoSlot);
+    }
+    UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+    UMaterialInterface* Image = LoadObject<UMaterialInterface>(nullptr,
+        TEXT("/Game/Maps/L30_Assets/Things/M_GuardianBolt.M_GuardianBolt"));
+    Bolt->Launch(Plane, Image, Direction * (30.0 * TicksPerSecond), CrossbowDamage);
+    const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute], 0, 100) * 1100;
+    NextMeleeTime = Now + FMath::DivideAndRoundUp(CrossbowFrames * 65536, FrameSpeed) / TicksPerSecond;
+    ShowInteractionMessage(TEXT("Fired a crossbow bolt."));
+    UE_LOG(LogTemp, Display, TEXT("Fired WAD crossbow. Loose normal bolts remaining: %d."), GetItemCount(NormalAmmoBolt));
 }
 
 void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)

@@ -276,7 +276,14 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
     if (GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility,
         FCollisionShape::MakeSphere(5.0f), Query))
     {
-        if (Effect == EWadBoltEffect::LockDoor)
+        if (ANativeWadPlayer* Shooter = Cast<ANativeWadPlayer>(GetOwner()))
+        {
+            if (ANativeWadGuardian* Guardian = Cast<ANativeWadGuardian>(Hit.GetActor()))
+            {
+                Guardian->TakeMeleeHit(*Shooter, Damage);
+            }
+        }
+        else if (Effect == EWadBoltEffect::LockDoor)
         {
             if (ANativeWadLevel* Level = ScriptTrap.Get())
             {
@@ -415,7 +422,10 @@ bool ANativeWadPickup::Collect(ANativeWadPlayer& Player)
     {
         return false;
     }
-    Player.CollectItem(ItemType);
+    if (!Player.CollectItem(ItemType))
+    {
+        return false;
+    }
     Destroy();
     return true;
 }
