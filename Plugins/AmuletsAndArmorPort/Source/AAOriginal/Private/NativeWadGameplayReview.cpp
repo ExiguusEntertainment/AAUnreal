@@ -6839,17 +6839,24 @@ namespace
             if (Scale <= 0 && !bHeadlessShop) { return true; }
             const FVector2D Origin((Width - 320 * Scale) / 2, (Height - 200 * Scale) / 2);
             const auto Click = [&](double X, double Y) { Hud->ClickAction(Origin + FVector2D(X, Y) * Scale); };
-            const auto SelectStock = [&](int32 Item)
+            const auto StockItem = [&](int32 Item)
             {
                 int32 Index = 0;
                 for (const auto& [Type, Tier] : Content->StoreStock)
                 {
                     Index += Type < Item && Tier <= Progress.ShopTier;
                 }
-                for (int32 Page = 0; Page < Index / 42; ++Page) { Click(103, 133); }
+                for (int32 Page = 0; Page < Index / 42; ++Page) { Click(78, 129); }
                 Index %= 42;
-                Click(18 + Index % 6 * 17, 32 + Index / 6 * 14);
+                return FVector2D(18 + Index % 6 * 17, 32 + Index / 6 * 14);
             };
+            const auto ClickStock = [&](int32 Item)
+            {
+                const FVector2D Point = StockItem(Item);
+                Click(Point.X, Point.Y);
+            };
+            const auto CloseService = [&]() { Click(200, 9); };
+            const auto StowItem = [&]() { Click(220, 22); };
             if (TownReview == ETownReview::ServicesLoadout || bCampaignShop)
             {
                 const bool bBuySword = Player.GetItemCount(IronLongSword) == 0;
@@ -6871,9 +6878,13 @@ namespace
                     else
                     {
                         Click(122, 24);
-                        SelectStock(Type);
-                        for (int32 Index = 0; Index < Count; ++Index) { Click(43, 165); }
-                        Click(183, 165);
+                        const FVector2D Point = StockItem(Type);
+                        for (int32 Index = 0; Index < Count; ++Index)
+                        {
+                            Click(Point.X, Point.Y);
+                            StowItem();
+                        }
+                        CloseService();
                     }
                 };
                 if (bBuySword)
@@ -6907,7 +6918,7 @@ namespace
                 }
                 Click(168, 24);
                 Click(123, 36);
-                Click(137, 45);
+                Click(135, 46);
                 if (Progress.GetWalletCopper() != 100 || Progress.BankCopper != 900)
                 {
                     return Finish(&Player, *FString::Printf(TEXT("bank deposit or withdrawal produced purse %lld, bank %lld"),
@@ -6917,50 +6928,75 @@ namespace
             case 1:
                 if (!CaptureTownFrame(TEXT("bank"), bSaved)) { return true; }
                 if (!bSaved) { return Finish(&Player, TEXT("could not capture the Bank form")); }
-                Click(183, 165);
+                CloseService();
                 Click(122, 24);
-                SelectStock(Potion);
-                Click(43, 165);
+                ClickStock(Potion);
                 if (Progress.GetWalletCopper() != 100 || Player.GetItemCount(Potion) != 0)
                 {
                     return Finish(&Player, TEXT("the store allowed an unaffordable purchase"));
                 }
                 break;
             case 2:
-                Click(183, 165);
+                CloseService();
                 Click(168, 24);
-                Click(137, 45);
-                Click(137, 45);
-                Click(183, 165);
+                Click(135, 46);
+                Click(135, 46);
+                CloseService();
                 Click(122, 24);
-                SelectStock(Potion);
-                Click(43, 165);
+                ClickStock(Potion);
                 if (Progress.GetWalletCopper() != 150 || Progress.BankCopper != 700 || Player.GetItemCount(Potion) != 1)
                 {
                     return Finish(&Player, TEXT("buying the 150-copper potion changed the wrong balance or inventory"));
                 }
+                if (Hud->ServiceBagItemCenter(Player.GetCarriedItems().Find(Potion)).X >= 0)
+                {
+                    return Finish(&Player, TEXT("the purchase skipped the mouse hand"));
+                }
+                StowItem();
                 break;
             case 3:
             {
                 if (!CaptureTownFrame(TEXT("store"), bSaved)) { return true; }
                 if (!bSaved) { return Finish(&Player, TEXT("could not capture the Store form")); }
                 const int32 Slot = Player.GetCarriedItems().Find(Potion);
-                for (int32 Page = 0; Page < Slot / 8; ++Page) { Click(306, 141); }
-                Click(248, 43 + Slot % 8 * 12);
-                Click(115, 165);
+                Click(281, 132);
+                if (Hud->ServiceBagItemCenter(Slot).X >= 0)
+                {
+                    return Finish(&Player, TEXT("the inventory next-page arrow did not leave page one"));
+                }
+                Click(271, 132);
+                Click(217, 143);
+                if (Hud->ServiceBagItemCenter(Slot).X >= 0)
+                {
+                    return Finish(&Player, TEXT("the equipment button did not open the equipment banner"));
+                }
+                Click(217, 143);
+                Click(308, 8);
+                if (Hud->ServiceBagItemCenter(Slot).X >= 0)
+                {
+                    return Finish(&Player, TEXT("the inventory close button did not close the side banner"));
+                }
+                Click(13, 161);
+                const FVector2D Sale = Hud->ServiceBagItemCenter(Slot);
+                if (Sale.X < 213 || Sale.Y < 16)
+                {
+                    return Finish(&Player, TEXT("the stored potion is missing from the classic inventory grid"));
+                }
+                Click(Sale.X, Sale.Y);
+                Click(18, 32);
                 if (Progress.GetWalletCopper() != 200 || Player.GetItemCount(Potion) != 0)
                 {
                     return Finish(&Player, TEXT("selling the potion did not return its original 50-copper resale value"));
                 }
-                Click(183, 165);
+                CloseService();
                 Click(122, 24);
-                SelectStock(Potion);
-                Click(43, 165);
-                Click(183, 165);
+                ClickStock(Potion);
+                CloseService();
                 if (Progress.GetWalletCopper() != 50 || !Player.SaveWadCheckpoint(TEXT("NativeWadTownServicesReview")))
                 {
                     return Finish(&Player, TEXT("could not save the bank and store result"));
                 }
+                UE_LOG(LogTemp, Display, TEXT("Verified the classic inventory grid, mouse hand, page arrows, equipment toggle, and close buttons."));
                 UE_LOG(LogTemp, Display, TEXT("Verified Town Hall deposits, withdrawals, affordability, buying and selling."));
                 return Finish(&Player);
             }

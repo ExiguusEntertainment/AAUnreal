@@ -7,18 +7,22 @@
 #include "GameFramework/PlayerController.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadHudData.h"
+#include "NativeWadInventoryView.h"
 #include "TextureResource.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
 {
+    using NativeWadInventoryView::Ready;
+    using NativeWadInventoryView::SlotBox;
+    using NativeWadInventoryView::SlotsPerPage;
+    using FInventoryView = NativeWadInventoryView::FView;
+    using FInventoryCell = NativeWadInventoryView::FCell;
+
     constexpr int32 Width = 320;
     constexpr int32 Height = 200;
-    constexpr int32 Columns = 6;
-    constexpr int32 SlotsPerPage = Columns * 8;
     constexpr uint8 White = 31;
     const FBox2D ViewOpening({4, 3}, {316, 151});
-    const FBox2D Ready({94, 156}, {130, 184});
     const FBox2D Use({93, 186}, {131, 196});
     const FBox2D CastButton({240, 181}, {259, 196});
     const FBox2D InventoryButton({5, 155}, {21, 168});
@@ -64,61 +68,6 @@ namespace
         }
         return FHudLayout(X, Y);
     }
-
-    FBox2D SlotBox(int32 Slot)
-    {
-        if (Slot == INDEX_NONE)
-        {
-            return Ready;
-        }
-        const int32 Cell = Slot % SlotsPerPage;
-        const FVector2D Corner(213 + (Cell % Columns) * 17, 16 + (Cell / Columns) * 14);
-        return {Corner, Corner + FVector2D(17, 14)};
-    }
-
-    struct FInventoryCell
-    {
-        int32 FirstSlot;
-        int32 Count = 1;
-    };
-
-    // Keep the saved inventory as individual objects. Only the displayed cells combine stackable items.
-    struct FInventoryView
-    {
-        FInventoryView(const ANativeWadPlayer& Player, const UNativeWadHudData& Data)
-        {
-            const TArray<int32>& Items = Player.GetCarriedItems();
-            CellBySlot.Reserve(Items.Num());
-            TMap<int32, int32> LastStackByType;
-            for (int32 Slot = 0; Slot < Items.Num(); ++Slot)
-            {
-                const int32 Type = Items[Slot];
-                const FWadInventoryDetails* Details = Data.ItemDetails.Find(Type);
-                const int32 Limit = Details ? Details->StackLimit : 1;
-                const int32* Previous = LastStackByType.Find(Type);
-                if (Previous && Cells[*Previous].Count < Limit)
-                {
-                    ++Cells[*Previous].Count;
-                    CellBySlot.Add(*Previous);
-                }
-                else
-                {
-                    const int32 Cell = Cells.Add({Slot});
-                    CellBySlot.Add(Cell);
-                    if (Limit > 1)
-                    {
-                        LastStackByType.Add(Type, Cell);
-                    }
-                }
-            }
-        }
-
-        int32 PageCount() const { return FMath::Max(1, FMath::DivideAndRoundUp(Cells.Num(), SlotsPerPage)); }
-        int32 CellForSlot(int32 Slot) const { return CellBySlot.IsValidIndex(Slot) ? CellBySlot[Slot] : INDEX_NONE; }
-
-        TArray<FInventoryCell> Cells;
-        TArray<int32> CellBySlot;
-    };
 
     struct FHudCanvas
     {

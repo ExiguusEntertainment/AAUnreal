@@ -74,7 +74,7 @@ public:
     void WadLoad();
     void CollectItem(int32 Type);
     bool ConsumeItem(int32 Type);
-    void TradeWadTownItem(int32 Selection, bool bSelling, bool bBank);
+    bool TradeWadTownItem(int32 Selection, bool bSelling, bool bBank);
     void AwardExperience(int32 Amount);
 
     static constexpr float CapsuleRadius = 10.0f;
@@ -82,6 +82,7 @@ public:
 
 private:
     friend class ANativeWadHUD;
+    friend class ANativeWadTownHUD;
     void MoveInViewDirection(float Forward, float Right);
     void UsePressed();
     void AttackPressed();

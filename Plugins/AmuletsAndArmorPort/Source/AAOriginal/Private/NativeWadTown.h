@@ -127,17 +127,19 @@ public:
     int32 GetScrollLine() const { return ScrollLine; }
     void OpenService(FName Name);
     void ClickAction(const FVector2D& Position);
+    FVector2D ServiceBagItemCenter(int32 Slot) const;
 
 private:
     void StartQuest();
     void DrawService(const UNativeWadTownData& Content, const struct FWadQuestProgress& Progress, const ANativeWadPlayer& Player);
     void ClickService(const UNativeWadTownData& Content, struct FWadQuestProgress& Progress, const FVector2D& Point);
     bool IsBankOpen() const { return Service == TEXT("Bank"); }
+    enum class EServiceBanner : uint8 { Bag, Equipment, Closed };
     FName Service;
     int32 StockPage = 0;
     int32 BagPage = 0;
-    int32 ShopSelection = INDEX_NONE;
-    bool bSelling = false;
+    int32 HeldSlot = INDEX_NONE;
+    EServiceBanner ServiceBanner = EServiceBanner::Bag;
     bool bDialogue = false;
     int32 ResultPage = 0;
     int32 ScrollLine = 0;

@@ -9,6 +9,7 @@
 #include "Misc/PackageName.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadHudData.h"
+#include "NativeWadInventoryView.h"
 #include "TextureResource.h"
 
 namespace
@@ -65,14 +66,41 @@ namespace
     constexpr FTownButton DialogueDown{TEXT("BULLDN"), 279, 149};
     constexpr FTownButton ResultUp{TEXT("BULLUP"), 280, 54};
     constexpr FTownButton ResultDown{TEXT("BULLDN"), 280, 116};
+    constexpr FTownButton ServiceClose{TEXT("CLOSEWIN"), 196, 5};
+    constexpr FTownButton BannerClose{TEXT("CLOSEWIN"), 304, 4};
+    constexpr FTownButton StockPrevious{TEXT("LTARROW"), 64, 126};
+    constexpr FTownButton StockNext{TEXT("RTARROW"), 74, 126};
+    constexpr FTownButton BagPrevious{TEXT("LTARROW"), 267, 129};
+    constexpr FTownButton BagNext{TEXT("RTARROW"), 277, 129};
+    constexpr FTownButton EquipmentButton{TEXT("2EQBUTN"), 214, 140};
+    constexpr FTownButton BagButton{TEXT("2INVBUTN"), 214, 140};
+    const FBox2D InventoryBannerButton({5, 155}, {21, 168});
     constexpr int32 Coins[] = {1000, 100, 10, 1};
-    constexpr int32 BagRows = 8;
     constexpr int32 ShopColumns = 6;
     constexpr int32 SlotWidth = 17;
     constexpr int32 SlotHeight = 14;
 
     int32 StockRows(bool bBank) { return bBank ? 3 : 7; }
     int32 StockTop(bool bBank) { return bBank ? 82 : 26; }
+
+    FTownButton CoinButton(int32 Row, bool bWithdraw)
+    {
+        return {bWithdraw ? TEXT("RTARROW") : TEXT("LTARROW"), bWithdraw ? 131 : 119, 32 + Row * 11};
+    }
+
+    const TCHAR* StockCategory(int32 Item)
+    {
+        const int32 Type = Item & 0xFFF;
+        if (Type >= 900) { return TEXT("Wands"); }
+        if (Type >= 800) { return TEXT("Potions"); }
+        if (Type >= 700) { return TEXT("Armor"); }
+        if (Type >= 600) { return TEXT("Amulets"); }
+        if (Type >= 400 && Type < 500) { return TEXT("Rings"); }
+        if (Type >= 350 && Type < 400) { return TEXT("Scrolls"); }
+        if (Type >= 200 && Type < 300) { return TEXT("Weapons"); }
+        if (Type >= 140 && Type < 150) { return TEXT("Arrows"); }
+        return TEXT("Assorted Items");
+    }
 
     int64 CoinCount(int64 Total, int32 Row)
     {
@@ -242,19 +270,12 @@ namespace
 
         void Button(const FTownButton& Button) const { Picture(Button.Picture, Button.X, Button.Y); }
 
-        void Panel(int32 X, int32 Y, int32 W, int32 H, const FLinearColor& Color) const
-        {
-            FCanvasTileItem Item(Layout.At(X, Y), FVector2D(W, H) * Layout.Scale, Color);
-            Item.BlendMode = SE_BLEND_Translucent;
-            Canvas.DrawItem(Item);
-        }
-
         void Item(const UTexture2D* Image, FVector2D Position, FVector2D Bounds) const
         {
             if (Image && Image->GetResource() && Image->GetSizeX() && Image->GetSizeY())
             {
                 const FVector2D NativeSize(Image->GetSizeX(), Image->GetSizeY());
-                const FVector2D Size = NativeSize * FMath::Min(Bounds.X / NativeSize.X, Bounds.Y / NativeSize.Y);
+                const FVector2D Size = NativeSize * FMath::Min3(1.0, Bounds.X / NativeSize.X, Bounds.Y / NativeSize.Y);
                 const FVector2D Corner = Position + (Bounds - Size) * 0.5;
                 Tile(*Image, int32(Corner.X), int32(Corner.Y), Size, FLinearColor::White);
             }
@@ -264,6 +285,27 @@ namespace
             int32 Width, int32 Rows = 1, int32 Scroll = 0, bool bCenter = false) const
         {
             DrawWadBitmapText(Canvas, Font, Data.Palette, Value, Layout.At(X, Y), Layout.Scale, Width, Rows, Scroll, bCenter, TextBrown);
+        }
+
+        void FormField(const FString& Value, const FWadTownFont& Font, int32 X, int32 Y, int32 Right, int32 Bottom) const
+        {
+            if (Data.Palette.Num() != 256) { return; }
+            const auto Fill = [&](int32 Left, int32 Top, int32 Width, int32 Height, uint8 Ink)
+            {
+                FCanvasTileItem TileItem(Layout.At(Left, Top), FVector2D(Width, Height) * Layout.Scale,
+                    FLinearColor::FromSRGBColor(Data.Palette[Ink]));
+                Canvas.DrawItem(TileItem);
+            };
+            // The original forms paint over the example values printed into the backdrop.
+            const int32 Width = Right - X;
+            const int32 Height = Bottom - Y;
+            Fill(X, Y, Width + 1, Height + 1, 68);
+            Fill(X, Y, Width, 1, 66);
+            Fill(X, Y, 1, Height, 66);
+            Fill(X + 1, Bottom, Width, 1, 70);
+            Fill(Right, Y + 1, 1, Height, 70);
+            DrawWadBitmapText(Canvas, Font, Data.Palette, Value, Layout.At(X + 1, Y + 1),
+                Layout.Scale, Width, 1, 0, true, 210);
         }
     };
 
@@ -402,20 +444,21 @@ void ANativeWadPlayer::TownInn() { if (auto* HUD = TownHUD(*this)) { HUD->OpenSe
 void ANativeWadPlayer::TownStore() { if (auto* HUD = TownHUD(*this)) { HUD->OpenService(TEXT("Store")); } }
 void ANativeWadPlayer::TownBank() { if (auto* HUD = TownHUD(*this)) { HUD->OpenService(TEXT("Bank")); } }
 
-void ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBank)
+bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBank)
 {
     UNativeWadTravelState* Travel = TownTravel(*GetWorld());
     const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
-    if (!IsInWadTown() || !Travel || !Content || Travel->Quest.bShowResult || Selection == INDEX_NONE)
+    if (!IsInWadTown() || !Travel || !Content || Travel->Quest.bShowResult || Selection == INDEX_NONE
+        || (bSelling && !CarriedItems.IsValidIndex(Selection)))
     {
-        return;
+        return false;
     }
     FWadQuestProgress& Progress = Travel->Quest;
-    const int32 Type = bSelling && CarriedItems.IsValidIndex(Selection) ? CarriedItems[Selection] : Selection;
+    const int32 Type = bSelling ? CarriedItems[Selection] : Selection;
     const FWadInventoryDetails* Rules = GetItemRules(Type);
     if (!Rules)
     {
-        return;
+        return false;
     }
     if (bSelling)
     {
@@ -423,25 +466,26 @@ void ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBa
         if (Price <= 0 || Progress.GetWalletCopper() > FWadQuestProgress::WalletLimit - Price || !RemoveInventorySlot(Selection))
         {
             ShowInteractionMessage(TEXT("The shop cannot buy that item."));
-            return;
+            return false;
         }
         Progress.SetWalletCopper(Progress.GetWalletCopper() + Price);
         ShowInteractionMessage(FString::Printf(TEXT("Sold for %s"), *FormatMoney(Price)));
-        return;
+        return true;
     }
     const int32* Tier = (bBank ? Content->BankStock : Content->StoreStock).Find(Type);
     if (!Tier || Progress.ShopTier < *Tier || Rules->ValueCopper < 0)
     {
-        return;
+        return false;
     }
     if (Progress.GetWalletCopper() < Rules->ValueCopper)
     {
         ShowInteractionMessage(TEXT("You need more coins in your purse."));
-        return;
+        return false;
     }
     CarriedItems.Add(Type);
     Progress.SetWalletCopper(Progress.GetWalletCopper() - Rules->ValueCopper);
     ShowInteractionMessage(FString::Printf(TEXT("Bought for %s"), *FormatMoney(Rules->ValueCopper)));
+    return true;
 }
 
 void ANativeWadPlayer::TownClick()
@@ -543,14 +587,6 @@ void ANativeWadTownHUD::ConfirmAction()
         }
         ScrollLine = 0;
     }
-    else if (!Service.IsNone())
-    {
-        if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn()))
-        {
-            Player->TradeWadTownItem(ShopSelection, bSelling, IsBankOpen());
-            if (bSelling) { ShopSelection = INDEX_NONE; }
-        }
-    }
     else if (bDialogue)
     {
         StartQuest();
@@ -560,6 +596,7 @@ void ANativeWadTownHUD::ConfirmAction()
 void ANativeWadTownHUD::CancelAction()
 {
     Service = NAME_None;
+    HeldSlot = INDEX_NONE;
     if (bDialogue)
     {
         bDialogue = false;
@@ -605,9 +642,9 @@ void ANativeWadTownHUD::OpenService(FName Name)
         {
             Service = Name;
             StockPage = BagPage = 0;
-            ShopSelection = INDEX_NONE;
-            bSelling = false;
-            Player->ShowInteractionMessage(FString());
+            HeldSlot = INDEX_NONE;
+            ServiceBanner = EServiceBanner::Bag;
+            Player->ShowInteractionMessage(Name == TEXT("Bank") ? TEXT("Welcome to the bank!") : TEXT("Welcome to the store!"));
             return;
         }
         Player->ShowInteractionMessage(FString::Printf(TEXT("The %s form is pending."), *Name.ToString()));
@@ -661,132 +698,253 @@ void ANativeWadTownHUD::ClickAction(const FVector2D& Position)
     else if (Clicked(BankButton)) { OpenService(TEXT("Bank")); }
 }
 
+FVector2D ANativeWadTownHUD::ServiceBagItemCenter(int32 Slot) const
+{
+    using namespace NativeWadInventoryView;
+    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    if (!Player || !Catalog || ServiceBanner != EServiceBanner::Bag)
+    {
+        return FVector2D(-1, -1);
+    }
+    const FView View(*Player, *Catalog, true, HeldSlot);
+    const int32 Cell = View.CellForSlot(Slot);
+    return Cell >= 0 && Cell / SlotsPerPage == BagPage ? SlotBox(Cell).GetCenter() : FVector2D(-1, -1);
+}
+
 void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQuestProgress& Progress, const FVector2D& Point)
 {
-    const auto In = [&](double X, double Y, double X2, double Y2) { return FBox2D({X, Y}, {X2, Y2}).IsInside(Point); };
-    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    using namespace NativeWadInventoryView;
+    auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     if (!Player) { return; }
-    const bool bBank = IsBankOpen();
-    const int32 Top = StockTop(bBank);
-    const int32 Rows = StockRows(bBank);
-    if (In(156, 157, 210, 173) || In(194, 3, 208, 17)) { CancelAction(); }
-    else if (In(9, 157, 77, 173) && !bSelling) { ConfirmAction(); }
-    else if (In(81, 157, 149, 173) && bSelling) { ConfirmAction(); }
-    else if (In(9, 126, 24, 145)) { Scroll(-1); }
-    else if (In(95, 126, 112, 145)) { Scroll(1); }
-    else if (In(216, 135, 234, 154)) { BagPage = FMath::Max(0, BagPage - 1); }
-    else if (In(297, 135, 314, 154))
+
+    const auto Clicked = [&](const FTownButton& Button) { return ContainsButton(Content, Point, Button); };
+    if (Clicked(ServiceClose)) { CancelAction(); return; }
+    if (Clicked(StockPrevious)) { Scroll(-1); return; }
+    if (Clicked(StockNext)) { Scroll(1); return; }
+    if (Clicked(BannerClose) && ServiceBanner != EServiceBanner::Closed)
     {
-        BagPage = FMath::Min(BagPage + 1, FMath::Max(0, (Player->GetCarriedItems().Num() - 1) / BagRows));
+        ServiceBanner = EServiceBanner::Closed;
+        return;
     }
-    else if (bBank && In(118, 31, 144, 76))
+    if (InventoryBannerButton.IsInside(Point)
+        || (ServiceBanner == EServiceBanner::Equipment && Clicked(BagButton)))
     {
-        const int32 Row = FMath::Clamp(int32(Point.Y - 31) / 11, 0, UE_ARRAY_COUNT(Coins) - 1);
-        const int64 Wallet = Progress.GetWalletCopper();
-        if (Point.X < 130)
+        ServiceBanner = EServiceBanner::Bag;
+        return;
+    }
+    if (ServiceBanner == EServiceBanner::Bag && Clicked(EquipmentButton))
+    {
+        ServiceBanner = EServiceBanner::Equipment;
+        return;
+    }
+
+    const bool bBank = IsBankOpen();
+    if (bBank)
+    {
+        for (int32 Row = 0; Row < UE_ARRAY_COUNT(Coins); ++Row)
         {
-            const int64 Deposit = CoinCount(Wallet, Row) * Coins[Row];
-            if (Progress.BankCopper <= FWadQuestProgress::WalletLimit - Deposit)
+            const int64 Wallet = Progress.GetWalletCopper();
+            if (Clicked(CoinButton(Row, false)))
             {
-                Progress.BankCopper += Deposit;
-                Progress.SetWalletCopper(Wallet - Deposit);
+                const int64 Deposit = CoinCount(Wallet, Row) * Coins[Row];
+                if (Progress.BankCopper <= FWadQuestProgress::WalletLimit - Deposit)
+                {
+                    Progress.BankCopper += Deposit;
+                    Progress.SetWalletCopper(Wallet - Deposit);
+                }
+                return;
+            }
+            if (Clicked(CoinButton(Row, true)))
+            {
+                if (Progress.BankCopper >= Coins[Row] && Wallet <= FWadQuestProgress::WalletLimit - Coins[Row])
+                {
+                    Progress.BankCopper -= Coins[Row];
+                    Progress.SetWalletCopper(Wallet + Coins[Row]);
+                }
+                return;
             }
         }
-        else if (Progress.BankCopper >= Coins[Row] && Wallet <= FWadQuestProgress::WalletLimit - Coins[Row])
-        {
-            Progress.BankCopper -= Coins[Row];
-            Progress.SetWalletCopper(Wallet + Coins[Row]);
-        }
     }
-    else if (In(10, Top, 10 + ShopColumns * SlotWidth, Top + Rows * SlotHeight))
+
+    const int32 Top = StockTop(bBank);
+    const int32 Rows = StockRows(bBank);
+    if (Point.X >= 10 && Point.X < 10 + ShopColumns * SlotWidth && Point.Y >= Top && Point.Y < Top + Rows * SlotHeight)
     {
+        if (Player->GetCarriedItems().IsValidIndex(HeldSlot))
+        {
+            if (Player->TradeWadTownItem(HeldSlot, true, bBank))
+            {
+                HeldSlot = INDEX_NONE;
+            }
+            return;
+        }
         const int32 Cell = int32(Point.X - 10) / SlotWidth + int32(Point.Y - Top) / SlotHeight * ShopColumns;
         const TArray<int32> Types = AvailableStock(Content, Progress.ShopTier, bBank);
         const int32 Index = StockPage * ShopColumns * Rows + Cell;
-        ShopSelection = Types.IsValidIndex(Index) ? Types[Index] : INDEX_NONE;
-        bSelling = false;
+        if (Types.IsValidIndex(Index) && Player->TradeWadTownItem(Types[Index], false, bBank))
+        {
+            // The object is owned immediately. The mouse hand only controls where it is displayed.
+            HeldSlot = Player->GetCarriedItems().Num() - 1;
+        }
+        return;
     }
-    else if (In(216, 38, 314, 38 + BagRows * 12))
+
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    if (!Catalog || ServiceBanner != EServiceBanner::Bag)
     {
-        const int32 Slot = BagPage * BagRows + int32(Point.Y - 38) / 12;
-        ShopSelection = Player->GetCarriedItems().IsValidIndex(Slot) ? Slot : INDEX_NONE;
-        bSelling = true;
+        return;
+    }
+    const FView View(*Player, *Catalog, true, HeldSlot);
+    if (Clicked(BagPrevious)) { BagPage = FMath::Max(0, BagPage - 1); return; }
+    if (Clicked(BagNext)) { BagPage = FMath::Min(BagPage + 1, FMath::Max(5, View.PageCount()) - 1); return; }
+    if (Point.X < Bag.Min.X || Point.X >= Bag.Max.X || Point.Y < Bag.Min.Y || Point.Y >= Bag.Max.Y)
+    {
+        return;
+    }
+
+    if (HeldSlot != INDEX_NONE)
+    {
+        HeldSlot = INDEX_NONE;
+        return;
+    }
+    const int32 Cell = BagPage * SlotsPerPage + int32(Point.Y - Bag.Min.Y) / SlotHeight * Columns
+        + int32(Point.X - Bag.Min.X) / SlotWidth;
+    if (View.Cells.IsValidIndex(Cell))
+    {
+        HeldSlot = View.Cells[Cell].FirstSlot;
     }
 }
 
 void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWadQuestProgress& Progress, const ANativeWadPlayer& Player)
 {
+    using namespace NativeWadInventoryView;
     const FTownCanvas Screen{*Canvas, Content, FTownLayout(Canvas->ClipX, Canvas->ClipY)};
     const bool bBank = IsBankOpen();
     Screen.Picture(bBank ? TEXT("BANKBACK") : TEXT("STORBACK"), 4, 3);
+    Screen.Button(ServiceClose);
     const int64 Wallet = Progress.GetWalletCopper();
     for (int32 Row = 0; Row < UE_ARRAY_COUNT(Coins); ++Row)
     {
-        const int32 Y = 32 + Row * 11;
-        const FLinearColor MoneyField = FLinearColor::FromSRGBColor(FColor(93, 0, 0));
-        const int32 WalletX = bBank ? 148 : 164;
-        const int32 WalletWidth = bBank ? 52 : 37;
-        Screen.Panel(WalletX, Y, WalletWidth, 8, MoneyField);
-        Screen.Text(LexToString(CoinCount(Wallet, Row)), Content.Medium, WalletX, Y, WalletWidth, 1, 0, true);
+        const int32 Y = (bBank ? 31 : 32) + Row * 11;
+        Screen.FormField(LexToString(CoinCount(Wallet, Row)), Content.Medium, bBank ? 148 : 164, Y, bBank ? 200 : 204, Y + 9);
         if (bBank)
         {
-            Screen.Panel(57, Y, 52, 8, MoneyField);
-            Screen.Text(LexToString(CoinCount(Progress.BankCopper, Row)), Content.Medium, 57, Y, 52, 1, 0, true);
-            Screen.Picture(TEXT("LTARROW"), 119, Y);
-            Screen.Picture(TEXT("RTARROW"), 131, Y);
+            Screen.FormField(LexToString(CoinCount(Progress.BankCopper, Row)), Content.Medium, 57, Y, 109, Y + 9);
+            Screen.Button(CoinButton(Row, false));
+            Screen.Button(CoinButton(Row, true));
         }
     }
 
-    const FLinearColor PanelColor(0.10f, 0.061f, 0.034f);
-    const FLinearColor SelectionColor(0.26f, 0.17f, 0.072f);
-    const int32 Rows = StockRows(bBank);
+    const int32 PageSize = ShopColumns * StockRows(bBank);
     const int32 Top = StockTop(bBank);
     const TArray<int32> Types = AvailableStock(Content, Progress.ShopTier, bBank);
     const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
-    const int32 PageSize = ShopColumns * Rows;
-    for (int32 Cell = 0; Catalog && Cell < PageSize; ++Cell)
+    if (!Catalog) { return; }
+    const int32 FirstStock = StockPage * PageSize;
+    Screen.Button(StockPrevious);
+    Screen.Button(StockNext);
+    Screen.FormField(Types.IsValidIndex(FirstStock) ? StockCategory(Types[FirstStock]) : TEXT(""), Content.Tiny, 10, 126, 62, 133);
+    Screen.FormField(FString::Printf(TEXT("pg:%d/%d"), StockPage + 1, FMath::Max(1, FMath::DivideAndRoundUp(Types.Num(), PageSize))),
+        Content.Tiny, 84, 126, 112, 133);
+
+    FVector2D Cursor(-1, -1);
+    if (GetOwningPlayerController()->GetMousePosition(Cursor.X, Cursor.Y))
     {
-        const int32 Index = StockPage * PageSize + Cell;
-        if (!Types.IsValidIndex(Index)) { break; }
-        const int32 Type = Types[Index];
-        const int32 X = 10 + Cell % ShopColumns * SlotWidth;
-        const int32 Y = Top + Cell / ShopColumns * SlotHeight;
-        if (!bSelling && ShopSelection == Type) { Screen.Panel(X, Y, SlotWidth, SlotHeight, SelectionColor); }
-        Screen.Item(Catalog->Items.FindRef(Type), FVector2D(X + 1, Y + 1), FVector2D(SlotWidth - 2, SlotHeight - 2));
+        Cursor = (Cursor - Screen.Layout.Origin) / Screen.Layout.Scale;
     }
-    Screen.Panel(213, 17, 103, 138, PanelColor);
-    Screen.Text(TEXT("^038Purse"), Content.Medium, 216, 20, 98, 1, 0, true);
-    Screen.Text(TEXT("^038") + FormatMoney(Wallet), Content.Tiny, 216, 31, 98, 1, 0, true);
+    int32 InspectedType = INDEX_NONE;
+    const auto DrawItem = [&](int32 Type, const FBox2D& Box)
+    {
+        Screen.Item(Catalog->Items.FindRef(Type), Box.Min + FVector2D(1, 1), Box.GetSize() - FVector2D(2, 2));
+    };
+    for (int32 Index = FirstStock; Index < FMath::Min(FirstStock + PageSize, Types.Num()); ++Index)
+    {
+        const int32 Cell = Index - FirstStock;
+        const FVector2D Corner(10 + Cell % ShopColumns * SlotWidth, Top + Cell / ShopColumns * SlotHeight);
+        const FBox2D Box(Corner, Corner + FVector2D(SlotWidth, SlotHeight));
+        DrawItem(Types[Index], Box);
+        if (Box.IsInside(Cursor)) { InspectedType = Types[Index]; }
+    }
+
     const TArray<int32>& Items = Player.GetCarriedItems();
-    for (int32 Row = 0; Row < BagRows; ++Row)
+    if (ServiceBanner == EServiceBanner::Bag)
     {
-        const int32 Slot = BagPage * BagRows + Row;
-        if (!Items.IsValidIndex(Slot)) { break; }
-        const int32 Y = 38 + Row * 12;
-        if (bSelling && ShopSelection == Slot) { Screen.Panel(215, Y, 99, 12, SelectionColor); }
-        if (Catalog) { Screen.Item(Catalog->Items.FindRef(Items[Slot]), FVector2D(217, Y), FVector2D(11, 11)); }
-        Screen.Text(TEXT("^038") + ShopItemName(Player, Items[Slot]).Left(22), Content.Tiny, 230, Y + 2, 83);
+        if (const UTexture2D* BagArt = Catalog->Pictures.FindRef(TEXT("INVBAR3")))
+        {
+            Screen.Tile(*BagArt, 209, 0, FVector2D(BagArt->GetSizeX(), BagArt->GetSizeY()), FLinearColor::White);
+        }
+        Screen.Button(BannerClose);
+        Screen.Button(EquipmentButton);
+        Screen.Button(BagPrevious);
+        Screen.Button(BagNext);
+        const FView View(Player, *Catalog, true, HeldSlot);
+        const int32 Pages = FMath::Max(5, View.PageCount());
+        const int32 Start = BagPage * SlotsPerPage;
+        for (int32 Cell = Start; Cell < FMath::Min(Start + SlotsPerPage, View.Cells.Num()); ++Cell)
+        {
+            const FCell& Entry = View.Cells[Cell];
+            const FBox2D Box = SlotBox(Cell);
+            const int32 Type = Items[Entry.FirstSlot];
+            DrawItem(Type, Box);
+            if (Entry.Count > 1)
+            {
+                Screen.Text(FString::FromInt(Entry.Count), Content.Tiny, int32(Box.Max.X) - 9, int32(Box.Max.Y) - 7, 9, 1, 0, true);
+            }
+            if (Box.IsInside(Cursor)) { InspectedType = Type; }
+        }
+        int32 Weight = 0;
+        for (int32 Type : Items) { Weight += Catalog->ItemWeights.FindRef(Type); }
+        Screen.FormField(FString::Printf(TEXT("%.1f KG"), Weight / 10.0), Content.Tiny, 213, 129, 265, 136);
+        Screen.FormField(FString::Printf(TEXT("pg:%d/%d"), BagPage + 1, Pages), Content.Tiny, 287, 129, 314, 136);
     }
-    Screen.Picture(TEXT("LTARROW"), 217, 136);
-    Screen.Picture(TEXT("RTARROW"), 299, 136);
-    Screen.Panel(8, 126, 106, 11, PanelColor);
-    Screen.Picture(TEXT("LTARROW"), 10, 128);
-    Screen.Picture(TEXT("RTARROW"), 97, 128);
-    Screen.Text(FString::Printf(TEXT("^038Stock %d/%d"), StockPage + 1, FMath::Max(1, FMath::DivideAndRoundUp(Types.Num(), PageSize))),
-        Content.Tiny, 24, 129, 68, 1, 0, true);
-    Screen.Panel(8, 143, 202, 31, PanelColor);
-    const int32 Type = bSelling ? (Items.IsValidIndex(ShopSelection) ? Items[ShopSelection] : 0) : ShopSelection;
-    if (const FWadInventoryDetails* Rules = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr)
+    else if (ServiceBanner == EServiceBanner::Equipment)
     {
-        const int32 Price = bSelling ? ResaleValue(*Rules, Type, bBank) : Rules->ValueCopper;
-        const FString Offer = bSelling && Price <= 0 ? FString(TEXT("No offer")) : FormatMoney(Price);
-        Screen.Text(TEXT("^038") + ShopItemName(Player, Type) + TEXT("  ") + Offer, Content.Tiny, 11, 147, 195);
+        Screen.Picture(TEXT("EQPBAR"), 209, 0);
+        Screen.Button(BannerClose);
+        Screen.Button(BagButton);
+        const FBox2D ArmorBoxes[] = {
+            {{242, 19}, {259, 30}}, {{253, 28}, {272, 54}}, {{230, 28}, {245, 65}},
+            {{241, 50}, {259, 83}}, {{244, 29}, {253, 51}}, {{258, 47}, {268, 62}},
+        };
+        static_assert(UE_ARRAY_COUNT(ArmorBoxes) == NativeWadRules::EquipmentSlotCount);
+        for (int32 Location = 0; Location < NativeWadRules::EquipmentSlotCount; ++Location)
+        {
+            const int32 Slot = Player.WornSlots[Location];
+            if (Items.IsValidIndex(Slot)) { DrawItem(Items[Slot], ArmorBoxes[Location]); }
+        }
     }
-    Screen.Text(TEXT("^038Buy"), Content.Medium, 9, 160, 68, 1, 0, true);
-    Screen.Text(TEXT("^038Sell"), Content.Medium, 81, 160, 68, 1, 0, true);
-    Screen.Text(TEXT("^038Town"), Content.Medium, 156, 160, 54, 1, 0, true);
-    Screen.Panel(213, 155, 103, 20, PanelColor);
-    Screen.Text(TEXT("^038") + Player.GetInteractionMessage(), Content.Tiny, 216, 158, 99, 2);
+    else
+    {
+        Screen.Picture(TEXT("CLOSEDBA"), 209, 0);
+    }
+    DrawItem(Player.GetReadyItem(), Ready);
+    FString Message = Player.GetInteractionMessage();
+    if (Items.IsValidIndex(HeldSlot))
+    {
+        const int32 Type = Items[HeldSlot];
+        if (const FWadInventoryDetails* Rules = Catalog->ItemDetails.Find(Type))
+        {
+            const int32 Price = ResaleValue(*Rules, Type, bBank);
+            if (Message.IsEmpty())
+            {
+                Message = ShopItemName(Player, Type);
+                if (Price > 0) { Message += TEXT("  ") + FormatMoney(Price); }
+            }
+        }
+        if (Cursor.X >= 0 && Cursor.X < ScreenWidth && Cursor.Y >= 0 && Cursor.Y < ScreenHeight)
+        {
+            DrawItem(Type, {Cursor - FVector2D(9, 8), Cursor + FVector2D(9, 8)});
+        }
+    }
+    else if (Message.IsEmpty())
+    {
+        if (const FWadInventoryDetails* Rules = Catalog->ItemDetails.Find(InspectedType))
+        {
+            Message = ShopItemName(Player, InspectedType) + TEXT("  ") + FormatMoney(Rules->ValueCopper);
+        }
+    }
+    Screen.FormField(Message, Content.Medium, 6, 139, 206, 148);
 }
 
 void DrawWadBitmapText(UCanvas& Canvas, const FWadTownFont& Font, TConstArrayView<FColor> Palette,
