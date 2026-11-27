@@ -123,6 +123,10 @@ namespace
             }
             const FString Trigger = Field(TEXT("EFFECT TRIGGER"), Index + 2, EndEffect);
             const int32 Power = FCString::Atoi(*Field(TEXT("EFFECT POWER"), Index + 2, EndEffect));
+            if (Trigger == TEXT("USE") && (Type == TEXT("POTION") || Type == TEXT("SCROLL") || Type == TEXT("FOODSTUFF"))
+                && Name != TEXT("DISPLAY CANNED MESSAGE") && Name != TEXT("PLAY LOCAL SOUND")
+                && Name != TEXT("PLAY AREA SOUND") && Name != TEXT("COLOR FLASH"))
+            { Details.bIdentifyOnUse = true; }
             if (Type == TEXT("WAND") && Trigger == TEXT("USE") && Name == TEXT("FIRE WAND"))
             {
                 TArray<FString> Values;
@@ -181,7 +185,9 @@ namespace
             }
             else if (Trigger == TEXT("USE"))
             {
-                if (Name == TEXT("MOD PLAYER HEALTH")) { Details.Health += Power; }
+                if (Name == TEXT("IDENTIFY READIED")) { Details.IdentificationScope = 1; }
+                else if (Name == TEXT("IDENTIFY ALL")) { Details.IdentificationScope = 2; }
+                else if (Name == TEXT("MOD PLAYER HEALTH")) { Details.Health += Power; }
                 else if (Name == TEXT("MOD PLAYER MANA")) { Details.Mana += Power; }
                 else if (Name == TEXT("MOD PLAYER FOOD")) { Details.Food += Power; }
                 else if (Name == TEXT("MOD PLAYER WATER")) { Details.Water += Power; }
@@ -205,7 +211,7 @@ namespace
             Index = EndEffect;
         }
         Details.bUsable = !bUnknownUse && (Details.Health || Details.Mana || Details.Food || Details.Water
-            || Details.PoisonDivisor > 1 || (Details.Status != INDEX_NONE && Details.StatusTicks > 0));
+            || Details.PoisonDivisor > 1 || Details.IdentificationScope > 0 || (Details.Status != INDEX_NONE && Details.StatusTicks > 0));
 
         if (Details.WeaponDamage <= 0)
         {
@@ -359,6 +365,12 @@ bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthore
             return false;
         }
         Item.Details.Description.TrimStartAndEndInline();
+        if (!FFileHelper::LoadFileToString(Item.Details.UnidentifiedDescription, *(Source / TEXT("OBJDESC") / File)))
+        {
+            Item.Details.UnidentifiedDescription = TEXT("Unidentified item");
+            Output.Logf(TEXT("Missing original unidentified description for item %d."), Type);
+        }
+        Item.Details.UnidentifiedDescription.TrimStartAndEndInline();
         constexpr int32 ValuePercent[] = {100, 5, 25, 50, 100, 150, 200, 300, 400, 600, 800, 1200, 100, 100, 100, 100};
         Item.Details.ValueCopper = int32(int64(Item.Details.ValueCopper) * ValuePercent[(Type >> 12) & 15] / 100);
         ReadInventoryRules(Source, Lines, Item.Details);

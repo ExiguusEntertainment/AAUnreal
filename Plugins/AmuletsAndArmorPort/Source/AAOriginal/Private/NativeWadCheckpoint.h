@@ -228,7 +228,7 @@ class UNativeWadCheckpoint : public USaveGame
     GENERATED_BODY()
 
 public:
-    static constexpr int32 CurrentVersion = 1;
+    static constexpr int32 CurrentVersion = 2;
     static constexpr const TCHAR* Slot = TEXT("NativeWadCheckpoint");
 
     UPROPERTY()
@@ -267,6 +267,12 @@ public:
     UPROPERTY()
     FString PlayerNotes;
 
+    // Older snapshots had only fully revealed descriptions. Migration retains knowledge of carried types.
+    UPROPERTY()
+    bool bItemIdentificationRecorded = false;
+    UPROPERTY()
+    TSet<int32> IdentifiedItemTypes;
+
     UPROPERTY()
     bool bTown = false;
 };
@@ -285,6 +291,8 @@ public:
     FWadQuestProgress Quest;
     TMap<int32, TSoftObjectPtr<UTexture2D>> JournalPages;
     FString PlayerNotes;
+    bool bItemIdentificationRecorded = false;
+    TSet<int32> IdentifiedItemTypes;
     int32 ArrivingFromMap = 0;
 
 private:

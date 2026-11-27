@@ -2,6 +2,8 @@
 
 #include "Components/AudioComponent.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 #include "NativeWadHudData.h"
 
 namespace NativeWadOptions
@@ -11,10 +13,26 @@ namespace NativeWadOptions
         constexpr const TCHAR* Section = TEXT("AmuletsAndArmor.Audio");
         FAudioPreferences Preferences;
         FString LoadedIni;
+        bool bPreferencesNeedWrite = false;
         struct FTrackedAudio { EAudioChannel Channel; float AuthoredVolume; };
         TMap<TWeakObjectPtr<UAudioComponent>, FTrackedAudio> Playing;
 
         float Normalized(float Value) { return FMath::IsFinite(Value) ? FMath::Clamp(Value, 0.0f, 1.0f) : 1.0f; }
+
+        bool WritePreferences()
+        {
+            const FString Path = AudioSettingsPath();
+            FConfigFile File;
+            File.bCanSaveAllSections = true;
+            File.SetBool(Section, TEXT("MusicEnabled"), Preferences.bMusic);
+            File.SetBool(Section, TEXT("EffectsEnabled"), Preferences.bEffects);
+            File.SetFloat(Section, TEXT("MusicVolume"), Preferences.MusicVolume);
+            File.SetFloat(Section, TEXT("EffectsVolume"), Preferences.EffectsVolume);
+            const bool bSaved = IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true) && File.Write(Path, false);
+            bPreferencesNeedWrite = !bSaved;
+            UE_LOG(LogTemp, Display, TEXT("WAD audio preferences write: %s, success=%d."), *Path, bSaved);
+            return bSaved;
+        }
 
         void ApplyLive()
         {
@@ -27,18 +45,41 @@ namespace NativeWadOptions
         }
     }
 
+    FString AudioSettingsPath()
+    {
+        // GeneratedConfigDir honors -UserDir, and remains shared by that user's character slots.
+        return FPaths::ConvertRelativePathToFull(FPaths::GeneratedConfigDir() / TEXT("NativeWadOptions.ini"));
+    }
+
     const FAudioPreferences& GetAudioPreferences()
     {
-        if (GConfig && !GGameUserSettingsIni.IsEmpty() && LoadedIni != GGameUserSettingsIni)
+        const FString Path = AudioSettingsPath();
+        if (LoadedIni != Path)
         {
-            LoadedIni = GGameUserSettingsIni;
+            LoadedIni = Path;
             Preferences = FAudioPreferences();
-            GConfig->GetBool(Section, TEXT("MusicEnabled"), Preferences.bMusic, LoadedIni);
-            GConfig->GetBool(Section, TEXT("EffectsEnabled"), Preferences.bEffects, LoadedIni);
-            GConfig->GetFloat(Section, TEXT("MusicVolume"), Preferences.MusicVolume, LoadedIni);
-            GConfig->GetFloat(Section, TEXT("EffectsVolume"), Preferences.EffectsVolume, LoadedIni);
+            bPreferencesNeedWrite = false;
+            bool bMigrate = false;
+            if (IFileManager::Get().FileExists(*Path))
+            {
+                FConfigFile File;
+                File.Read(Path);
+                File.GetBool(Section, TEXT("MusicEnabled"), Preferences.bMusic);
+                File.GetBool(Section, TEXT("EffectsEnabled"), Preferences.bEffects);
+                File.GetFloat(Section, TEXT("MusicVolume"), Preferences.MusicVolume);
+                File.GetFloat(Section, TEXT("EffectsVolume"), Preferences.EffectsVolume);
+                UE_LOG(LogTemp, Display, TEXT("Read WAD audio preferences from %s."), *Path);
+            }
+            else if (GConfig && !GGameUserSettingsIni.IsEmpty())
+            {
+                bMigrate |= GConfig->GetBool(Section, TEXT("MusicEnabled"), Preferences.bMusic, GGameUserSettingsIni);
+                bMigrate |= GConfig->GetBool(Section, TEXT("EffectsEnabled"), Preferences.bEffects, GGameUserSettingsIni);
+                bMigrate |= GConfig->GetFloat(Section, TEXT("MusicVolume"), Preferences.MusicVolume, GGameUserSettingsIni);
+                bMigrate |= GConfig->GetFloat(Section, TEXT("EffectsVolume"), Preferences.EffectsVolume, GGameUserSettingsIni);
+            }
             Preferences.MusicVolume = Normalized(Preferences.MusicVolume);
             Preferences.EffectsVolume = Normalized(Preferences.EffectsVolume);
+            if (bMigrate) { WritePreferences(); }
         }
         return Preferences;
     }
@@ -49,17 +90,12 @@ namespace NativeWadOptions
         Value.MusicVolume = Normalized(Value.MusicVolume);
         Value.EffectsVolume = Normalized(Value.EffectsVolume);
         if (Preferences.bMusic == Value.bMusic && Preferences.bEffects == Value.bEffects
-            && Preferences.MusicVolume == Value.MusicVolume && Preferences.EffectsVolume == Value.EffectsVolume)
+            && Preferences.MusicVolume == Value.MusicVolume && Preferences.EffectsVolume == Value.EffectsVolume
+            && !bPreferencesNeedWrite
+            && IFileManager::Get().FileExists(*AudioSettingsPath()))
         { return; }
         Preferences = Value;
-        if (GConfig && !GGameUserSettingsIni.IsEmpty())
-        {
-            GConfig->SetBool(Section, TEXT("MusicEnabled"), Preferences.bMusic, GGameUserSettingsIni);
-            GConfig->SetBool(Section, TEXT("EffectsEnabled"), Preferences.bEffects, GGameUserSettingsIni);
-            GConfig->SetFloat(Section, TEXT("MusicVolume"), Preferences.MusicVolume, GGameUserSettingsIni);
-            GConfig->SetFloat(Section, TEXT("EffectsVolume"), Preferences.EffectsVolume, GGameUserSettingsIni);
-            GConfig->Flush(false, GGameUserSettingsIni);
-        }
+        WritePreferences();
         ApplyLive();
     }
 

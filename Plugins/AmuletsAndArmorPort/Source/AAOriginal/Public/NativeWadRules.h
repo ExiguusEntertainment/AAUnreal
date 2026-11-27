@@ -69,7 +69,7 @@ namespace NativeWadRules
         return FMath::Max(FMath::Clamp(Stealth, 10, 120) / 2, bInvisible ? 190 : bTranslucent ? 100 : 0);
     }
     enum class ESpellSchool : uint8 { Arcane, Mage, Cleric };
-    enum class ESpellEffect : uint8 { WaterWalk, FeatherFall, Shield, Projectile, Flight, Heal, PurifyBlood, EternalNourishment };
+    enum class ESpellEffect : uint8 { WaterWalk, FeatherFall, Shield, Projectile, Flight, Heal, PurifyBlood, EternalNourishment, Status, IdentifyEquipped, IdentifyAll };
     struct FWadSpell
     {
         const TCHAR* Runes;
@@ -81,18 +81,20 @@ namespace NativeWadRules
         int32 DurationTicks;
         int32 Power;
         int32 ProjectileIndex = INDEX_NONE;
+        int32 SourceDefinition = INDEX_NONE;
+        int32 Status = INDEX_NONE;
     };
     // Original SPELDESC metadata; projectile records name their individual source files.
     inline constexpr FWadSpell SupportedSpells[] = {
-        {TEXT("14"), TEXT("Deflect"), ESpellSchool::Mage, ESpellEffect::Shield, 500, 50, 8400, 25},
-        {TEXT("41"), TEXT("Feather Fall"), ESpellSchool::Mage, ESpellEffect::FeatherFall, 250, 50, 2100, 1},
-        {TEXT("21"), TEXT("Water Walk"), ESpellSchool::Cleric, ESpellEffect::WaterWalk, 500, 50, 8400, 1},
-        {TEXT("829"), TEXT("Sustenance"), ESpellSchool::Arcane, ESpellEffect::EternalNourishment, 1000, -10, 27999, 1}, // SPL00069
+        {TEXT("14"), TEXT("Deflect"), ESpellSchool::Mage, ESpellEffect::Shield, 500, 50, 8400, 25, INDEX_NONE, 0},
+        {TEXT("41"), TEXT("Feather Fall"), ESpellSchool::Mage, ESpellEffect::FeatherFall, 250, 50, 2100, 1, INDEX_NONE, 2},
+        {TEXT("21"), TEXT("Water Walk"), ESpellSchool::Cleric, ESpellEffect::WaterWalk, 500, 50, 8400, 1, INDEX_NONE, 71},
+        {TEXT("829"), TEXT("Sustenance"), ESpellSchool::Arcane, ESpellEffect::EternalNourishment, 1000, -10, 27999, 1, INDEX_NONE, 69}, // SPL00069
         {TEXT("653"), TEXT("Purify Blood"), ESpellSchool::Cleric, ESpellEffect::PurifyBlood, 750, 50, 0, 1}, // SPL00072
         {TEXT("415"), TEXT("Heal"), ESpellSchool::Cleric, ESpellEffect::Heal, 8000, -30, 0, 5000}, // SPL00098
-        {TEXT("87"), TEXT("Feather Fall"), ESpellSchool::Arcane, ESpellEffect::FeatherFall, 250, 50, 2100, 1}, // SPL00045
-        {TEXT("154"), TEXT("Shield"), ESpellSchool::Mage, ESpellEffect::Shield, 2000, 0, 8400, 40}, // SPL00018
-        {TEXT("167"), TEXT("Fly"), ESpellSchool::Mage, ESpellEffect::Flight, 7000, -40, 2100, 1}, // SPL00041
+        {TEXT("87"), TEXT("Feather Fall"), ESpellSchool::Arcane, ESpellEffect::FeatherFall, 250, 50, 2100, 1, INDEX_NONE, 45}, // SPL00045
+        {TEXT("154"), TEXT("Shield"), ESpellSchool::Mage, ESpellEffect::Shield, 2000, 0, 8400, 40, INDEX_NONE, 18}, // SPL00018
+        {TEXT("167"), TEXT("Fly"), ESpellSchool::Mage, ESpellEffect::Flight, 7000, -40, 2100, 1, INDEX_NONE, 41}, // SPL00041
         {TEXT("34"), TEXT("Magic Dart"), ESpellSchool::Mage, ESpellEffect::Projectile, 150, 50, 0, 1, 0 }, // SPL00001
         {TEXT("347"), TEXT("Magic Missile"), ESpellSchool::Mage, ESpellEffect::Projectile, 200, 40, 0, 1, 1 }, // SPL00003
         {TEXT("13"), TEXT("Confuse"), ESpellSchool::Mage, ESpellEffect::Projectile, 100, 40, 0, 1, 17 }, // SPL00004
@@ -128,6 +130,42 @@ namespace NativeWadRules
         {TEXT("157"), TEXT("Earthbind"), ESpellSchool::Mage, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00102
         {TEXT("17"), TEXT("Earthbind"), ESpellSchool::Arcane, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00103
         {TEXT("637"), TEXT("Earthbind"), ESpellSchool::Cleric, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00104
+        {TEXT("125"), TEXT("Silence"), ESpellSchool::Mage, ESpellEffect::Status, 1000, 10, 8400, 15, INDEX_NONE, 16, StealthStatus}, // SPL00016
+        {TEXT("926"), TEXT("Regenerate"), ESpellSchool::Mage, ESpellEffect::Status, 2000, -5, 4200, 500, INDEX_NONE, 21, HealthRegenStatus}, // SPL00021
+        {TEXT("325"), TEXT("Shocking Grasp"), ESpellSchool::Mage, ESpellEffect::Status, 2000, -5, 4200, 1, INDEX_NONE, 23, ElectricityAttackStatus}, // SPL00023
+        {TEXT("427"), TEXT("Wolf Speed"), ESpellSchool::Mage, ESpellEffect::Status, 1500, -10, 8400, 10, INDEX_NONE, 24, SpeedStatus}, // SPL00024
+        {TEXT("437"), TEXT("Mantra"), ESpellSchool::Mage, ESpellEffect::Status, 1000, -10, 8400, 10, INDEX_NONE, 25, MagicStatus}, // SPL00025
+        {TEXT("526"), TEXT("Touch Of Acid"), ESpellSchool::Mage, ESpellEffect::Status, 2500, -10, 4200, 1, INDEX_NONE, 26, AcidAttackStatus}, // SPL00026
+        {TEXT("256"), TEXT("Poison Touch"), ESpellSchool::Mage, ESpellEffect::Status, 3000, -15, 4200, 1, INDEX_NONE, 27, PoisonAttackStatus}, // SPL00027
+        {TEXT("425"), TEXT("Giant Strength"), ESpellSchool::Mage, ESpellEffect::Status, 1500, -20, 8400, 10, INDEX_NONE, 30, StrengthStatus}, // SPL00030
+        {TEXT("4369"), TEXT("Demon Pact"), ESpellSchool::Mage, ESpellEffect::Status, 2000, -20, 4200, 500, INDEX_NONE, 31, ManaRegenStatus}, // SPL00031
+        {TEXT("4287"), TEXT("Haste"), ESpellSchool::Mage, ESpellEffect::Status, 2000, -20, 8400, 15, INDEX_NONE, 32, SpeedStatus}, // SPL00032
+        {TEXT("152"), TEXT("Shadow Form"), ESpellSchool::Mage, ESpellEffect::Status, 3000, -25, 4200, 1, INDEX_NONE, 35, TranslucentStatus}, // SPL00035
+        {TEXT("845"), TEXT("Spirit Blade"), ESpellSchool::Mage, ESpellEffect::Status, 3500, -35, 4200, 1, INDEX_NONE, 38, PiercingAttackStatus}, // SPL00038
+        {TEXT("1926"), TEXT("Gaseous Form"), ESpellSchool::Mage, ESpellEffect::Status, 5000, -35, 4200, 1, INDEX_NONE, 40, InvisibleStatus}, // SPL00040
+        {TEXT("728"), TEXT("Silence"), ESpellSchool::Arcane, ESpellEffect::Status, 1000, 10, 4200, 15, INDEX_NONE, 55, StealthStatus}, // SPL00055
+        {TEXT("734"), TEXT("Eagle Sight"), ESpellSchool::Arcane, ESpellEffect::Status, 1500, 0, 4200, 10, INDEX_NONE, 56, AccuracyStatus}, // SPL00056
+        {TEXT("257"), TEXT("Regenerate"), ESpellSchool::Arcane, ESpellEffect::Status, 2000, -5, 2100, 100, INDEX_NONE, 59, HealthRegenStatus}, // SPL00059
+        {TEXT("9264"), TEXT("Shocking Grasp"), ESpellSchool::Arcane, ESpellEffect::Status, 2000, -5, 4200, 1, INDEX_NONE, 60, ElectricityAttackStatus}, // SPL00060
+        {TEXT("428"), TEXT("Wolf Speed"), ESpellSchool::Arcane, ESpellEffect::Status, 1500, -10, 4200, 10, INDEX_NONE, 61, SpeedStatus}, // SPL00061
+        {TEXT("965"), TEXT("Poison Touch"), ESpellSchool::Arcane, ESpellEffect::Status, 3000, -15, 4200, 1, INDEX_NONE, 63, PoisonAttackStatus}, // SPL00063
+        {TEXT("527"), TEXT("Giant Strength"), ESpellSchool::Arcane, ESpellEffect::Status, 1500, -20, 4200, 10, INDEX_NONE, 65, StrengthStatus}, // SPL00065
+        {TEXT("834"), TEXT("Mantra"), ESpellSchool::Arcane, ESpellEffect::Status, 1000, -10, 8400, 10, INDEX_NONE, 66, MagicStatus}, // SPL00066
+        {TEXT("124"), TEXT("Shadow Form"), ESpellSchool::Arcane, ESpellEffect::Status, 3000, -25, 4200, 1, INDEX_NONE, 67, TranslucentStatus}, // SPL00067
+        {TEXT("52"), TEXT("Blood Shield"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, 10, 4200, 1, INDEX_NONE, 81, PoisonResistStatus}, // SPL00081
+        {TEXT("437"), TEXT("Eagle Sight"), ESpellSchool::Cleric, ESpellEffect::Status, 1500, 0, 8400, 10, INDEX_NONE, 83, AccuracyStatus}, // SPL00083
+        {TEXT("435"), TEXT("Flame Fist"), ESpellSchool::Cleric, ESpellEffect::Status, 1500, 0, 4200, 1, INDEX_NONE, 84, FireAttackStatus}, // SPL00084
+        {TEXT("432"), TEXT("Wolf Speed"), ESpellSchool::Cleric, ESpellEffect::Status, 1500, -10, 8400, 10, INDEX_NONE, 88, SpeedStatus}, // SPL00088
+        {TEXT("219"), TEXT("Holy Strength"), ESpellSchool::Cleric, ESpellEffect::Status, 1500, -10, 8400, 15, INDEX_NONE, 89, StrengthStatus}, // SPL00089
+        {TEXT("215"), TEXT("Lavawalk"), ESpellSchool::Cleric, ESpellEffect::Status, 1500, -15, 2100, 1, INDEX_NONE, 92, LavaWalkStatus}, // SPL00092
+        {TEXT("892"), TEXT("Soul Drain"), ESpellSchool::Cleric, ESpellEffect::Status, 2000, -20, 4200, 1, INDEX_NONE, 93, ManaDrainAttackStatus}, // SPL00093
+        {TEXT("189"), TEXT("Frost Coat"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, -20, 4200, 1, INDEX_NONE, 94, FireResistStatus}, // SPL00094
+        {TEXT("389"), TEXT("Harden Self"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, -25, 4200, 1, INDEX_NONE, 95, AcidResistStatus}, // SPL00095
+        {TEXT("589"), TEXT("Insulate"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, -25, 4200, 1, INDEX_NONE, 96, ElectricityResistStatus}, // SPL00096
+        {TEXT("789"), TEXT("Spirit Shield"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, -25, 4200, 1, INDEX_NONE, 97, PiercingResistStatus}, // SPL00097
+        {TEXT("958"), TEXT("Identify Equipped"), ESpellSchool::Mage, ESpellEffect::IdentifyEquipped, 4000, -20, 0, 1, INDEX_NONE, 105}, // SPL00105
+        {TEXT("47"), TEXT("Identify Equipped"), ESpellSchool::Cleric, ESpellEffect::IdentifyEquipped, 1000, 10, 0, 1, INDEX_NONE, 106}, // SPL00106
+        {TEXT("417"), TEXT("Identify All"), ESpellSchool::Cleric, ESpellEffect::IdentifyAll, 3500, -30, 0, 1, INDEX_NONE, 107}, // SPL00107
     };
     // SPELLS.C clamps negative difficulty to zero before comparing rand()%100. A zero roll can still succeed.
     constexpr int32 SpellCastingThreshold(int32 MagicAttributeValue, int32 Hardness, int32 Level)

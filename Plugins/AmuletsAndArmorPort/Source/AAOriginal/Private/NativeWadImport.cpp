@@ -3092,6 +3092,82 @@ struct FAAWadNativeImport
         }
         return !bAssetError;
     }
+
+    bool RefreshMissingMaterials(ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output,
+        int32& ChangedComponents)
+    {
+        const TCHAR* Names[] = {TEXT("Opaque"), TEXT("Masked"), TEXT("Translucent")};
+        for (uint8 Blend = 0; Blend < UE_ARRAY_COUNT(Names); ++Blend)
+        {
+            const FString Name = FString(TEXT("M_AANative")) + Names[Blend];
+            Parents[Blend] = LoadObject<UMaterialInterface>(nullptr,
+                *(FString(TEXT("/Game/AAReview/")) + Name + TEXT(".") + Name));
+            if (!Parents[Blend]) { return false; }
+        }
+        if (!HasWadSurfaceTexture(TEXT("DRK42")))
+        {
+            Output.Log(TEXT("Cannot refresh missing surfaces without the original DRK42 fallback picture."));
+            return false;
+        }
+        TSet<FString> Reported;
+        const auto Refresh = [&](UStaticMeshComponent* Component, const FString& Name, EWadWallBlend Blend)
+        {
+            // Touch neither valid authored textures (including editor overrides),
+            // nor empty/no-wall markers and separately rendered sky ceilings.
+            if (!Component || !HasTexture(Name) || HasWadSurfaceTexture(Name)) { return true; }
+            UStaticMesh* Mesh = Component->GetStaticMesh();
+            const int32 Slot = Mesh ? Mesh->GetStaticMaterials().IndexOfByPredicate(
+                [](const FStaticMaterial& Entry) { return Entry.MaterialSlotName == SurfaceSlot; }) : INDEX_NONE;
+            if (Slot == INDEX_NONE)
+            {
+                Output.Logf(TEXT("Missing generated Surface slot on %s; left its materials unchanged."), *Component->GetPathName());
+                return false;
+            }
+            UMaterialInterface* Fallback = Material(Name, Blend);
+            if (!Fallback || bAssetError) { return false; }
+            if (Component->GetMaterial(Slot) != Fallback)
+            {
+                Component->Modify();
+                // A per-component surface override leaves the shared mesh, its
+                // LightingShell slot, UVs, collision and all transforms untouched.
+                Component->SetMaterial(Slot, Fallback);
+                ++ChangedComponents;
+            }
+            if (!Reported.Contains(Name))
+            {
+                Output.Logf(TEXT("Missing authored texture %s uses source PictureLock fallback DRK42 in %s."),
+                    *Name, *Actor.GetOutermost()->GetName());
+                Reported.Add(Name);
+            }
+            return true;
+        };
+        for (int32 Sector = 0; Sector < Actor.Sectors.Num(); ++Sector)
+        {
+            FString Floor, Ceiling;
+            UDoomWadLoader::GetLastWadSectorTextureNames(Sector, Floor, Ceiling);
+            if (!Refresh(Actor.Sectors[Sector].Floor, Floor, EWadWallBlend::Opaque)
+                || !Refresh(Actor.Sectors[Sector].Ceiling, Ceiling, EWadWallBlend::Opaque)) { return false; }
+        }
+        for (const FWadLineDef& Line : Map.Lines)
+        {
+            const bool bTwoSided = (Line.Flags & TwoSidedLine) != 0
+                && Map.GetSectorForSide(Line.Side[0]) != INDEX_NONE && Map.GetSectorForSide(Line.Side[1]) != INDEX_NONE;
+            for (const int32 SideIndex : Line.Side)
+            {
+                if (!Actor.Sides.IsValidIndex(SideIndex)) { continue; }
+                const FAAWadNativeSide& Side = Actor.Sides[SideIndex];
+                for (int32 Band = 0; Band < Side.Bands.Num(); ++Band)
+                {
+                    if (!Side.Textures.IsValidIndex(Band)) { continue; }
+                    const EWadWallBlend Blend = Band == uint8(EWadWallBand::Middle) && bTwoSided
+                        ? ((Line.Flags & 0x0020) != 0 ? EWadWallBlend::Translucent : EWadWallBlend::Masked)
+                        : EWadWallBlend::Opaque;
+                    if (!Refresh(Side.Bands[Band], Side.Textures[Band], Blend)) { return false; }
+                }
+            }
+        }
+        return !bAssetError;
+    }
 };
 
 bool SaveNativeWadDoors(UWorld* World, FOutputDevice& Output)
@@ -3205,8 +3281,9 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     Types.Add(NativeWadRules::StartingWaterGourd);
     Types.Add(234); // Original electric mace, also used by the ready/unready review.
     for (const int32 Type : {100, 144, 202, 822}) { Types.Add(Type); } // Original Elf Archer and Druid defeat treasure.
+    for (const int32 Type : {350, 351}) { Types.Add(Type); } // Both source identification scrolls, including the common starter.
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
-    for (const int32 Type : {411, 419, 604, 610, 614, 615, 712, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
+    for (const int32 Type : {411, 417, 418, 419, 604, 610, 614, 615, 712, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
     for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
@@ -3322,7 +3399,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
         FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
         const FString MaterialPackage = Item.WorldMaterialPackage();
         const FString MaterialPath = MaterialPackage + TEXT(".") + FPackageName::GetShortName(MaterialPackage);
-        if (NativeWadRules::CoinValueCopper(Type) > 0 && !FindObject<UMaterialInterface>(nullptr, *MaterialPath)
+        if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351) && !FindObject<UMaterialInterface>(nullptr, *MaterialPath)
             && !FPackageName::DoesPackageExist(MaterialPackage) && !Import.SpriteMaterial(Item.AssetName(), Item.Picture))
         {
             Output.Logf(TEXT("Could not import the world art for coin %d."), Type);
@@ -3927,6 +4004,37 @@ bool SaveNativeWadLevel(const FString& MapPackage, const FString& WadPath, FOutp
     }
     World->DestroyWorld(false);
     return bSaved;
+}
+
+bool RefreshNativeWadMissingMaterials(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage))
+    {
+        Output.Log(TEXT("Missing-material refresh requires a loaded source MAP and an existing native map package."));
+        return false;
+    }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    {
+        Output.Logf(TEXT("No matching native editor level in %s."), *MapPackage);
+        return false;
+    }
+    FAAWadNativeImport Import;
+    Import.AssetRoot = MapPackage + TEXT("_Assets");
+    int32 Changed = 0;
+    if (!Import.RefreshMissingMaterials(*Level, *Map, Output, Changed)) { return false; }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    {
+        if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension())) { return false; }
+    }
+    if (Changed != 0 && !SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Refreshed %d missing-texture component material bindings in %s; geometry and lighting shells were retained."),
+        Changed, *MapPackage);
+    return true;
 }
 
 #endif

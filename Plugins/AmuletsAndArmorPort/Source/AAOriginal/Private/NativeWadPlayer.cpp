@@ -258,6 +258,7 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
             }
         }
     }
+    RestoreTimedEffects(URL.GetOption(TEXT("WadOwnedEffects="), nullptr));
 }
 
 void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
@@ -358,16 +359,8 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
     }
     if (const APlayerController* Player = Cast<APlayerController>(GetController()); Player && Player->IsLocalController() && Health > 0)
     {
-        ParalysisSeconds = FMath::Max(0.0, ParalysisSeconds - DeltaSeconds);
         const float Forward = float(Player->IsInputKeyDown(EKeys::W)) - float(Player->IsInputKeyDown(EKeys::S));
         const float Right = float(Player->IsInputKeyDown(EKeys::D)) - float(Player->IsInputKeyDown(EKeys::A));
-        FlightSeconds = FMath::Max(0.0, FlightSeconds - DeltaSeconds);
-        WaterWalkSeconds = FMath::Max(0.0, WaterWalkSeconds - DeltaSeconds);
-        FeatherfallSeconds = FMath::Max(0.0, FeatherfallSeconds - DeltaSeconds);
-        for (double& Seconds : ShieldSeconds)
-        {
-            Seconds = FMath::Max(0.0, Seconds - DeltaSeconds);
-        }
         TickItemStatuses(DeltaSeconds);
         UCharacterMovementComponent* Movement = GetCharacterMovement();
         const bool bFlying = CanFly();
@@ -509,6 +502,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
             Options += FString::Printf(TEXT("?WadEffectPower%d=%d"), Index, ItemStatusPower[Index]);
         }
     }
+    Options += TEXT("?WadOwnedEffects=") + TimedEffects.Encode();
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
         Options += FString::Printf(TEXT("?WadHour=%.9f"), Level->GetTimeOfDayHours());
@@ -711,7 +705,8 @@ void ANativeWadPlayer::JumpOrRevive()
     Health = MaxHealth;
     Mana = MaxMana / 2;
     PoisonLevel = 0;
-    ParalysisSeconds = 0.0;
+    TimedEffects.RemoveKind(EWadTimedEffectKind::Paralysis);
+    RefreshTimedEffectCache();
     LastActivitySector = INDEX_NONE;
     LastLevelLink = INDEX_NONE;
     ShowInteractionMessage(TEXT("Revived at the level entrance."));
@@ -730,25 +725,18 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
         if (DamageMask == SpecialDamageFlag(ESpecialDamage::Dispel))
         {
             // EFFECT.C removes one random temporary effect after excluding equipped effects.
-            TArray<double*> Effects;
-            const auto Add = [&Effects](double& Seconds) { if (Seconds > 0.0) { Effects.Add(&Seconds); } };
-            Add(FlightSeconds);
-            Add(WaterWalkSeconds);
-            Add(FeatherfallSeconds);
-            Add(ParalysisSeconds);
-            for (double& Seconds : ShieldSeconds) { Add(Seconds); }
-            for (double& Seconds : ItemStatusSeconds) { Add(Seconds); }
-            if (!Effects.IsEmpty()) { *Effects[FMath::RandRange(0, Effects.Num() - 1)] = 0.0; }
+            if (TimedEffects.Num() > 0) { TimedEffects.Dispel(FMath::RandRange(0, TimedEffects.Num() - 1)); }
+            RefreshTimedEffectCache();
         }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind))
         {
-            FlightSeconds = 0.0;
+            TimedEffects.RemoveKind(EWadTimedEffectKind::Flight);
+            RefreshTimedEffectCache();
             bReadiedFlightSuppressed = HasEquippedItem(FlyingAmulet);
         }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Slow))
         {
-            ItemStatusSeconds[SpeedStatus] = 30.0;
-            ItemStatusPower[SpeedStatus] = -20;
+            ApplyTimedEffect(FWadPlayerEffects::IncomingControlOwner, EWadTimedEffectKind::Status, SpeedStatus, -20, 30.0);
         }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse) && GetController())
         {
@@ -780,7 +768,8 @@ void ANativeWadPlayer::ReceiveTrapPoison(int32 Damage)
 
 void ANativeWadPlayer::ReceiveTrapParalysis()
 {
-    ParalysisSeconds = 10.0;
+    // Share the source incoming owner with Slow, while retaining the established freeze behavior.
+    ApplyTimedEffect(FWadPlayerEffects::IncomingControlOwner, EWadTimedEffectKind::Paralysis, INDEX_NONE, 1, 10.0);
     GetCharacterMovement()->StopMovementImmediately();
     ConsumeMovementInputVector();
     ShowInteractionMessage(TEXT("Paralyzed"));
@@ -833,10 +822,8 @@ void ANativeWadPlayer::UpdateWaterWalking(const ANativeWadLevel& Level)
 
 void ANativeWadPlayer::TickItemStatuses(float DeltaSeconds)
 {
-    for (double& Seconds : ItemStatusSeconds)
-    {
-        Seconds = FMath::Max(0.0, Seconds - DeltaSeconds);
-    }
+    TimedEffects.Tick(DeltaSeconds);
+    RefreshTimedEffectCache();
     if (!HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
     const int32 EffectiveSpeed = GetEffectiveAttribute(SpeedAttribute);
     // Keep the existing native baseline while applying the original MaxVWalking=(Speed/5)+10 modifier ratio.
@@ -1052,15 +1039,24 @@ void ANativeWadPlayer::CastRejuvenate()
             Mana -= Spell.Mana;
             const double Duration = Spell.DurationTicks / double(TicksPerSecond);
             const int32 PoisonBefore = PoisonLevel;
+            const FString EffectOwner = FWadPlayerEffects::SpellOwner(Spell.SourceDefinition);
             switch (Spell.Effect)
             {
             case ESpellEffect::Projectile: break;
-            case ESpellEffect::WaterWalk: WaterWalkSeconds = FMath::Max(WaterWalkSeconds, Duration); break;
-            case ESpellEffect::FeatherFall: FeatherfallSeconds = FMath::Max(FeatherfallSeconds, Duration); break;
-            case ESpellEffect::Flight: FlightSeconds = FMath::Max(FlightSeconds, Duration); break;
+            case ESpellEffect::WaterWalk: ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::WaterWalk, INDEX_NONE, 1, Duration); break;
+            case ESpellEffect::FeatherFall: ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::FeatherFall, INDEX_NONE, 1, Duration); break;
+            case ESpellEffect::Flight: ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::Flight, INDEX_NONE, 1, Duration); break;
             case ESpellEffect::EternalNourishment:
-                ItemStatusSeconds[EternalNourishmentStatus] = Duration;
-                ItemStatusPower[EternalNourishmentStatus] = Spell.Power;
+                ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::Status, EternalNourishmentStatus, Spell.Power, Duration);
+                break;
+            case ESpellEffect::Status: ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::Status, Spell.Status, Spell.Power, Duration); break;
+            case ESpellEffect::IdentifyEquipped:
+                IdentifyEquippedItems();
+                ShowInteractionMessage(TEXT("You understand your equipment better!"));
+                break;
+            case ESpellEffect::IdentifyAll:
+                IdentifyAllCarriedItems();
+                ShowInteractionMessage(TEXT("You understand your inventory better!"));
                 break;
             case ESpellEffect::Heal: Health = FMath::Min(MaxHealth, Health + Spell.Power); break;
             case ESpellEffect::PurifyBlood:
@@ -1068,13 +1064,15 @@ void ANativeWadPlayer::CastRejuvenate()
                 PoisonLevel -= PoisonLevel >> 1;
                 break;
             case ESpellEffect::Shield:
-                ItemStatusSeconds[SpellShieldStatus] = Duration;
-                ItemStatusPower[SpellShieldStatus] = Spell.Power;
+                ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::Status, SpellShieldStatus, Spell.Power, Duration);
                 break;
             }
             ++SuccessfulCasts;
-            ShowInteractionMessage(Spell.Effect == ESpellEffect::PurifyBlood && PoisonBefore > 0
-                ? TEXT("The poison in your body is less.") : Spell.Name);
+            if (Spell.Effect != ESpellEffect::IdentifyEquipped && Spell.Effect != ESpellEffect::IdentifyAll)
+            {
+                ShowInteractionMessage(Spell.Effect == ESpellEffect::PurifyBlood && PoisonBefore > 0
+                    ? TEXT("The poison in your body is less.") : Spell.Name);
+            }
             UE_LOG(LogTemp, Display, TEXT("Cast %s for %d mana."), Spell.Name, Spell.Mana);
             return;
         }

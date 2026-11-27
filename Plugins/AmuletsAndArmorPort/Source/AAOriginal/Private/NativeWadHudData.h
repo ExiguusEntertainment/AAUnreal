@@ -15,6 +15,17 @@ struct FWadInventoryDetails
     UPROPERTY()
     FString Description;
 
+    // OBJDESC is shown before the character learns this full object type; Description retains OBJDESC2.
+    UPROPERTY()
+    FString UnidentifiedDescription;
+
+    UPROPERTY()
+    bool bIdentifyOnUse = false;
+
+    // Source IDENTIFY READIED=1, IDENTIFY ALL=2. Identification is character knowledge, not an item timer.
+    UPROPERTY()
+    int32 IdentificationScope = 0;
+
     UPROPERTY()
     int32 StackLimit = 1;
 

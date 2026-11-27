@@ -573,6 +573,11 @@ void ANativeWadLevel::InitializeTopology()
     }
 }
 
+TArray<FString> ANativeWadLevel::GetWadSideTextureNames(int32 Side) const
+{
+    return Sides.IsValidIndex(Side) ? Sides[Side].Textures : TArray<FString>();
+}
+
 bool ANativeWadLevel::GetWallLine(int32 Line, FWadWallLine& Wall)
 {
     InitializeTopology();

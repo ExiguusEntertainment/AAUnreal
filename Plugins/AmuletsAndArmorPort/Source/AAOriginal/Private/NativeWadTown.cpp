@@ -10,6 +10,7 @@
 #include "NativeWadCheckpoint.h"
 #include "NativeWadHudData.h"
 #include "NativeWadInventoryView.h"
+#include "NativeWadIdentification.h"
 #include "TextureResource.h"
 
 namespace
@@ -143,7 +144,8 @@ namespace
 
     FString ShopItemName(const ANativeWadPlayer& Player, int32 Type)
     {
-        const FString Description = Player.GetInventoryItemDescription(Type);
+        // CONTROL.C's merchant preview reveals stock temporarily without teaching the type to the character.
+        const FString Description = Player.GetInventoryItemDescription(Type, true);
         FString Name;
         return Description.Split(TEXT(" ["), &Name, nullptr) ? Name : Description;
     }
@@ -519,6 +521,12 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
     {
         CarriedItems.Add(StartingFoods[FMath::RandHelper(UE_ARRAY_COUNT(StartingFoods))]);
     }
+    CarriedItems.Add(NativeWadIdentification::AllScroll);
+    if (auto* Travel = TownTravel(*GetWorld()))
+    {
+        Travel->Quest.SetWalletCopper(FMath::Min(FWadQuestProgress::WalletLimit,
+            Travel->Quest.GetWalletCopper() + NativeWadIdentification::CommonStarterCopper));
+    }
     ReadySlot = SelectedInventorySlot = INDEX_NONE;
     for (int32& Slot : WornSlots)
     {
@@ -547,6 +555,7 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
         }
     }
     bWadCharacterCreated = true;
+    InitializeItemIdentification(true);
     ShowInteractionMessage(FString::Printf(TEXT("Starting as a %s."), Class.Name));
     return true;
 }
@@ -591,6 +600,8 @@ bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBa
     }
     CarriedItems.Add(Type);
     Progress.SetWalletCopper(Progress.GetWalletCopper() - Rules->ValueCopper);
+    // STORE.C identifies the exact purchased type after the transaction succeeds.
+    IdentifyItemType(Type);
     ShowInteractionMessage(FString::Printf(TEXT("Bought for %s"), *FormatMoney(Rules->ValueCopper)));
     return true;
 }

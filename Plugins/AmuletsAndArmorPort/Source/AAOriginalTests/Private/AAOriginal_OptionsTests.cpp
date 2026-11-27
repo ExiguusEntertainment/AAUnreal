@@ -2,6 +2,9 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/ScopeExit.h"
 #include "Components/AudioComponent.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
+#include "HAL/PlatformFile.h"
 #include "../../AAOriginal/Private/NativeWadHudData.h"
 #include "../../AAOriginal/Private/NativeWadOptions.h"
 
@@ -46,13 +49,17 @@ bool FAAOriginalClassicAudioOptions::RunTest(const FString& Parameters)
     TestTrue(TEXT("Music toggle does not change effects"), FMath::IsNearlyEqual(NearbyEffect->VolumeMultiplier, 0.4f));
     bool bSavedMusic = true, bSavedEffects = false;
     float SavedMusicVolume = -1.0f, SavedEffectsVolume = -1.0f;
-    TestTrue(TEXT("User settings have a persistent configuration file"), GConfig && !GGameUserSettingsIni.IsEmpty());
-    if (GConfig && !GGameUserSettingsIni.IsEmpty())
+    const FString SettingsPath = AudioSettingsPath();
+    TestTrue(TEXT("Options writes a real user configuration file to disk"), IFileManager::Get().FileExists(*SettingsPath));
+    if (IFileManager::Get().FileExists(*SettingsPath))
     {
-        GConfig->GetBool(TEXT("AmuletsAndArmor.Audio"), TEXT("MusicEnabled"), bSavedMusic, GGameUserSettingsIni);
-        GConfig->GetBool(TEXT("AmuletsAndArmor.Audio"), TEXT("EffectsEnabled"), bSavedEffects, GGameUserSettingsIni);
-        GConfig->GetFloat(TEXT("AmuletsAndArmor.Audio"), TEXT("MusicVolume"), SavedMusicVolume, GGameUserSettingsIni);
-        GConfig->GetFloat(TEXT("AmuletsAndArmor.Audio"), TEXT("EffectsVolume"), SavedEffectsVolume, GGameUserSettingsIni);
+        // Read through a new FConfigFile, not the process's GConfig cache that masked the old write failure.
+        FConfigFile Disk;
+        Disk.Read(SettingsPath);
+        Disk.GetBool(TEXT("AmuletsAndArmor.Audio"), TEXT("MusicEnabled"), bSavedMusic);
+        Disk.GetBool(TEXT("AmuletsAndArmor.Audio"), TEXT("EffectsEnabled"), bSavedEffects);
+        Disk.GetFloat(TEXT("AmuletsAndArmor.Audio"), TEXT("MusicVolume"), SavedMusicVolume);
+        Disk.GetFloat(TEXT("AmuletsAndArmor.Audio"), TEXT("EffectsVolume"), SavedEffectsVolume);
         TestFalse(TEXT("The music toggle is saved independently of a character checkpoint"), bSavedMusic);
         TestTrue(TEXT("The effects toggle is saved independently"), bSavedEffects);
         TestTrue(TEXT("The music slider is saved"), FMath::IsNearlyEqual(SavedMusicVolume, 0.25f));
@@ -72,3 +79,41 @@ bool FAAOriginalClassicAudioOptions::RunTest(const FString& Parameters)
     TestEqual(TEXT("Classic scrolling includes the wrapped word's row"), TextLineCount(TEXT("ab cde"), Font, 20), 2);
     return true;
 }
+
+#if PLATFORM_WINDOWS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalAudioOptionsWriteRetry, "AAOriginal.WAD.Interface.AudioOptionsWriteRetry",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalAudioOptionsWriteRetry::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadOptions;
+    const FAudioPreferences Original = GetAudioPreferences();
+    ON_SCOPE_EXIT { SetAudioPreferences(Original); };
+    FAudioPreferences Value = Original;
+    Value.MusicVolume = 0.2f;
+    SetAudioPreferences(Value);
+    const FString Path = AudioSettingsPath();
+    // A normal read handle without write/delete sharing models another process briefly using the
+    // existing settings file. No permissions or attributes are changed, and the old file stays intact.
+    TUniquePtr<IFileHandle> Reading(FPlatformFileManager::Get().GetPlatformFile().OpenRead(*Path, false));
+    if (!TestNotNull(TEXT("Hold the existing configuration open during a transient conflict"), Reading.Get())) { return false; }
+    Value.MusicVolume = 0.8f;
+    SetAudioPreferences(Value);
+    TestTrue(TEXT("The pending preference still applies live when persistence fails"),
+        FMath::IsNearlyEqual(GetAudioPreferences().MusicVolume, 0.8f));
+    FConfigFile BeforeRetry;
+    BeforeRetry.Read(Path);
+    float Saved = -1.0f;
+    BeforeRetry.GetFloat(TEXT("AmuletsAndArmor.Audio"), TEXT("MusicVolume"), Saved);
+    TestTrue(TEXT("A transient sharing conflict leaves the previous disk value intact"), FMath::IsNearlyEqual(Saved, 0.2f));
+    Reading.Reset();
+    // The cached value is identical and the old file exists: neither condition can suppress retry.
+    SetAudioPreferences(Value);
+    FConfigFile AfterRetry;
+    AfterRetry.Read(Path);
+    Saved = -1.0f;
+    AfterRetry.GetFloat(TEXT("AmuletsAndArmor.Audio"), TEXT("MusicVolume"), Saved);
+    TestTrue(TEXT("An identical request retries and saves after the conflict ends"), FMath::IsNearlyEqual(Saved, 0.8f));
+    return true;
+}
+#endif

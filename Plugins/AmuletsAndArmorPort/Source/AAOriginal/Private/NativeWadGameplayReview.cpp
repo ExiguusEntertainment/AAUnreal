@@ -1995,6 +1995,10 @@ namespace
         int32 NotesScrollBefore = 0;
         bool bOptionsReview = false;
         bool bOptionsReload = false;
+        bool bItemOwnersReview = false;
+        bool bItemOwnersReload = false;
+        bool bItemOwnersCompleteReload = false;
+        double RefreshedOwnerBefore = 0.0;
         bool bJewelryReview = false;
         bool bJewelryReload = false;
         int32 JewelryReviewLocation = 0;
@@ -11192,6 +11196,153 @@ namespace
             return true;
         }
 
+        bool TickItemOwners(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            if ((bItemOwnersReload || bItemOwnersCompleteReload) && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy) { Enemy->SetActorTickEnabled(false); }
+            const auto KnowledgeMatches = [&]
+            {
+                return Player.HasItemIdentificationState() && Player.HasIdentifiedItemType(417)
+                    && Player.HasIdentifiedItemType(350) && Player.HasIdentifiedItemType(803)
+                    && Player.HasIdentifiedItemType(804) && !Player.HasIdentifiedItemType(806)
+                    && Player.HasEquippedItem(417) && Player.GetItemCount(806) == 1;
+            };
+            const auto UseItem = [&](int32 Type)
+            {
+                if (Player.GetReadyItem() != Type || Player.IsInventoryOpen())
+                { ReadyCampaignItem(Player, Type); return false; }
+                Press(Player, EKeys::LeftControl);
+                return true;
+            };
+            if (NextPoint == 0)
+            {
+                if (bItemOwnersReload || bItemOwnersCompleteReload)
+                {
+                    if (!KnowledgeMatches() || Player.GetItemCount(803) || Player.GetItemCount(804) || Player.GetItemCount(350))
+                    { return Finish(&Player, TEXT("source item knowledge, equipped ring, or consumed objects failed to restore")); }
+                    if (bItemOwnersCompleteReload)
+                    {
+                        if (Player.GetOwnedEffectCount() || Player.GetStatusPower(HealthRegenStatus))
+                        { return Finish(&Player, TEXT("an explicitly empty saved effect registry resurrected an expired effect")); }
+                        UE_LOG(LogTemp, Display, TEXT("Verified learned full item types, unknown bag item, worn ring and empty expired owner registry after another process restart."));
+                        return Finish(&Player);
+                    }
+                    if (Player.GetOwnedEffectCount() != 2 || Player.GetStatusPower(HealthRegenStatus) != 900
+                        || Player.GetOwnedEffectRemaining(TEXT("item:803")) <= 0.0 || Player.GetOwnedEffectRemaining(TEXT("item:804")) <= 0.0)
+                    { return Finish(&Player, TEXT("independent source potion owners failed to restore with their remaining times")); }
+                    NextPoint = 20;
+                }
+                else
+                {
+                    Player.InitializeItemIdentification(false);
+                    for (int32 Type : {417, 806, 350, 803, 803, 804}) { Player.CollectItem(Type); }
+                    Press(Player, EKeys::I);
+                    ++NextPoint;
+                    return true;
+                }
+            }
+            if (NextPoint == 1)
+            {
+                if (!Player.IsInventoryOpen()) { return Finish(&Player, TEXT("the normal inventory key did not open the bag")); }
+                Player.ClickInventorySlot(Player.GetCarriedItems().Find(417));
+                Player.ClickJewelrySlot(Ring1Slot);
+                if (!Player.HasEquippedItem(417) || Player.HasIdentifiedItemType(417))
+                { return Finish(&Player, TEXT("wearing an unknown source ring incorrectly identified it")); }
+                Press(Player, EKeys::I);
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 2)
+            {
+                if (!UseItem(350)) { return true; }
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 3)
+            {
+                if (!Player.HasIdentifiedItemType(417) || Player.HasIdentifiedItemType(806) || Player.GetItemCount(350))
+                { return Finish(&Player, TEXT("normal equipped-identification scroll did not preserve its source scope")); }
+                ++NextPoint;
+            }
+            if (NextPoint == 4)
+            {
+                if (!UseItem(803)) { return true; }
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 5)
+            {
+                if (Player.GetOwnedEffectCount() != 1 || Player.GetStatusPower(HealthRegenStatus) != 300)
+                { return Finish(&Player, TEXT("the first normal regeneration potion did not create its source owner")); }
+                ++NextPoint;
+            }
+            if (NextPoint == 6)
+            {
+                if (!UseItem(804)) { return true; }
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 7)
+            {
+                if (Player.GetOwnedEffectCount() != 2 || Player.GetStatusPower(HealthRegenStatus) != 900)
+                { return Finish(&Player, TEXT("different potion types failed to stack as independent source owners")); }
+                RefreshedOwnerBefore = Player.GetOwnedEffectRemaining(TEXT("item:803"));
+                ++NextPoint;
+            }
+            if (NextPoint == 8)
+            {
+                if (!UseItem(803)) { return true; }
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 9)
+            {
+                if (Player.GetOwnedEffectCount() != 2 || Player.GetStatusPower(HealthRegenStatus) != 900
+                    || Player.GetOwnedEffectRemaining(TEXT("item:803")) <= RefreshedOwnerBefore || !KnowledgeMatches())
+                { return Finish(&Player, TEXT("reusing one source potion duplicated its owner or lost use-based identification")); }
+                ++NextPoint;
+            }
+            if (NextPoint == 10)
+            {
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadItemOwnersL30Review")))
+                { return Finish(&Player, TEXT("could not save item knowledge and distinct source owners")); }
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 11 && Current.GetMapName().EndsWith(TEXT("L301")))
+            {
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!KnowledgeMatches() || Player.GetOwnedEffectCount() != 2 || Player.GetStatusPower(HealthRegenStatus) != 900
+                    || !Player.SaveWadCheckpoint(TEXT("NativeWadItemOwnersReview")))
+                { return Finish(&Player, TEXT("map travel lost source item knowledge, equipment or temporary owners")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified normal identification scroll and potion use, same-owner refresh, distinct-owner stacking, unknown bag item, worn ring and L30 to L301 travel; saved for restart."));
+                return Finish(&Player);
+            }
+            if (NextPoint == 20)
+            {
+                if (Player.GetOwnedEffectRemaining(TEXT("item:803")) > 0.0) { return true; }
+                if (Player.GetOwnedEffectCount() != 1 || Player.GetStatusPower(HealthRegenStatus) != 600
+                    || Player.GetOwnedEffectRemaining(TEXT("item:804")) <= 0.0)
+                { return Finish(&Player, TEXT("expiry removed both source potion owners together")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified weaker potion owner expires independently while the stronger source potion remains active."));
+                ++NextPoint;
+            }
+            if (NextPoint == 21)
+            {
+                if (Player.GetOwnedEffectCount()) { return true; }
+                if (!KnowledgeMatches() || Player.GetStatusPower(HealthRegenStatus)
+                    || !Player.SaveWadCheckpoint(TEXT("NativeWadItemOwnersCompleteReview")))
+                { return Finish(&Player, TEXT("final owner expiry lost learned identities or could not save empty state")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified fresh-process source owner times, independent natural expiry, persistent identification and explicit empty registry save."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool TickOptions(UWorld& Current, ANativeWadPlayer& Player)
         {
             auto* Controller = Player.GetController<APlayerController>();
@@ -12782,6 +12933,7 @@ namespace
             if (bLookReview) { return TickLook(*Current, *Player); }
             if (bJewelryReview) { return TickJewelry(*Current, *Player); }
             if (bOptionsReview) { return TickOptions(*Current, *Player); }
+            if (bItemOwnersReview) { return TickItemOwners(*Current, *Player); }
             if (bNotesReview) { return TickNotes(*Current, *Player); }
             if (bPoisonCureReview) { return TickPoisonCures(*Player); }
             if (bFinalCampaignReload)
@@ -13297,6 +13449,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bPoisonCure = Mode == TEXT("poisoncures") || Mode == TEXT("poisoncuresreload") || Mode == TEXT("poisoncurescompletereload");
     const bool bNotes = Mode == TEXT("notes") || Mode == TEXT("notesreload");
     const bool bOptions = Mode == TEXT("options") || Mode == TEXT("optionsreload");
+    const bool bItemOwners = Mode == TEXT("itemowners") || Mode == TEXT("itemownersreload") || Mode == TEXT("itemownerscompletereload");
     const bool bJewelry = Mode == TEXT("wornjewelry") || Mode == TEXT("wornjewelryreload");
     const bool bLook = Mode == TEXT("creaturelook");
     const bool bDoorMagic = Mode == TEXT("doormagic") || Mode == TEXT("doormagicreload") || Mode == TEXT("doormagiccompletereload");
@@ -13334,6 +13487,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bEconomyReload ? TEXT("L301")
         : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
+        : bItemOwners ? (Mode == TEXT("itemowners") ? TEXT("L30") : TEXT("L301"))
         : bNotes ? (Mode == TEXT("notesreload") ? TEXT("L301") : TEXT("L30"))
         : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bPoisonCure || bOptions || bJewelry || bLook || bRevive || bMusic || bCharacter
             || Mode == TEXT("classequipment") || Mode == TEXT("elementalmelee") || Mode == TEXT("projectilewands") || Mode == TEXT("runeownership") || Mode == TEXT("runelegacy") ? TEXT("L30")
@@ -13373,6 +13527,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bNotesReload = Mode == TEXT("notesreload");
     Review->bOptionsReview = bOptions;
     Review->bOptionsReload = Mode == TEXT("optionsreload");
+    Review->bItemOwnersReview = bItemOwners;
+    Review->bItemOwnersReload = Mode == TEXT("itemownersreload");
+    Review->bItemOwnersCompleteReload = Mode == TEXT("itemownerscompletereload");
     Review->bJewelryReview = bJewelry;
     Review->bJewelryReload = Mode == TEXT("wornjewelryreload");
     Review->bLookReview = bLook;

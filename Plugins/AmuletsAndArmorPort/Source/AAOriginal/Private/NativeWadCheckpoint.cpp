@@ -30,7 +30,14 @@ namespace
     {
         auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(
             Slot.IsEmpty() ? UNativeWadCheckpoint::Slot : Slot, 0));
-        return Save && Save->Version == UNativeWadCheckpoint::CurrentVersion ? Save : nullptr;
+        if (!Save || Save->Version < 1 || Save->Version > UNativeWadCheckpoint::CurrentVersion) { return nullptr; }
+        const FURL URL(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
+        if (const TCHAR* Payload = URL.GetOption(TEXT("WadOwnedEffects="), nullptr))
+        {
+            FWadPlayerEffects Effects;
+            if (!Effects.Decode(Payload)) { return nullptr; }
+        }
+        return Save;
     }
 }
 
@@ -466,6 +473,8 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
     Save->View = GetControlRotation();
     Save->NeedsTime = NeedsTime;
     Save->PlayerOptions = MakeTravelOptions();
+    Save->bItemIdentificationRecorded = bItemIdentificationInitialized;
+    Save->IdentifiedItemTypes = IdentifiedItemTypes;
     if (const UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
     {
         Save->VisitedLevels = Travel->VisitedLevels;
@@ -513,6 +522,7 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
     const FURL SavedURL(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
     CarriedItems.Reset();
     ReadTravelOptions(SavedURL);
+    RestoreItemIdentification(Save->IdentifiedItemTypes, Save->bItemIdentificationRecorded);
     NeedsTime = FMath::Clamp(Save->NeedsTime, 0.0, 6.0);
     SetActorLocation(Save->Position, false, nullptr, ETeleportType::TeleportPhysics);
     GetCharacterMovement()->StopMovementImmediately();
@@ -565,6 +575,7 @@ bool ANativeWadPlayer::OpenWadTown()
 
 bool ANativeWadPlayer::ArchiveDeparture()
 {
+    StoreItemIdentification();
     const ANativeWadLevel* Level = NativeLevel.Get();
     UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
     FWadLevelCheckpoint Snapshot;
@@ -581,6 +592,8 @@ bool ANativeWadPlayer::ArchiveDeparture()
 void ANativeWadPlayer::RestoreVisitedLevel()
 {
     const UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    if (Travel && (Travel->bItemIdentificationRecorded || bWadCharacterCreated))
+    { RestoreItemIdentification(Travel->IdentifiedItemTypes, Travel->bItemIdentificationRecorded); }
     ANativeWadLevel* Level = NativeLevel.Get();
     if (!Travel || !Level)
     {

@@ -81,3 +81,47 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Source elemental melee passed with an actual raw roll of 110 producing 69 damage after chain's electric bonus and one resisted element. A new process retained the scroll effect, observed expiry, and exercised the enchanted mace's ready/unready behavior.
 - Found a second real interface issue: inherited Unreal debug keys execute in addition to classic bindings. F1 switched to wireframe and compiled an extra shader; F5/F9 and page keys also conflict. Removed those specific debug bindings in DefaultInput.ini. The rerun stays lit, with no view-mode change: [Controls](Saved/PlayableLoops-KeyProof-Options-controls.png). This is not attributed to the user's still-unreproduced movement hitch.
 - Milestones 222–228 are ready as an intermediate checkpoint. Options in-session UI is verified, but disk persistence remains explicitly open until its dedicated-file fix passes the next new-process test. Other pending source changes are excluded from this staged checkpoint.
+
+## 2026-11-27 14:35 CST — third batch integration
+
+- Pushed verified intermediate checkpoint `cebc5cbf` with the early encounters, wearable jewelry, source utility spells and classic forms (677 LFS objects, about 40 MB).
+- All three subagents are assigned independent work: strict owner-state validation and remaining spell audit; identification and real Options disk persistence/retry; source missing-picture fallback and an all-map preservation script.
+- Started the combined Editor build for owner-aware temporary effects, 36 additional source spell definitions (81 total pending verification), original identified/unidentified descriptions, Identify scrolls/spells, common new-character grants, and DRK42 surface fallback.
+- Added a normal-input item/owner integration review that saves, travels L30 to L301, restarts, observes independent natural expiry and saves an explicit empty registry. These new checks are pending, not completed claims.
+
+## 2026-11-27 14:39 CST — source dependencies and integration checks
+
+- Original Store code identifies an item only after a successful purchase. Added that behavior and actual purchase/refusal/preview regression coverage; merchant previews alone remain unknown.
+- Audited the remaining 27 spell records: movement 9, Magic Map 8, night vision 5, creation 3, life protection 2. Creation requires a genuinely retained mouse hand; Death Ward requires an alive state independent of zero HP. These remain open.
+- The all-map fallback verification now uses a narrow read-only side-texture getter and public component names instead of private reflection, avoiding the access issue previously encountered during encounter imports.
+- First integration compile found an Unreal Actor field-shadowing error in an effect-owner parameter. Renamed it; a corrective build is required before any runtime verification. Added real-player normal-rune casting coverage beyond static spell metadata checks.
+
+### Additional source parity findings
+
+- Flight suppression still uses one legacy flag across equipped amulets. Earthbind on amulet A, equipping B, then removing B can incorrectly reactivate A; source suppression belongs to each equipment owner. Source Dispel also reruns equipped READY effects, which should reactivate Earthbound flying equipment. Record both for the next equipment-owner pass; the temporary registry does not close these differences.
+- Source Feather Fall's main vertical integration implies a cap near 256.35 map units/second, whereas native currently uses about 16.02. The next movement pass must compare the discrete source integration before claiming exact trajectories.
+- Source creature treasure audit distinguishes ordinary defeat from stealing. Mighty Hunter has no ordinary defeat treasure case; Orange Wizard journal loot requires page AccData 407 and GET-trigger handling rather than an ordinary carried scroll.
+
+
+## 2026-11-27 14:43 CST — parallel implementation without build interference
+
+- Created isolated source copies under Saved/AgentWork; active subagents are implementing retained mouse-hand transfers/persistence, six movement spells with jump rules, and remaining ordinary creature treasure.
+- Main Plugins source remains frozen while the current Editor build and verification run. Agents will deliver reviewable patches; none of the next-phase copies are represented as tested or shipped.
+- Audited normal earned L40 tactic: replace the unused third electric scroll with a seventh invisibility scroll (+50 copper), and use it before the first flight crossing. This needs a real replay from the legitimate Town provisioning save; no extra item grant or encounter suppression is authorized as evidence.
+
+
+
+## 2026-11-27 14:49 CST — 45 regressions pass
+
+- Editor build succeeds and all 45 WAD regressions pass in Saved/Logs/PlayableLoops-OwnersIdentificationFallback-FinalAutomation.log. This includes all33 new timed-status definitions cast normally, all3 Identify spell scopes, strict owner codec/migration tests, actual starter creation/purchase identification, and real-file Options failed-write retry.
+- Integration caught missing ring417/418 catalog entries, an engine-outer error in an isolated GameInstance fixture, and absent source feedback after actual Identify rune casts. Corrected the catalog, fixtures and runtime feedback, then reran the full suite.
+- Refreshed classic HUD/item descriptions for366 source types (catalog count to be checked against import log). The all30map material-only fallback validation is running next; owner/identification and Options process-restart reviews remain pending.
+
+
+## 2026-11-27 14:54 CST — restart and all-map milestone verified
+
+- All three owner/identification processes pass: normal identification/potion use and same-owner refresh; L30-to-L301 travel/save; separate owner restoration and independent natural expiry; another process confirms the explicitly empty registry and retained known/unknown item types. Profile: Saved/ItemOwnerReview-20261127-145152/Owners.
+- Both rendered Options processes pass, including real disk reload from the dedicated per-user file. Inspected original Controls layout; user gains/toggles persist and F1 stays in the normal lit view. The existing magenta sky/mottled terrain remains a separate presentation audit.
+- Material-only fallback refresh passes all30 maps:169 missing-name surface bindings,67,629 preserved component states,11,325 unchanged mesh asset hashes. The first Python pass found a non-reflected overlap getter; the corrected reflected property pass completed. No geometry was rebuilt.
+- Rendered native L30 door147 opens in1.5sec, clears the capsule, reverses above the obstruction and recloses after its3.5sec hold. Inspected opening/open captures: original DRK42 brick fallback covers the raised wall bands correctly.
+- Updated PLAN milestones229–233 and the remaining source gaps. Parallel MouseHand, Movement and Treasure patches are ready in Saved/AgentWork, still unintegrated/unverified. The separate L40 earned-tactic patch preserves every route action index and has not been run.

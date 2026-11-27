@@ -1,6 +1,7 @@
 #include "SectorMeshBuilderActor.h"
 #include "DoomWadLoader.h"
 #include "DoomWadWalls.h"
+#include "WadSurfaceTextures.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
 #include "ProceduralMeshComponent.h"
@@ -50,6 +51,7 @@ namespace
         TMap<FString, FPictureResEntry> Entries;
         TArray<FColor> Palette;
         TMap<FString, TWeakObjectPtr<UTexture2D>> TextureCache;
+        TSet<FString> ReportedMissingTextures;
     };
 
     static FPictureResourceCache GPictureResourceCache;
@@ -157,7 +159,26 @@ namespace
         const FPictureResEntry* Entry = GPictureResourceCache.Entries.Find(Normalized);
         if (!Entry)
         {
-            return nullptr;
+            // Sky ceilings are rendered separately by the native importer/builder.
+            // They must not acquire an opaque missing-picture surface.
+            if (Normalized.StartsWith(TEXT("F_SKY")) || Normalized == TEXT("DRK42"))
+            {
+                return nullptr;
+            }
+            // PICS.C PictureLock uses DRK42 for missing named pictures in release
+            // builds too. Keep the authored name for diagnostics and saved assets;
+            // this is the source renderer's fallback, not a texture-name alias.
+            if (!GPictureResourceCache.ReportedMissingTextures.Contains(Normalized))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Missing authored WAD texture %s; using original PictureLock fallback DRK42."), *Normalized);
+                GPictureResourceCache.ReportedMissingTextures.Add(Normalized);
+            }
+            UTexture2D* Fallback = LoadSurfaceTexture(TEXT("DRK42"));
+            if (Fallback)
+            {
+                GPictureResourceCache.TextureCache.Add(Normalized, Fallback);
+            }
+            return Fallback;
         }
 
         TArray<uint8> ResourceBytes;
@@ -253,6 +274,13 @@ namespace
 UTexture2D* LoadWadSurfaceTexture(const FString& TextureName)
 {
     return LoadSurfaceTexture(TextureName);
+}
+
+bool HasWadSurfaceTexture(const FString& TextureName)
+{
+    const FString Normalized = NormalizeTextureName(TextureName);
+    return IsUsableTextureName(Normalized) && EnsurePictureResourceCache()
+        && GPictureResourceCache.Entries.Contains(Normalized);
 }
 
 bool LoadWadBackdrop(const FString& PictureName, FIntPoint& Size, TArray<FColor>& Pixels)

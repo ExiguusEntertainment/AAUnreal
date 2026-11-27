@@ -18,6 +18,7 @@ namespace NativeWadOptions
 
     // These are user preferences, separate from any character or campaign checkpoint.
     AAORIGINAL_API const FAudioPreferences& GetAudioPreferences();
+    AAORIGINAL_API FString AudioSettingsPath();
     AAORIGINAL_API void SetAudioPreferences(FAudioPreferences Preferences);
     AAORIGINAL_API float EffectiveVolume(EAudioChannel Channel, float AuthoredVolume);
     AAORIGINAL_API void TrackAudio(UAudioComponent* Audio, EAudioChannel Channel, float AuthoredVolume);

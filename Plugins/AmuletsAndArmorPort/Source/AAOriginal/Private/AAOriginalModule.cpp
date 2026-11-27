@@ -1044,6 +1044,19 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD surface refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADMISSINGMATERIALS")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadMissingMaterials(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadMissingMaterials failed. Usage: AA.RefreshNativeWadMissingMaterials <WadPath> <MapName> </Game/MapPackage>"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD missing material refresh finished"));
+            return true;
+        }
 #endif
         else if (FParse::Command(&Cmd, TEXT("AA.USEWADDOOR")))
         {
@@ -1138,6 +1151,7 @@ public:
                     || Review == TEXT("poisoncures") || Review == TEXT("poisoncuresreload") || Review == TEXT("poisoncurescompletereload")
                     || Review == TEXT("notes") || Review == TEXT("notesreload")
                     || Review == TEXT("options") || Review == TEXT("optionsreload")
+                    || Review == TEXT("itemowners") || Review == TEXT("itemownersreload") || Review == TEXT("itemownerscompletereload")
                     || Review == TEXT("wornjewelry") || Review == TEXT("wornjewelryreload")
                     || Review == TEXT("creaturelook")
                     || Review == TEXT("doormagic") || Review == TEXT("doormagicreload") || Review == TEXT("doormagiccompletereload")

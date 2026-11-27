@@ -74,11 +74,12 @@ int32 ANativeWadPlayer::GetReadyItem() const
     return CarriedItems.IsValidIndex(ReadySlot) ? CarriedItems[ReadySlot] : 0;
 }
 
-FString ANativeWadPlayer::GetInventoryItemDescription(int32 Type) const
+FString ANativeWadPlayer::GetInventoryItemDescription(int32 Type, bool bMerchantPreview) const
 {
     if (const FWadInventoryDetails* Details = GetItemRules(Type); Details && !Details->Description.IsEmpty())
     {
-        return Details->Description;
+        return bMerchantPreview || HasIdentifiedItemType(Type) ? Details->Description
+            : Details->UnidentifiedDescription.IsEmpty() ? FString(TEXT("Unidentified item")) : Details->UnidentifiedDescription;
     }
     return FallbackItemName(Type);
 }
@@ -268,7 +269,7 @@ int32 ANativeWadPlayer::GetArmorRating() const
     {
         if (ShieldSeconds[Index] > 0.0)
         {
-            Shield += 10 + 5 * Index;
+            Shield += TimedEffects.Power(EWadTimedEffectKind::ShieldPotion, Index);
         }
     }
     // STATS.C caps only magical shielding at ninety before comparing each body
@@ -409,6 +410,7 @@ void ANativeWadPlayer::UseReadyHand()
         ShowInteractionMessage(TEXT("Your class can't use this item."));
         return;
     }
+    if (UseIdentificationItem(ReadySlot)) { return; }
     if (Type == Crossbow)
     {
         FireCrossbow();
@@ -436,8 +438,9 @@ void ANativeWadPlayer::UseReadyHand()
     {
         if (RemoveInventorySlot(ReadySlot))
         {
+            RecordItemUseIdentification(Type);
             const double Duration = Type == FlyingPotion ? FlyingPotionSeconds : FlyingScrollSeconds;
-            FlightSeconds = FMath::Max(FlightSeconds, Duration);
+            ApplyTimedEffect(FWadPlayerEffects::ConsumableOwner(Type), EWadTimedEffectKind::Flight, INDEX_NONE, 1, Duration);
             ShowInteractionMessage(TEXT("You feel as light as the air around you!"));
             UE_LOG(LogTemp, Display, TEXT("Used WAD flight item %d for %.2f seconds."), Type, Duration);
         }
@@ -447,14 +450,15 @@ void ANativeWadPlayer::UseReadyHand()
     {
         if (RemoveInventorySlot(ReadySlot))
         {
+            RecordItemUseIdentification(Type);
             if (Type == WaterWalkPotion)
             {
-                WaterWalkSeconds = WaterWalkPotionSeconds;
+                ApplyTimedEffect(FWadPlayerEffects::ConsumableOwner(Type), EWadTimedEffectKind::WaterWalk, INDEX_NONE, 1, WaterWalkPotionSeconds);
                 Water = FMath::Clamp(Water + 200, 0, MaxFood);
             }
             else
             {
-                FeatherfallSeconds = FeatherfallPotionSeconds;
+                ApplyTimedEffect(FWadPlayerEffects::ConsumableOwner(Type), EWadTimedEffectKind::FeatherFall, INDEX_NONE, 1, FeatherfallPotionSeconds);
             }
             ShowInteractionMessage(FString::Printf(TEXT("Used %s"), *GetInventoryItemDescription(Type)));
         }
@@ -464,7 +468,9 @@ void ANativeWadPlayer::UseReadyHand()
     {
         if (RemoveInventorySlot(ReadySlot))
         {
-            ShieldSeconds[Type - ShieldPotionFirst] = ShieldPotionSeconds;
+            RecordItemUseIdentification(Type);
+            ApplyTimedEffect(FWadPlayerEffects::ConsumableOwner(Type), EWadTimedEffectKind::ShieldPotion,
+                Type - ShieldPotionFirst, 10 + 5 * (Type - ShieldPotionFirst), ShieldPotionSeconds);
             ShowInteractionMessage(TEXT("You feel protected!"));
         }
         return;
@@ -682,6 +688,7 @@ bool ANativeWadPlayer::LaunchWadProjectile(const FWadWandProjectile& Projectile)
 void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
 {
     const int32 Type = GetReadyItem();
+    RecordItemUseIdentification(Type);
     const int32 BeforeHealth = Health;
     const int32 BeforeFood = Food;
     const int32 BeforePoison = PoisonLevel;
@@ -694,8 +701,8 @@ void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
     else { PoisonLevel /= FMath::Max(1, Details.PoisonDivisor); }
     if (Details.Status >= 0 && Details.Status < ItemStatusCount && Details.StatusTicks > 0)
     {
-        ItemStatusSeconds[Details.Status] = Details.StatusTicks / double(TicksPerSecond);
-        ItemStatusPower[Details.Status] = Details.StatusPower;
+        ApplyTimedEffect(FWadPlayerEffects::ConsumableOwner(Type), EWadTimedEffectKind::Status,
+            Details.Status, Details.StatusPower, Details.StatusTicks / double(TicksPerSecond));
     }
     if (Details.bConsumed)
     {

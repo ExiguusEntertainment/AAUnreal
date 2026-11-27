@@ -325,13 +325,46 @@ bool ANativeWadHUD::ExamineAt(const FVector2D& ViewportPoint)
     const auto Layout = InputLayout(Controller);
     if (!Player || !Controller || !ClassicData || Player->IsMouseLook() || Layout.Scale <= 0.0) { return false; }
     const FVector2D Point = (ViewportPoint - Layout.Origin) / Layout.Scale;
+    int32 ItemSlot = Ready.IsInside(Point) ? Player->GetReadySlot() : INDEX_NONE;
+    if (Player->IsInventoryOpen() && Form == EForm::Inventory)
+    {
+        const FInventoryView View(*Player, *ClassicData);
+        const int32 Start = InventoryPage * SlotsPerPage;
+        for (int32 Cell = Start; Cell < FMath::Min(Start + SlotsPerPage, View.Cells.Num()); ++Cell)
+        { if (SlotBox(Cell).IsInside(Point)) { ItemSlot = View.Cells[Cell].FirstSlot; break; } }
+    }
+    else if (Player->IsInventoryOpen() && Form == EForm::Equipment)
+    {
+        for (int32 Location = 0; Location < UE_ARRAY_COUNT(ArmorBoxes); ++Location)
+        { if (ArmorBoxes[Location].IsInside(Point)) { ItemSlot = Player->WornSlots[Location]; break; } }
+        for (int32 Location = 0; Location < UE_ARRAY_COUNT(JewelryBoxes); ++Location)
+        { if (JewelryBoxes[Location].IsInside(Point)) { ItemSlot = Player->GetJewelryInventorySlot(Location); break; } }
+    }
+    if (Player->GetCarriedItems().IsValidIndex(ItemSlot))
+    {
+        Player->ShowInteractionMessage(Player->GetInventoryItemDescription(Player->GetCarriedItems()[ItemSlot]));
+        return true;
+    }
     const FBox2D VisibleView(ViewOpening.Min, {Player->IsInventoryOpen() ? 205.0 : ViewOpening.Max.X, ViewOpening.Max.Y});
     if (!VisibleView.IsInside(Point)) { return false; }
     FVector Origin, Direction;
     FHitResult Hit;
     FCollisionQueryParams Query(SCENE_QUERY_STAT(WadCreatureLook), true, Player);
-    const bool bHit = Controller->DeprojectScreenPositionToWorld(ViewportPoint.X, ViewportPoint.Y, Origin, Direction)
+    const bool bRay = Controller->DeprojectScreenPositionToWorld(ViewportPoint.X, ViewportPoint.Y, Origin, Direction);
+    const bool bHit = bRay
         && GetWorld()->LineTraceSingleByChannel(Hit, Origin, Origin + Direction * 20000.0, ECC_Visibility, Query);
+    // Authored pickups deliberately ignore visibility so they do not block combat rays. Use the
+    // existing pickup channel, bounded by the nearest visible wall/creature, just as normal Use does.
+    FHitResult ItemHit;
+    const bool bItemHit = bRay && GetWorld()->LineTraceSingleByChannel(ItemHit, Origin,
+        bHit ? Hit.ImpactPoint : Origin + Direction * 20000.0, ANativeWadPickup::InteractionChannel, Query);
+    const auto* Item = bItemHit ? Cast<ANativeWadPickup>(ItemHit.GetActor())
+        : bHit ? Cast<ANativeWadPickup>(Hit.GetActor()) : nullptr;
+    if (Item && Item->IsAvailable())
+    {
+        Player->ShowInteractionMessage(Player->GetInventoryItemDescription(Item->GetItemType()));
+        return true;
+    }
     const auto* Creature = bHit ? Cast<ANativeWadGuardian>(Hit.GetActor()) : nullptr;
     if (!Creature || Creature->IsHidden())
     {

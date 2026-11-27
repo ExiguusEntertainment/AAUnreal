@@ -305,6 +305,10 @@ public:
     bool GetWallLine(int32 Line, FWadWallLine& Wall);
     int32 GetLineCount() const { return Lines.Num(); }
 
+    // Read the saved lower/middle/upper picture names without exposing mutable topology.
+    UFUNCTION(BlueprintPure, Category="WAD|Surfaces")
+    TArray<FString> GetWadSideTextureNames(int32 Side) const;
+
 private:
     friend struct FAAWadNativeImport;
 

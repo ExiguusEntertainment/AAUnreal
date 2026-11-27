@@ -4,6 +4,7 @@
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/HUD.h"
 #include "NativeWadRules.h"
+#include "NativeWadPlayerEffects.h"
 #include "NativeWadPlayer.generated.h"
 
 class UCameraComponent;
@@ -68,7 +69,15 @@ public:
     const TArray<int32>& GetCarriedItems() const { return CarriedItems; }
     int32 GetReadySlot() const { return ReadySlot; }
     int32 GetReadyItem() const;
-    FString GetInventoryItemDescription(int32 Type) const;
+    FString GetInventoryItemDescription(int32 Type, bool bMerchantPreview = false) const;
+    bool HasIdentifiedItemType(int32 Type) const;
+    bool IdentifyItemType(int32 Type);
+    void IdentifyEquippedItems();
+    void IdentifyAllCarriedItems();
+    void InitializeItemIdentification(bool bKnowCarriedItems);
+    void RestoreItemIdentification(const TSet<int32>& Types, bool bRecorded);
+    const TSet<int32>& GetIdentifiedItemTypes() const { return IdentifiedItemTypes; }
+    bool HasItemIdentificationState() const { return bItemIdentificationInitialized; }
     int32 GetSelectedInventorySlot() const { return SelectedInventorySlot; }
     bool IsInventoryOpen() const { return bInventoryOpen; }
     bool IsMouseLook() const { return bMouseLook; }
@@ -92,6 +101,8 @@ public:
     bool IsWaterWalking() const { return bOnWaterSurface; }
     bool IsConcealed() const { return bConcealed; }
     int32 GetStatusPower(NativeWadRules::EItemStatus Status) const;
+    int32 GetOwnedEffectCount() const { return TimedEffects.Num(); }
+    double GetOwnedEffectRemaining(const FString& EffectOwner) const { return TimedEffects.Remaining(EffectOwner); }
     void StartWadEarthquake(double Duration);
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
     bool SaveWadCheckpoint(const FString& Slot = FString()) const;
@@ -133,6 +144,9 @@ private:
     void EquipArmor(int32 Slot, const FWadInventoryDetails& Details);
     bool EquipJewelry(int32 Slot, const FWadInventoryDetails& Details, int32 Location = INDEX_NONE);
     void UseConsumable(const FWadInventoryDetails& Details);
+    void ApplyTimedEffect(const FString& EffectOwner, EWadTimedEffectKind Kind, int32 Status, int32 Power, double Seconds);
+    void RefreshTimedEffectCache();
+    void RestoreTimedEffects(const TCHAR* Payload);
     void DropInventoryItem();
     void UseReadyHand();
     void ClickPressed();
@@ -199,6 +213,7 @@ private:
     int32 SelectedAmmo = 0;
     int32 AmmoReserve[UE_ARRAY_COUNT(NativeWadRules::CrossbowAmmo)] = {};
     double ItemStatusSeconds[NativeWadRules::ItemStatusCount] = {};
+    FWadPlayerEffects TimedEffects;
     int32 ItemStatusPower[NativeWadRules::ItemStatusCount] = {};
     bool bConcealed = false;
     bool bOnLavaSurface = false;
@@ -224,6 +239,12 @@ private:
     TOptional<double> TravelHour;
     double NeedsTime = 0.0;
     TArray<int32> CarriedItems;
+    // Full uint16 source type IDs: colored item variants have independent knowledge.
+    TSet<int32> IdentifiedItemTypes;
+    bool bItemIdentificationInitialized = false;
+    void StoreItemIdentification();
+    void RecordItemUseIdentification(int32 Type);
+    bool UseIdentificationItem(int32 Slot);
     FString InteractionMessage;
     FString Runes;
     double MessageUntil = 0.0;
