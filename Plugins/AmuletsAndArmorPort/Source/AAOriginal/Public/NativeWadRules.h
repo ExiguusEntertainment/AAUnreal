@@ -82,6 +82,11 @@ namespace NativeWadRules
         {TEXT("23"), TEXT("Pull"), ESpellSchool::Cleric, ESpellEffect::Projectile, 200, 30, 0, 1, 14 }, // SPL00078
         {TEXT("43"), TEXT("Push"), ESpellSchool::Cleric, ESpellEffect::Projectile, 300, 20, 0, 1, 13 }, // SPL00079
         {TEXT("697"), TEXT("Gods Wrath"), ESpellSchool::Cleric, ESpellEffect::Projectile, 1000, -40, 0, 1, 8 }, // SPL00101
+        {TEXT("46"), TEXT("Wizard Lock"), ESpellSchool::Mage, ESpellEffect::Projectile, 500, 30, 0, 1, 9}, // SPL00006
+        {TEXT("146"), TEXT("Knock"), ESpellSchool::Mage, ESpellEffect::Projectile, 1000, 10, 0, 1, 10}, // SPL00011
+        {TEXT("467"), TEXT("Lock"), ESpellSchool::Arcane, ESpellEffect::Projectile, 1000, 30, 0, 1, 9}, // SPL00048
+        {TEXT("1467"), TEXT("Knock"), ESpellSchool::Arcane, ESpellEffect::Projectile, 1000, 10, 0, 1, 10}, // SPL00053
+        {TEXT("42"), TEXT("Knock"), ESpellSchool::Cleric, ESpellEffect::Projectile, 500, 40, 0, 1, 10}, // SPL00076
         {TEXT("134"), TEXT("Angry Word"), ESpellSchool::Mage, ESpellEffect::Projectile, 300, 20, 0, 1, 18}, // SPL00010
         {TEXT("134"), TEXT("Angry Word"), ESpellSchool::Arcane, ESpellEffect::Projectile, 300, 20, 0, 1, 18}, // SPL00052
         {TEXT("184"), TEXT("Dispel Magic"), ESpellSchool::Mage, ESpellEffect::Projectile, 800, 10, 0, 1, 11}, // SPL00015
@@ -204,6 +209,11 @@ namespace NativeWadRules
         bool bHoming;
         const TCHAR* Art;
     };
+    inline constexpr int32 AbsoluteDoorLock = 65535;
+    constexpr int32 AdjustDoorLockStrength(int32 Current, bool bLock)
+    {
+        return Current == AbsoluteDoorLock ? Current : bLock ? FMath::Min(255, Current + 10) : FMath::Max(0, Current - 10);
+    }
     inline constexpr double MaxCreatureControlSeconds = (65535.0 + 2100.0) / TicksPerSecond;
     inline constexpr uint8 SpecialDamage = 128;
     enum class ESpecialDamage : uint8 { Lock, Unlock, Dispel, Push, Pull, Earthbind, Confuse, Berserk, Slow, Paralyze };
@@ -261,6 +271,8 @@ namespace NativeWadRules
         {16, 4015, 250, 100.0f, DamageFlag(EProjectileDamage::Poison), false, TEXT("MISSIL16/1.CPC")},
         {13, 31, 2500, 20.0f, SpecialDamageFlag(ESpecialDamage::Push), false, TEXT("FIREBALL/BOLT01.CPC")},
         {14, 4002, 2500, 100.0f, SpecialDamageFlag(ESpecialDamage::Pull), false, TEXT("MISSILE3/1.CPC")},
+        {9, 4012, 10, 100.0f, SpecialDamageFlag(ESpecialDamage::Lock), false, TEXT("MISSIL13/1.CPC")},
+        {10, 4013, 10, 100.0f, SpecialDamageFlag(ESpecialDamage::Unlock), false, TEXT("MISSIL14/1.CPC")},
         {18, 4000, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Berserk), false, TEXT("MISSILE1/1.CPC")},
         {11, 4007, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Dispel), false, TEXT("MISSILE8/1.CPC")},
         {15, 4008, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Earthbind), false, TEXT("MISSILE9/1.CPC")},

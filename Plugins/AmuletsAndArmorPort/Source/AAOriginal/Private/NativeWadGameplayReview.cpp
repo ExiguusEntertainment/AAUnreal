@@ -1980,6 +1980,11 @@ namespace
         FVector PresentationPlayerStart = FVector::ZeroVector;
         bool bAmmoReview = false;
         bool bAmmoBannerReview = false;
+        bool bDoorMagicReview = false;
+        bool bDoorMagicReload = false;
+        bool bDoorMagicCompleteReload = false;
+        int32 MagicDoorSector = INDEX_NONE;
+        FVector MagicDoorAim = FVector::ZeroVector;
         bool bBerserkReview = false;
         bool bBerserkReload = false;
         TWeakObjectPtr<ANativeWadGuardian> BerserkVictim;
@@ -10469,6 +10474,176 @@ namespace
             return true;
         }
 
+        bool TickDoorMagic(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            UWorld& Current = *Player.GetWorld();
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            if (!Level) { return Finish(&Player, TEXT("door magic needs the original L25 level")); }
+            const auto Fire = [&](int32 Type, const FVector& Point)
+            {
+                if (Player.GetReadyItem() != Type || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, Type); return false; }
+                if (Current.GetTimeSeconds() - StageTime < 0.25) { return false; }
+                Aim(Player, Point);
+                Press(Player, EKeys::LeftControl);
+                StageTime = Current.GetTimeSeconds();
+                return true;
+            };
+            if (NextPoint == 0)
+            {
+                if ((bDoorMagicReload || bDoorMagicCompleteReload) && !Player.HasRestoredWadCheckpoint()) { return true; }
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                { Enemy->SetActorTickEnabled(false); Enemy->GetCharacterMovement()->DisableMovement(); Enemy->SetActorEnableCollision(false); }
+                for (const FAAWadNativeDoor& DoorInfo : Level->GetDoors())
+                {
+                    if (DoorInfo.LockStrength != 0 || DoorInfo.RequiredItem > 0) { continue; }
+                    for (int32 LineIndex = 0; LineIndex < Level->GetLineCount(); ++LineIndex)
+                    {
+                        FWadWallLine Wall;
+                        if (!Level->GetWallLine(LineIndex, Wall)) { continue; }
+                        const int32 Neighbor = Wall.Sectors.X == DoorInfo.Sector ? Wall.Sectors.Y
+                            : Wall.Sectors.Y == DoorInfo.Sector ? Wall.Sectors.X : INDEX_NONE;
+                        if (Neighbor < 0 || Neighbor == DoorInfo.Sector) { continue; }
+                        const FVector2D Middle = (Wall.From + Wall.To) * 0.5;
+                        const FVector2D Along = (Wall.To - Wall.From).GetSafeNormal();
+                        for (double Sign : {-1.0, 1.0})
+                        {
+                            const FVector2D Point = Middle + FVector2D(-Along.Y, Along.X) * (60.0 * Sign);
+                            if (Level->FindWadSector(Point) != Neighbor || !PlaceReviewPlayer(**Level, Player, Point)) { continue; }
+                            MagicDoorSector = DoorInfo.Sector;
+                            MagicDoorAim = FVector(Middle, Level->GetWalkingHeight(Neighbor) + 24.0);
+                            break;
+                        }
+                        if (MagicDoorSector != INDEX_NONE) { break; }
+                    }
+                    if (MagicDoorSector != INDEX_NONE) { break; }
+                }
+                if (MagicDoorSector == INDEX_NONE || Level->GetDoorLockStrength(148) != (bDoorMagicCompleteReload ? 0 : AbsoluteDoorLock))
+                { return Finish(&Player, TEXT("door magic requires a converted free door and the original absolute key lock")); }
+                HealthBeforeCast = Player.GetHealth();
+                ExperienceBeforeTravel = Player.GetExperience();
+                if (bDoorMagicCompleteReload)
+                {
+                    FWadLevelCheckpoint State;
+                    if (Level->GetDoorLockStrength(MagicDoorSector) != 0 || Player.GetItemCount(ChurchKey) != 0
+                        || Player.GetItemCount(919) != 1 || Player.GetItemCount(920) != 1 || Player.GetReadyItem() != 919 || Player.GetMana() != 500
+                        || !Level->WriteCheckpoint(State) || !State.UnlockedItemDoors.Contains(148) || !Level->UseDoor(148))
+                    { return Finish(&Player, TEXT("final door magic reload lost the consumed key, unlocked state, wands, or refusal mana")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified final magic-unlocked door and consumed-key door reopen after a process restart, with retained wands and refusal mana."));
+                    return Finish(&Player);
+                }
+                if (bDoorMagicReload)
+                {
+                    if (Level->GetDoorLockStrength(MagicDoorSector) != 20 || Player.GetMana() != 8000)
+                    { return Finish(&Player, TEXT("ordinary lock strength or mana failed to reload")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the ordinary door retains strength 20 across a process restart."));
+                    NextPoint = 10;
+                }
+                else
+                {
+                    if (Level->GetDoorLockStrength(MagicDoorSector) != 0) { return Finish(&Player, TEXT("the fresh ordinary door should be unlocked")); }
+                    NextPoint = 1;
+                }
+            }
+            FVector2D Heights;
+            Level->GetSectorSurfaceHeights(MagicDoorSector, Heights);
+            const FAAWadNativeDoor* DoorInfo = Level->GetDoors().FindByPredicate([&](const FAAWadNativeDoor& Entry) { return Entry.Sector == MagicDoorSector; });
+            switch (NextPoint)
+            {
+            case 1:
+                if (Fire(919, MagicDoorAim)) { ++NextPoint; }
+                break;
+            case 2:
+                if (Current.GetTimeSeconds() - StageTime < 0.2) { break; }
+                if (Level->GetDoorLockStrength(MagicDoorSector) != 10 || Player.GetMana() != 9000)
+                { return Finish(&Player, TEXT("Lock did not strengthen the ordinary door by ten at the source cost")); }
+                if (Fire(919, MagicDoorAim)) { ++NextPoint; }
+                break;
+            case 3:
+                if (Current.GetTimeSeconds() - StageTime < 0.2) { break; }
+                if (Level->GetDoorLockStrength(MagicDoorSector) != 20 || Player.GetMana() != 8000
+                    || Player.GetHealth() != HealthBeforeCast || Player.GetExperience() != ExperienceBeforeTravel)
+                { return Finish(&Player, TEXT("repeated Lock had the wrong strength, mana, damage, or XP")); }
+                Aim(Player, MagicDoorAim);
+                Press(Player, EKeys::E);
+                ++NextPoint;
+                break;
+            case 4:
+                if (Heights.X != Heights.Y) { return Finish(&Player, TEXT("normal E opened a magically locked door")); }
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadDoorMagicReview"))) { return Finish(&Player, TEXT("could not save numeric door lock strength")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified two normal Lock wand shots strengthen a door to 20, E refuses it, and the lock saves."));
+                return Finish(&Player);
+            case 10:
+                if (Fire(920, MagicDoorAim)) { ++NextPoint; }
+                break;
+            case 11:
+                if (Current.GetTimeSeconds() - StageTime < 0.2) { break; }
+                if (Level->GetDoorLockStrength(MagicDoorSector) != 10 || Player.GetMana() != 7400)
+                { return Finish(&Player, TEXT("Unlock did not decrease the saved lock by ten")); }
+                if (Fire(920, MagicDoorAim)) { ++NextPoint; }
+                break;
+            case 12:
+                if (Current.GetTimeSeconds() - StageTime < 0.2) { break; }
+                if (Level->GetDoorLockStrength(MagicDoorSector) != 0 || Player.GetMana() != 6800)
+                { return Finish(&Player, TEXT("two Unlock shots did not clear the saved ordinary lock")); }
+                Aim(Player, MagicDoorAim);
+                Press(Player, EKeys::E);
+                ++NextPoint;
+                break;
+            case 13:
+                if (Heights.Y < DoorInfo->OpenZ) { break; }
+                UE_LOG(LogTemp, Display, TEXT("Verified normal Unlock shots reduce 20 to ten to zero, and E opens the door."));
+                if (!PlaceReviewPlayer(**Level, Player, {40, -3290})) { return Finish(&Player, TEXT("could not reach the original L25 key door approach")); }
+                ++NextPoint;
+                break;
+            case 14:
+                if (Fire(920, FVector(9, -3290, 17))) { ++NextPoint; }
+                break;
+            case 15:
+                if (Current.GetTimeSeconds() - StageTime < 0.2) { break; }
+                if (Level->GetDoorLockStrength(148) != AbsoluteDoorLock || Player.GetMana() != 6200)
+                { return Finish(&Player, TEXT("Unlock bypassed the original absolute key lock")); }
+                Aim(Player, {9, -3290, 17});
+                Press(Player, EKeys::E);
+                ++NextPoint;
+                break;
+            case 16:
+                if (Player.GetInteractionMessage() != TEXT("Door requires key to be opened."))
+                { return Finish(&Player, TEXT("the key door did not retain its normal required-item refusal")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified Unlock cannot weaken the absolute key lock or bypass its normal required-item check."));
+                Player.CollectItem(ChurchKey); // Controlled key supply; the separate generator review covers acquisition.
+                Press(Player, EKeys::E);
+                ++NextPoint;
+                break;
+            case 17:
+                if (Level->GetDoorLockStrength(148) != 0 || Player.GetItemCount(ChurchKey) != 0)
+                { return Finish(&Player, TEXT("the original key did not consume and clear its absolute lock")); }
+                Player.RestoreWadVital(10, 600 - Player.GetMana());
+                if (Fire(920, FVector(9, -3290, 17))) { ++NextPoint; }
+                break;
+            case 18:
+                if (Player.GetMana() != 300 || Level->GetDoorLockStrength(148) != 0 || Player.GetItemCount(920) != 1)
+                { return Finish(&Player, TEXT("Unlock failed source exact-cost refusal or retained-item checks")); }
+                Player.RestoreWadVital(10, 1000 - Player.GetMana());
+                ++NextPoint;
+                break;
+            case 19:
+                if (Fire(919, MagicDoorAim)) { ++NextPoint; }
+                break;
+            case 20:
+                if (Player.GetMana() != 500 || Player.GetItemCount(919) != 1 || Level->GetDoorLockStrength(MagicDoorSector) != 0)
+                { return Finish(&Player, TEXT("Lock failed source exact-cost refusal or retained-item checks")); }
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadDoorMagicCompleteReview")))
+                { return Finish(&Player, TEXT("could not save the magic and key unlock results")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified key consumption, both utility wand refusals and retained items; saved final unlocked doors."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool TickBerserkWand(ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
@@ -12149,6 +12324,7 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bDoorMagicReview) { return TickDoorMagic(*Player); }
             if (bBerserkReview) { return TickBerserkWand(*Player); }
             if (bDispelReview) { return TickDispelEffects(*Player); }
             if (bControlWandReview) { return TickControlWands(*Player); }
@@ -12608,6 +12784,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bBoulder = Mode == TEXT("boulderrail") || Mode == TEXT("boulderrail75");
     const bool bAmmo = Mode == TEXT("specialammo") || Mode == TEXT("specialammoreload");
     const bool bAmmoBanner = Mode == TEXT("ammobanner");
+    const bool bDoorMagic = Mode == TEXT("doormagic") || Mode == TEXT("doormagicreload") || Mode == TEXT("doormagiccompletereload");
     const bool bBerserk = Mode == TEXT("berserkwand") || Mode == TEXT("berserkwandreload");
     const bool bDispel = Mode == TEXT("dispeleffects") || Mode == TEXT("dispeleffectsreload");
     const bool bControlWands = Mode == TEXT("controlwands") || Mode == TEXT("controlwandsreload");
@@ -12626,7 +12803,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         || L25Review == EL25Review::L20Exit;
     const FString CampaignMap = CampaignRoute ? FString::Printf(TEXT("L%d"), CampaignRoute->Map) : FString();
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : CampaignRoute ? *CampaignMap : bStartsInL20 ? TEXT("L20")
-        : bControlWands || bBerserk ? TEXT("L61")
+        : bDoorMagic ? TEXT("L25") : bControlWands || bBerserk ? TEXT("L61")
         : Mode == TEXT("elymaspresentation") ? TEXT("L44") : Mode == TEXT("templegenerator") ? TEXT("L41") : Mode == TEXT("undeadwizardgenerator") ? TEXT("L10")
         : (Mode == TEXT("infinitegenerator") || Mode == TEXT("lavaterrain")) ? TEXT("L71")
         : TempleReview == ETempleReview::L51 ? TEXT("L51") : TempleReview != ETempleReview::None ? TEXT("L52")
@@ -12671,6 +12848,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bElymasPresentationReview = Mode == TEXT("elymaspresentation");
     Review->bAmmoReview = bAmmo;
     Review->bAmmoBannerReview = bAmmoBanner;
+    Review->bDoorMagicReview = bDoorMagic;
+    Review->bDoorMagicReload = Mode == TEXT("doormagicreload");
+    Review->bDoorMagicCompleteReload = Mode == TEXT("doormagiccompletereload");
     Review->bBerserkReview = bBerserk;
     Review->bBerserkReload = Mode == TEXT("berserkwandreload");
     Review->bDispelReview = bDispel;

@@ -152,6 +152,9 @@ struct FAAWadNativeDoor
 
     UPROPERTY(VisibleAnywhere, Category="WAD")
     int32 RequiredItem = 0;
+
+    UPROPERTY(VisibleAnywhere, Category="WAD")
+    int32 LockStrength = -1;
 };
 
 USTRUCT()
@@ -289,6 +292,8 @@ public:
     int32 GetScriptMissilesBlocked() const { return ScriptMissilesBlocked; }
     void CountBlockedScriptMissile() { ++ScriptMissilesBlocked; }
     void LockScriptDoorsNear(const FVector2D& Impact);
+    int32 GetDoorLockStrength(int32 Sector);
+    bool ModifyDoorLocksNear(const FVector2D& Impact, bool bLock, double Radius);
     bool WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDiscardProjectiles = false) const;
     bool RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint);
 
@@ -399,6 +404,7 @@ private:
     TSet<int32> FiredPickupGenerators;
     TSet<int32> UnlockedItemDoors;
     TSet<int32> ScriptLockedDoors;
+    TMap<int32, int32> DoorLockStrengths;
 
     UPROPERTY()
     TObjectPtr<UMaterialInterface> ScriptMissileArt;

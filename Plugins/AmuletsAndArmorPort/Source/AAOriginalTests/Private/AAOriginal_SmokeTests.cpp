@@ -1600,3 +1600,20 @@ bool FAAOriginalBerserkTarget::RunTest(const FString& Parameters)
     TestNull(TEXT("An invalid saved self-target is rejected"), Owner->GetBerserkTarget());
     return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalDoorMagicStrength, "AAOriginal.WAD.Gameplay.DoorMagicStrength",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalDoorMagicStrength::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    TestEqual(TEXT("Lock increases an ordinary lock by ten"), AdjustDoorLockStrength(20, true), 30);
+    TestEqual(TEXT("Lock saturates at the source maximum"), AdjustDoorLockStrength(250, true), 255);
+    TestEqual(TEXT("Lock cannot overflow the source maximum"), AdjustDoorLockStrength(255, true), 255);
+    TestEqual(TEXT("Unlock decreases ordinary strength by ten"), AdjustDoorLockStrength(20, false), 10);
+    TestEqual(TEXT("Unlock stops at zero"), AdjustDoorLockStrength(5, false), 0);
+    TestEqual(TEXT("An unlocked door stays unlocked"), AdjustDoorLockStrength(0, false), 0);
+    TestEqual(TEXT("Unlock cannot weaken a source absolute lock"), AdjustDoorLockStrength(AbsoluteDoorLock, false), AbsoluteDoorLock);
+    TestEqual(TEXT("Lock preserves a source absolute lock"), AdjustDoorLockStrength(AbsoluteDoorLock, true), AbsoluteDoorLock);
+    return true;
+}

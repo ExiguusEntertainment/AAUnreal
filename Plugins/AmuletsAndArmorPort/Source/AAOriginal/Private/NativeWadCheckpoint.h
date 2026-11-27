@@ -162,6 +162,9 @@ struct FWadLevelCheckpoint
     TSet<int32> ScriptLockedDoors;
 
     UPROPERTY()
+    TMap<int32, int32> DoorLockStrengths;
+
+    UPROPERTY()
     TMap<int32, uint16> ScriptObjectAngles;
 
     UPROPERTY()

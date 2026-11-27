@@ -287,6 +287,7 @@ struct FAAWadNativeImport
             }
         }
         TSet<int32> RestrictedSectors;
+        TMap<int32, int32> LockStrengths;
         TMap<int32, int32> RequiredItems;
         for (const int32 Marker : Markers)
         {
@@ -296,6 +297,13 @@ struct FAAWadNativeImport
                 if (Map.Things[Marker].Type == DoorRequiredItemMarker)
                 {
                     RequiredItems.Add(*Sector, Map.Things[Marker].Flags);
+                    LockStrengths.Add(*Sector, NativeWadRules::AbsoluteDoorLock);
+                }
+                else
+                {
+                    const int32 Strength = Map.Things[Marker].Flags;
+                    if (Strength == 255 || LockStrengths.FindRef(*Sector) != NativeWadRules::AbsoluteDoorLock)
+                    { LockStrengths.Add(*Sector, Strength == 255 ? NativeWadRules::AbsoluteDoorLock : FMath::Clamp(LockStrengths.FindRef(*Sector) + Strength, 0, 255)); }
                 }
             }
         }
@@ -335,7 +343,7 @@ struct FAAWadNativeImport
             // The original loader leaves a 16-unit lip and uses a 70 Hz game clock.
             Doors.Add({ *Sector, Marker, float(Floor), float(LowestCeiling - 16),
                 105.0f / TicksPerSecond, 140.0f / TicksPerSecond,
-                RestrictedSectors.Contains(*Sector), RequiredItems.FindRef(*Sector) });
+                RestrictedSectors.Contains(*Sector), RequiredItems.FindRef(*Sector), LockStrengths.FindRef(*Sector) });
             Ceilings[*Sector] = Floor;
         }
         return true;
@@ -3160,7 +3168,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
     }
-    for (const int32 Type : {900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 918})
+    for (const int32 Type : {900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920})
     {
         Types.Add(Type); // Include source projectile wands absent from ordinary shop stock.
     }

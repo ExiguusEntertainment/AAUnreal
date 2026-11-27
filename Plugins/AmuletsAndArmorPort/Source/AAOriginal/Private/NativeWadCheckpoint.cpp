@@ -112,6 +112,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     Checkpoint.FiredPickupGenerators = FiredPickupGenerators;
     Checkpoint.UnlockedItemDoors = UnlockedItemDoors;
     Checkpoint.ScriptLockedDoors = ScriptLockedDoors;
+    Checkpoint.DoorLockStrengths = DoorLockStrengths;
     Checkpoint.CreatureGenerators = CreatureGeneratorStates;
     Checkpoint.PickupRevision = FWadLevelCheckpoint::CurrentPickupRevision;
     for (const auto& [Id, Object] : ScriptObjects)
@@ -220,6 +221,10 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
             return false;
         }
     }
+    for (const auto& [Sector, Strength] : Checkpoint.DoorLockStrengths)
+    {
+        if (!DoorBySector.Contains(Sector) || Strength < 0 || Strength > 255) { return false; }
+    }
     for (const FWadSavedSlide& Slide : Checkpoint.Slides)
     {
         FVector2D HeightsAtSave;
@@ -307,6 +312,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     FiredPickupGenerators = Checkpoint.FiredPickupGenerators;
     UnlockedItemDoors = Checkpoint.UnlockedItemDoors;
     ScriptLockedDoors = Checkpoint.ScriptLockedDoors;
+    DoorLockStrengths = Checkpoint.DoorLockStrengths;
     CreatureGeneratorStates = Checkpoint.CreatureGenerators;
     for (const auto& [Id, Angle] : Checkpoint.ScriptObjectAngles)
     {

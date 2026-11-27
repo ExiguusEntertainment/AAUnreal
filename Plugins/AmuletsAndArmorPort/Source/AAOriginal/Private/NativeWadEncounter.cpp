@@ -675,6 +675,14 @@ void ANativeWadBolt::ApplyForce(ACharacter& Target, const FVector& Origin) const
 
 void ANativeWadBolt::ApplyBlast(const FVector& Origin)
 {
+    if (DamageMask == SpecialDamageFlag(ESpecialDamage::Lock) || DamageMask == SpecialDamageFlag(ESpecialDamage::Unlock))
+    {
+        const TActorIterator<ANativeWadLevel> Level(GetWorld());
+        const bool bChanged = Level && Level->ModifyDoorLocksNear(FVector2D(Origin), DamageMask == SpecialDamageFlag(ESpecialDamage::Lock), BlastRadius);
+        if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwner()))
+        { Player->ShowInteractionMessage(bChanged ? TEXT("Door lock changed.") : TEXT("No door lock changed.")); }
+        return;
+    }
     ANativeWadPlayer* Shooter = Cast<ANativeWadPlayer>(GetOwner());
     for (TActorIterator<ANativeWadGuardian> Target(GetWorld()); Target; ++Target)
     {

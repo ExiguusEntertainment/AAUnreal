@@ -94,18 +94,20 @@ bool ANativeWadLevel::UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player)
         }
         return false;
     }
-    if (Door.bRequiresUnlock && !UnlockedItemDoors.Contains(Sector))
+    if (GetDoorLockStrength(Sector) > 0)
     {
         if (!Player)
         {
             return false;
         }
-        if (Door.RequiredItem == 0 || !Player->ConsumeItem(Door.RequiredItem))
+        const bool bNeedsItem = Door.RequiredItem > 0 && !UnlockedItemDoors.Contains(Sector);
+        if (!bNeedsItem || !Player->ConsumeItem(Door.RequiredItem))
         {
-            Player->ShowInteractionMessage(Door.RequiredItem > 0 ? TEXT("Door requires key to be opened.") : TEXT("Door is locked."));
+            Player->ShowInteractionMessage(bNeedsItem ? TEXT("Door requires key to be opened.") : TEXT("Door is locked."));
             return false;
         }
         UnlockedItemDoors.Add(Sector);
+        DoorLockStrengths.Add(Sector, 0);
         Player->ShowInteractionMessage(TEXT("Door took item."));
     }
 
@@ -120,6 +122,48 @@ bool ANativeWadLevel::UseDoorForPlayer(int32 Sector, ANativeWadPlayer* Player)
     }
     SetActorTickEnabled(true);
     return true;
+}
+
+int32 ANativeWadLevel::GetDoorLockStrength(int32 Sector)
+{
+    InitializeTopology();
+    const int32* Index = DoorBySector.Find(Sector);
+    if (!Index || ScriptLockedDoors.Contains(Sector)) { return NativeWadRules::AbsoluteDoorLock; }
+    if (const int32* Strength = DoorLockStrengths.Find(Sector)) { return *Strength; }
+    if (UnlockedItemDoors.Contains(Sector)) { return 0; }
+    const FAAWadNativeDoor& Door = Doors[*Index];
+    // Unrefreshed native maps retain the earlier conservative locked behavior.
+    return Door.LockStrength >= 0 ? Door.LockStrength : Door.bRequiresUnlock ? NativeWadRules::AbsoluteDoorLock : 0;
+}
+
+bool ANativeWadLevel::ModifyDoorLocksNear(const FVector2D& Impact, bool bLock, double Radius)
+{
+    if (!FMath::IsFinite(Radius) || Radius <= 0.0) { return false; }
+    InitializeTopology();
+    const FVector Local = GetActorTransform().InverseTransformPosition(FVector(Impact, GetActorLocation().Z));
+    const FBox Box(FVector(Local.X - Radius, Local.Y - Radius, -1), FVector(Local.X + Radius, Local.Y + Radius, 1));
+    TSet<int32> Nearby;
+    const int32 CenterSector = FindWadSector(Impact);
+    if (DoorBySector.Contains(CenterSector)) { Nearby.Add(CenterSector); }
+    for (const FAAWadNativeLine& Line : Lines)
+    {
+        const FVector Start(FVector2D(Vertices[Line.Endpoints.X]), 0);
+        const FVector End(FVector2D(Vertices[Line.Endpoints.Y]), 0);
+        if (!FMath::LineBoxIntersection(Box, Start, End, End - Start)) { continue; }
+        for (const int32 Side : {Line.Sides.X, Line.Sides.Y})
+        {
+            const int32 Sector = Sides.IsValidIndex(Side) ? Sides[Side].Sector : INDEX_NONE;
+            if (DoorBySector.Contains(Sector)) { Nearby.Add(Sector); }
+        }
+    }
+    bool bChanged = false;
+    for (const int32 Sector : Nearby)
+    {
+        const int32 Before = GetDoorLockStrength(Sector);
+        const int32 After = NativeWadRules::AdjustDoorLockStrength(Before, bLock);
+        if (After != Before) { DoorLockStrengths.Add(Sector, After); bChanged = true; }
+    }
+    return bChanged;
 }
 
 void ANativeWadLevel::LockScriptDoorsNear(const FVector2D& Impact)
