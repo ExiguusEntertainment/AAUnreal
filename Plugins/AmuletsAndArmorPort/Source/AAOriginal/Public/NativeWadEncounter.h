@@ -112,6 +112,9 @@ public:
     int32 GetPoisonLevel() const { return PoisonLevel; }
     double GetPoisonTime() const { return PoisonTime; }
     void RestorePoison(int32 Level, double Time);
+    double GetSlowSeconds() const { return SlowSeconds; }
+    double GetEarthboundSeconds() const { return EarthboundSeconds; }
+    void RestoreControlEffects(double Slow, double Earthbound);
     void RestoreEncounterHealth(int32 SavedHealth);
     void SetDefeatPickup(class ANativeWadPickup* Pickup);
     void SetSpawned(bool bSpawned);
@@ -148,6 +151,9 @@ private:
     UPROPERTY()
     TObjectPtr<class ANativeWadPickup> DefeatPickup;
 
+    void ApplyControlMovement();
+    double SlowSeconds = 0.0;
+    double EarthboundSeconds = 0.0;
     void FireBolt(ANativeWadPlayer& Player);
     void TickRailHazard(float DeltaSeconds);
     TWeakObjectPtr<ANativeWadLevel> RailLevel;

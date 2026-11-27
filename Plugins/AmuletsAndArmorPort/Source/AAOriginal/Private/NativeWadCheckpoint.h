@@ -23,6 +23,10 @@ struct FWadSavedEncounter
     int32 Poison = 0;
     UPROPERTY()
     double PoisonTime = 5.0;
+    UPROPERTY()
+    double SlowSeconds = 0.0;
+    UPROPERTY()
+    double EarthboundSeconds = 0.0;
 };
 
 USTRUCT()

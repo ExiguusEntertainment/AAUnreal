@@ -41,7 +41,7 @@ namespace NativeWadRules
     enum EEquipmentSlot : int32 { HeadSlot, RightArmSlot, LeftArmSlot, LegsSlot, ChestSlot, ShieldSlot, EquipmentSlotCount };
     enum EItemStatus : int32 { InvisibleStatus, TranslucentStatus, StrengthStatus, LavaWalkStatus, SpellShieldStatus,
         FireAttackStatus, ElectricityAttackStatus, AcidAttackStatus, PoisonAttackStatus, PiercingAttackStatus, ManaDrainAttackStatus,
-        FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, ItemStatusCount };
+        FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus, ItemStatusCount };
     enum class ESpellSchool : uint8 { Arcane, Mage, Cleric };
     enum class ESpellEffect : uint8 { WaterWalk, FeatherFall, Shield, Projectile };
     struct FWadSpell
@@ -82,6 +82,10 @@ namespace NativeWadRules
         {TEXT("23"), TEXT("Pull"), ESpellSchool::Cleric, ESpellEffect::Projectile, 200, 30, 0, 1, 14 }, // SPL00078
         {TEXT("43"), TEXT("Push"), ESpellSchool::Cleric, ESpellEffect::Projectile, 300, 20, 0, 1, 13 }, // SPL00079
         {TEXT("697"), TEXT("Gods Wrath"), ESpellSchool::Cleric, ESpellEffect::Projectile, 1000, -40, 0, 1, 8 }, // SPL00101
+        {TEXT("127"), TEXT("Slow"), ESpellSchool::Mage, ESpellEffect::Projectile, 1000, -15, 0, 1, 19}, // SPL00029
+        {TEXT("157"), TEXT("Earthbind"), ESpellSchool::Mage, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00102
+        {TEXT("17"), TEXT("Earthbind"), ESpellSchool::Arcane, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00103
+        {TEXT("637"), TEXT("Earthbind"), ESpellSchool::Cleric, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00104
     };
     constexpr ESpellSchool SchoolForClass(int32 Index)
     {
@@ -195,6 +199,7 @@ namespace NativeWadRules
         bool bHoming;
         const TCHAR* Art;
     };
+    inline constexpr double MaxCreatureControlSeconds = (65535.0 + 2100.0) / TicksPerSecond;
     inline constexpr uint8 SpecialDamage = 128;
     enum class ESpecialDamage : uint8 { Lock, Unlock, Dispel, Push, Pull, Earthbind, Confuse, Berserk, Slow, Paralyze };
     constexpr uint8 SpecialDamageFlag(ESpecialDamage Effect) { return SpecialDamage | uint8(Effect); }
@@ -251,6 +256,8 @@ namespace NativeWadRules
         {16, 4015, 250, 100.0f, DamageFlag(EProjectileDamage::Poison), false, TEXT("MISSIL16/1.CPC")},
         {13, 31, 2500, 20.0f, SpecialDamageFlag(ESpecialDamage::Push), false, TEXT("FIREBALL/BOLT01.CPC")},
         {14, 4002, 2500, 100.0f, SpecialDamageFlag(ESpecialDamage::Pull), false, TEXT("MISSILE3/1.CPC")},
+        {15, 4008, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Earthbind), false, TEXT("MISSILE9/1.CPC")},
+        {19, 4009, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Slow), false, TEXT("MISSIL10/1.CPC")},
         {17, 4010, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Confuse), false, TEXT("MISSIL11/1.CPC")},
         {28, 4017, PlasmaDamage, PlasmaBlastRadius, PlasmaElements, true, TEXT("PBALL/PBALL001.CPC")},
     };

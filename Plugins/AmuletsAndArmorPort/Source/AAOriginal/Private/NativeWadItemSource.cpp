@@ -141,6 +141,7 @@ namespace
                 const int32 Status = SubEffect == TEXT("INVISIBLE") ? InvisibleStatus
                     : SubEffect == TEXT("TRANSLUCENT") ? TranslucentStatus
                     : SubEffect == TEXT("STRENGTH MOD") ? StrengthStatus
+                    : SubEffect == TEXT("SPEED MOD") ? SpeedStatus
                     : SubEffect == TEXT("LAVA WALK") ? LavaWalkStatus
                     : SubEffect == TEXT("FIRE ATTACK") ? FireAttackStatus
                     : SubEffect == TEXT("ELECTRICITY ATTACK") ? ElectricityAttackStatus
@@ -159,7 +160,7 @@ namespace
                 {
                     Details.Status = Status;
                     Details.StatusTicks = Ticks;
-                    Details.StatusPower = Status == StrengthStatus ? Power : 1;
+                    Details.StatusPower = Status == StrengthStatus || Status == SpeedStatus ? Power : 1;
                 }
                 else if (Trigger == TEXT("USE"))
                 {

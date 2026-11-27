@@ -1492,13 +1492,34 @@ bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
     TestTrue(TEXT("A Griffon acquires the player above it"), Creature->HasAcquiredTarget());
     TestTrue(TEXT("The flying pursuit rises toward the player's height"), Creature->GetActorLocation().Z > 20.0);
     TestTrue(TEXT("The same pursuit advances horizontally"), Creature->GetActorLocation().X > 30.0);
+    const int32 HealthBeforeControl = Creature->GetEncounterHealth();
+    const int32 XPBeforeControl = Player->GetExperience();
+    Creature->TakeHit(100, Player, NativeWadRules::SpecialDamageFlag(NativeWadRules::ESpecialDamage::Earthbind));
+    TestTrue(TEXT("Earthbind starts a source-duration control effect"), Creature->GetEarthboundSeconds() >= 30.0
+        && Creature->GetEarthboundSeconds() <= NativeWadRules::MaxCreatureControlSeconds);
+    TestEqual(TEXT("Earthbind removes flying physics"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Falling);
+    Creature->TakeHit(100, Player, NativeWadRules::SpecialDamageFlag(NativeWadRules::ESpecialDamage::Slow));
+    TestTrue(TEXT("Slow starts a source-duration control effect"), Creature->GetSlowSeconds() >= 30.0
+        && Creature->GetSlowSeconds() <= NativeWadRules::MaxCreatureControlSeconds);
+    TestEqual(TEXT("Source Slow caps creature speed at two source velocity units"), Creature->GetCharacterMovement()->MaxWalkSpeed, 17.5f);
+    TestEqual(TEXT("Control hits preserve health"), Creature->GetEncounterHealth(), HealthBeforeControl);
+    TestEqual(TEXT("Control hits do not award XP"), Player->GetExperience(), XPBeforeControl);
+    Creature->RestoreControlEffects(0.01, 0.01);
+    Creature->Tick(0.02f);
+    TestEqual(TEXT("Control expiry restores flight"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
+    TestEqual(TEXT("Control expiry restores source speed"), Creature->GetCharacterMovement()->MaxFlySpeed, 105.0f);
+    Creature->RestoreControlEffects(30, 30);
     Creature->RestoreEncounterHealth(0);
     Creature->ResetForGenerator();
     TestEqual(TEXT("A reused flying generator actor restores flight"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
+    TestEqual(TEXT("Generator reuse clears Slow"), Creature->GetSlowSeconds(), 0.0);
+    TestEqual(TEXT("Generator reuse clears Earthbind"), Creature->GetEarthboundSeconds(), 0.0);
     Profile.SourceType = 1007;
     Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
     Creature->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
     Creature->ResetForGenerator();
     TestEqual(TEXT("Source Gargoyle remains grounded despite its wings"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Walking);
+    Creature->TakeHit(100, Player, NativeWadRules::SpecialDamageFlag(NativeWadRules::ESpecialDamage::Earthbind));
+    TestEqual(TEXT("Earthbind has no effect on a source-grounded creature"), Creature->GetEarthboundSeconds(), 0.0);
     return true;
 }

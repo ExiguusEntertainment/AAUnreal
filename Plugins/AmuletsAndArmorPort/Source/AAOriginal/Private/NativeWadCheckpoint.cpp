@@ -156,7 +156,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
         if (!Encounter->IsHidden() && !Encounter->Tags.IsEmpty())
         {
             Checkpoint.Encounters.Add(Encounter->Tags[0], {Encounter->GetActorTransform(), Encounter->GetEncounterHealth(),
-                Encounter->GetPoisonLevel(), Encounter->GetPoisonTime()});
+                Encounter->GetPoisonLevel(), Encounter->GetPoisonTime(), Encounter->GetSlowSeconds(), Encounter->GetEarthboundSeconds()});
         }
     }
     return true;
@@ -419,6 +419,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
                 Encounter->SetActorTransform(State->Transform, false, nullptr, ETeleportType::TeleportPhysics);
                 Encounter->RestoreEncounterHealth(State->Health);
                 Encounter->RestorePoison(State->Poison, State->PoisonTime);
+                Encounter->RestoreControlEffects(State->SlowSeconds, State->EarthboundSeconds);
             }
         }
     }

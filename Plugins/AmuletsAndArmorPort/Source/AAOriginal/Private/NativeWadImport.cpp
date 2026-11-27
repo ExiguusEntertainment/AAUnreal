@@ -3160,7 +3160,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
     }
-    for (const int32 Type : {900, 901, 902, 903, 904, 905, 906, 907, 908, 912, 913, 915, 916, 918})
+    for (const int32 Type : {900, 901, 902, 903, 904, 905, 906, 907, 908, 911, 912, 913, 915, 916, 917, 918})
     {
         Types.Add(Type); // Include source projectile wands absent from ordinary shop stock.
     }

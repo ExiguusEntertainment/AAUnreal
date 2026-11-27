@@ -76,7 +76,7 @@ public:
     void ReceiveTrapParalysis();
     void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
-    bool CanFly() const { return FlightSeconds > 0.0 || GetReadyItem() == NativeWadRules::FlyingAmulet; }
+    bool CanFly() const { return FlightSeconds > 0.0 || (GetReadyItem() == NativeWadRules::FlyingAmulet && !bReadiedFlightSuppressed); }
     bool HasFeatherfall() const { return FeatherfallSeconds > 0.0; }
     bool IsWaterWalking() const { return bOnWaterSurface; }
     bool IsConcealed() const { return bConcealed; }
@@ -199,6 +199,7 @@ private:
     int32 PoisonLevel = 0;
     double ParalysisSeconds = 0.0;
     double FlightSeconds = 0.0;
+    bool bReadiedFlightSuppressed = false;
     double WaterWalkSeconds = 0.0;
     double FeatherfallSeconds = 0.0;
     double ShieldSeconds[NativeWadRules::ShieldPotionLast - NativeWadRules::ShieldPotionFirst + 1] = {};

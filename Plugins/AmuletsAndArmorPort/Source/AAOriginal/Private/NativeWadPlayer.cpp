@@ -137,6 +137,7 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
         return 0.0;
     };
     FlightSeconds = ReadDuration(TEXT("WadFlight="), FlyingScrollSeconds);
+    bReadiedFlightSuppressed = FCString::Atoi(URL.GetOption(TEXT("WadFlightSuppressed="), TEXT("0"))) != 0;
     WaterWalkSeconds = ReadDuration(TEXT("WadWaterWalk="), 8400.0 / TicksPerSecond);
     FeatherfallSeconds = ReadDuration(TEXT("WadFeatherfall="), FeatherfallPotionSeconds);
     for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
@@ -454,6 +455,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     };
     Options += FString::Printf(TEXT("?WadClass=%d"), CharacterClass);
     WriteDuration(TEXT("WadFlight"), FlightSeconds);
+    if (bReadiedFlightSuppressed && GetReadyItem() == FlyingAmulet) { Options += TEXT("?WadFlightSuppressed=1"); }
     if (SelectedAmmo != 0)
     {
         Options += FString::Printf(TEXT("?WadAmmo=%d"), SelectedAmmo);
@@ -578,7 +580,7 @@ void ANativeWadPlayer::AttackPressed()
     const int32 SwingFrames = bAuthored ? Details->SwingFrames : bDagger ? 50 : 46;
     const int32 Damage = FMath::Max(0, Attributes[StrengthAttribute] + GetStatusPower(StrengthStatus)) * BaseDamage / 2;
     // STATS.C supplies the 16.16 overlay speed, and the weapon's ANI supplies the timing.
-    const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute] + BaseSpeed, 0, 100) * 1100;
+    const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute] + GetStatusPower(SpeedStatus) + BaseSpeed, 0, 100) * 1100;
     const auto SecondsToFrame = [FrameSpeed](int32 Frame)
     {
         return FMath::DivideAndRoundUp(Frame * 65536, FrameSpeed) / TicksPerSecond;
@@ -686,7 +688,17 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
     if (Health <= 0 || Damage <= 0) { return; }
     if (DamageMask & SpecialDamage)
     {
-        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse) && GetController())
+        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind))
+        {
+            FlightSeconds = 0.0;
+            bReadiedFlightSuppressed = GetReadyItem() == FlyingAmulet;
+        }
+        else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Slow))
+        {
+            ItemStatusSeconds[SpeedStatus] = 30.0;
+            ItemStatusPower[SpeedStatus] = -20;
+        }
+        else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse) && GetController())
         {
             // EFFECT_REORIENT turns left by rand() in the original 16-bit angle space.
             FRotator Rotation = GetController()->GetControlRotation();
@@ -773,6 +785,12 @@ void ANativeWadPlayer::TickItemStatuses(float DeltaSeconds)
     {
         Seconds = FMath::Max(0.0, Seconds - DeltaSeconds);
     }
+    if (GetReadyItem() != FlyingAmulet) { bReadiedFlightSuppressed = false; }
+    const int32 EffectiveSpeed = FMath::Clamp(Attributes[SpeedAttribute] + GetStatusPower(SpeedStatus), 0, 100);
+    // Keep the existing native baseline while applying the original MaxVWalking=(Speed/5)+10 modifier ratio.
+    const float SpeedRatio = float(EffectiveSpeed / 5 + 10) / float(Attributes[SpeedAttribute] / 5 + 10);
+    GetCharacterMovement()->MaxWalkSpeed = 190.0f * SpeedRatio;
+    GetCharacterMovement()->MaxFlySpeed = 600.0f * SpeedRatio;
     const int32 Concealment = GetStatusPower(InvisibleStatus) ? 190 : GetStatusPower(TranslucentStatus) ? 100 : 0;
     if (Concealment == 0)
     {

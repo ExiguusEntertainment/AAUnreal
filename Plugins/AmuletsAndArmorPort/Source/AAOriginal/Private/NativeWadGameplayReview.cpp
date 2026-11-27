@@ -1980,6 +1980,8 @@ namespace
         FVector PresentationPlayerStart = FVector::ZeroVector;
         bool bAmmoReview = false;
         bool bAmmoBannerReview = false;
+        bool bControlWandReview = false;
+        bool bControlWandReload = false;
         bool bRuneProjectileReview = false;
         bool bRuneProjectileReload = false;
         int32 RuneProjectileIndex = 0;
@@ -10460,6 +10462,155 @@ namespace
             return true;
         }
 
+        bool TickControlWands(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            UWorld& Current = *Player.GetWorld();
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            ANativeWadGuardian* Target = ElementalTarget.Get();
+            const auto Incoming = [&](ESpecialDamage Effect)
+            {
+                const FVector End = Player.GetActorLocation();
+                for (int32 Angle = 0; Angle < 8; ++Angle)
+                {
+                    const FVector Offset = FRotator(0, Angle * 45, 0).Vector() * 40.0;
+                    const FVector Start = End + Offset;
+                    FHitResult Hit;
+                    if (!Current.SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility,
+                        FCollisionShape::MakeSphere(5.0f), FCollisionQueryParams(SCENE_QUERY_STAT(ControlWandIncoming), true))
+                        || Hit.GetActor() != &Player) { continue; }
+                    ANativeWadBolt* Bolt = Current.SpawnActor<ANativeWadBolt>(Start, FRotator::ZeroRotator);
+                    if (!Bolt) { return false; }
+                    Bolt->Launch(nullptr, nullptr, -Offset.GetSafeNormal() * 2000, 100);
+                    Bolt->SetDamageMask(SpecialDamageFlag(Effect));
+                    return true;
+                }
+                return false;
+            };
+            if (NextPoint == 0)
+            {
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                {
+                    if (!Target && Enemy->GetSourceType() == 1023 && !Enemy->IsHidden()) { Target = *Enemy; ElementalTarget = Target; }
+                    if (*Enemy != Target) { Enemy->SetActorTickEnabled(false); Enemy->GetCharacterMovement()->DisableMovement(); }
+                }
+                if (!Target) { return Finish(&Player, TEXT("the control-wand fixture requires an original L61 Griffon")); }
+                if (bControlWandReload)
+                {
+                    if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                    if (Target->GetSlowSeconds() <= 25.0 || Target->GetEarthboundSeconds() <= 25.0
+                        || Target->GetCharacterMovement()->IsFlying() || Player.CanFly() || Player.GetReadyItem() != FlyingAmulet
+                        || Player.GetStatusPower(SpeedStatus) != -20)
+                    { return Finish(&Player, TEXT("creature controls, player Slow, or suppressed flight failed to restore")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified saved creature Slow/Earthbind and the player's Slow and suppressed readied flight across a process restart."));
+                    // Controlled expiry check after preserving and verifying the actual source durations.
+                    Target->RestoreControlEffects(0.25, 0.25);
+                    StageTime = Current.GetTimeSeconds();
+                    NextPoint = 20;
+                    return true;
+                }
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                const FVector Position = Target->GetActorLocation();
+                if (!Level || !PlaceReviewPlayer(**Level, Player, FVector2D(Position) + FVector2D(-180, 0)))
+                { return Finish(&Player, TEXT("could not use the source Griffon room")); }
+                FWadEncounterProfile Profile;
+                Profile.Name = TEXT("Controlled source-flying Griffon");
+                Profile.SourceType = 1023;
+                Profile.MaxHealth = 5000;
+                Profile.WalkSpeed = 0;
+                Profile.MeleeDamage = Profile.BoltDamage = 0;
+                Target->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+                Target->RestoreEncounterHealth(5000);
+                Target->SetActorLocation(Position + FVector(0, 0, 100), false, nullptr, ETeleportType::TeleportPhysics);
+                DriftStart = Target->GetActorLocation();
+                ExperienceBeforeTravel = Player.GetExperience();
+                HealthBeforeCast = Player.GetHealth();
+                ++NextPoint;
+            }
+            switch (NextPoint)
+            {
+            case 1:
+                if (Player.GetReadyItem() != 911 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 911); break; }
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 2:
+                if (Current.GetTimeSeconds() - StageTime < 1.0) { break; }
+                if (Target->GetEarthboundSeconds() <= 25.0 || Target->GetCharacterMovement()->IsFlying()
+                    || Target->GetActorLocation().Z >= DriftStart.Z - 40.0 || Target->GetEncounterHealth() != 5000)
+                { return Finish(&Player, TEXT("Earthbind did not bring down the flying target without health damage")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified Earthbind wand 911 brings down the flying Griffon without health damage."));
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetReadyItem() != 917 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 917); break; }
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 4:
+                if (Current.GetTimeSeconds() - StageTime < 0.3) { break; }
+                if (Target->GetSlowSeconds() <= 25.0 || !FMath::IsNearlyEqual(Target->GetCharacterMovement()->MaxWalkSpeed, 17.5f)
+                    || Player.GetExperience() != ExperienceBeforeTravel || Target->GetEncounterHealth() != 5000
+                    || Player.GetMana() != 9200 || Player.GetItemCount(911) != 1 || Player.GetItemCount(917) != 1)
+                { return Finish(&Player, TEXT("Slow/Earthbind had the wrong speed, damage, XP, mana, or retained items")); }
+                if (!Incoming(ESpecialDamage::Slow)) { return Finish(&Player, TEXT("could not launch player Slow check")); }
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 5:
+                if (Current.GetTimeSeconds() - StageTime < 0.15) { break; }
+                if (Player.GetStatusPower(SpeedStatus) != -20 || Player.GetHealth() != HealthBeforeCast
+                    || !FMath::IsNearlyEqual(Player.GetCharacterMovement()->MaxWalkSpeed, 190.0f * 10.0f / 14.0f, 0.1f))
+                { return Finish(&Player, *FString::Printf(TEXT("incoming Slow has power %d, health %d/%d, movement %.3f, base speed %d"), Player.GetStatusPower(SpeedStatus), Player.GetHealth(), HealthBeforeCast, Player.GetCharacterMovement()->MaxWalkSpeed, Player.GetAttributes()[SpeedAttribute])); }
+                ++NextPoint;
+                break;
+            case 6:
+                if (Player.GetReadyItem() != FlyingAmulet || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, FlyingAmulet); break; }
+                if (!Player.CanFly()) { return Finish(&Player, TEXT("the readied source amulet did not grant flight")); }
+                if (!Incoming(ESpecialDamage::Earthbind)) { return Finish(&Player, TEXT("could not launch player Earthbind check")); }
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 7:
+                if (Current.GetTimeSeconds() - StageTime < 0.3 || !Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (Player.CanFly() || Player.GetReadyItem() != FlyingAmulet || Player.GetHealth() != HealthBeforeCast)
+                { return Finish(&Player, TEXT("Earthbind failed to suppress the readied amulet without consuming or damaging the player")); }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadControlWandsReview"))) { return Finish(&Player, TEXT("could not save the source control effects")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified Slow/Earthbind wands, source duration bounds, retained items, player modifiers, and suppressed readied flight; saved effects."));
+                return Finish(&Player);
+            case 20:
+                if (Current.GetTimeSeconds() - StageTime < 0.4) { break; }
+                if (Target->GetSlowSeconds() != 0.0 || Target->GetEarthboundSeconds() != 0.0
+                    || !Target->GetCharacterMovement()->IsFlying() || Target->GetCharacterMovement()->MaxFlySpeed != 105.0f)
+                { return Finish(&Player, TEXT("creature control expiry did not restore source flight and speed")); }
+                Target->SetActorTickEnabled(false);
+                Target->GetCharacterMovement()->DisableMovement();
+                ++NextPoint;
+                break;
+            case 21:
+                if (Player.GetStatusPower(SpeedStatus) != 0) { break; }
+                if (Player.GetCharacterMovement()->MaxWalkSpeed != 190.0f || Player.CanFly())
+                { return Finish(&Player, TEXT("player Slow expiry changed the baseline or re-enabled suppressed flight")); }
+                if (Player.GetReadyItem() != 911 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 911); break; }
+                ++NextPoint;
+                break;
+            case 22:
+                if (Player.GetReadyItem() != FlyingAmulet || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, FlyingAmulet); break; }
+                if (!Player.CanFly()) { return Finish(&Player, TEXT("unreadying and readying the amulet did not restore its source effect")); }
+                Target->RestoreEncounterHealth(0);
+                Target->ResetForGenerator();
+                if (Target->GetSlowSeconds() != 0.0 || Target->GetEarthboundSeconds() != 0.0 || !Target->GetCharacterMovement()->IsFlying())
+                { return Finish(&Player, TEXT("a reused generator retained a control effect")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified controlled creature expiry, original player Slow expiry, amulet reactivation, and cleared effects on generator reuse."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool TickRuneProjectiles(ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
@@ -10544,6 +10695,7 @@ namespace
                 Target->GetCharacterMovement()->StopMovementImmediately();
                 Target->RestoreEncounterHealth(10000);
                 Target->RestorePoison(0, 0);
+                Target->RestoreControlEffects(0, 0);
                 Player.RestoreWadVital(9, Player.GetMaxHealth());
                 Player.RestoreWadVital(10, 2 * Spell.Mana - Player.GetMana());
                 ExperienceBeforeTravel = Player.GetExperience();
@@ -11478,6 +11630,7 @@ namespace
                 if (Now < StageTime) { break; }
                 Target->RestoreEncounterHealth(10000);
                 Target->RestorePoison(0, 0);
+                Target->RestoreControlEffects(0, 0);
                 Player.RestoreWadVital(9, Player.GetMaxHealth());
                 Player.RestoreWadVital(10, 2 * Item->WandManaCost - Player.GetMana());
                 if (Player.GetItemCount(Type) == 0) { Player.CollectItem(Type); }
@@ -11798,6 +11951,7 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bControlWandReview) { return TickControlWands(*Player); }
             if (bRuneProjectileReview) { return TickRuneProjectiles(*Player); }
             if (bConfusionWandReview) { return TickConfusionWand(*Player); }
             if (bResistanceReview) { return TickResistanceItems(*Player); }
@@ -12254,6 +12408,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bBoulder = Mode == TEXT("boulderrail") || Mode == TEXT("boulderrail75");
     const bool bAmmo = Mode == TEXT("specialammo") || Mode == TEXT("specialammoreload");
     const bool bAmmoBanner = Mode == TEXT("ammobanner");
+    const bool bControlWands = Mode == TEXT("controlwands") || Mode == TEXT("controlwandsreload");
     const bool bRuneProjectile = Mode == TEXT("runeprojectiles") || Mode == TEXT("runeprojectilesreload");
     const bool bConfusion = Mode == TEXT("confusionwand") || Mode == TEXT("confusionwandreload");
     const bool bResistance = Mode == TEXT("resistanceitems") || Mode == TEXT("resistanceitemsreload");
@@ -12269,6 +12424,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         || L25Review == EL25Review::L20Exit;
     const FString CampaignMap = CampaignRoute ? FString::Printf(TEXT("L%d"), CampaignRoute->Map) : FString();
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : CampaignRoute ? *CampaignMap : bStartsInL20 ? TEXT("L20")
+        : bControlWands ? TEXT("L61")
         : Mode == TEXT("elymaspresentation") ? TEXT("L44") : Mode == TEXT("templegenerator") ? TEXT("L41") : Mode == TEXT("undeadwizardgenerator") ? TEXT("L10")
         : (Mode == TEXT("infinitegenerator") || Mode == TEXT("lavaterrain")) ? TEXT("L71")
         : TempleReview == ETempleReview::L51 ? TEXT("L51") : TempleReview != ETempleReview::None ? TEXT("L52")
@@ -12313,6 +12469,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bElymasPresentationReview = Mode == TEXT("elymaspresentation");
     Review->bAmmoReview = bAmmo;
     Review->bAmmoBannerReview = bAmmoBanner;
+    Review->bControlWandReview = bControlWands;
+    Review->bControlWandReload = Mode == TEXT("controlwandsreload");
     Review->bRuneProjectileReview = bRuneProjectile;
     Review->bRuneProjectileReload = Mode == TEXT("runeprojectilesreload");
     Review->bConfusionWandReview = bConfusion;

@@ -162,6 +162,9 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         TickRailHazard(DeltaSeconds);
         return;
     }
+    SlowSeconds = FMath::Max(0.0, SlowSeconds - DeltaSeconds);
+    EarthboundSeconds = FMath::Max(0.0, EarthboundSeconds - DeltaSeconds);
+    ApplyControlMovement();
     if (!IsDefeated() && PoisonLevel > 0)
     {
         PoisonTime -= DeltaSeconds;
@@ -184,12 +187,12 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
 
     LogicTime += DeltaSeconds;
     const FVector Offset = Player->GetActorLocation() - GetActorLocation();
-    const FVector TowardPlayer = Profile.bCanFly ? Offset.GetSafeNormal() : Offset.GetSafeNormal2D();
+    const FVector TowardPlayer = Profile.bCanFly && EarthboundSeconds == 0.0 ? Offset.GetSafeNormal() : Offset.GetSafeNormal2D();
     const double Distance = Offset.Size2D();
     const bool bRetreat = Health < Profile.RetreatHealth;
     const bool bCloseRetreat = Profile.bKeepsBoltDistance && Distance < Profile.MinBoltRange;
     // CRELOGIC.C extends the table's update by half and shortens the fleeing update by a quarter.
-    const int32 UpdateTicks = Profile.UpdateTicks + (Profile.UpdateTicks >> 1);
+    const int32 UpdateTicks = SlowSeconds > 0.0 ? Profile.UpdateTicks * 3 : Profile.UpdateTicks + (Profile.UpdateTicks >> 1);
     const double Interval = (bRetreat ? UpdateTicks - (UpdateTicks >> 2) : UpdateTicks) / TicksPerSecond;
     const int32 Updates = FMath::FloorToInt(LogicTime / Interval);
     LogicTime -= Updates * Interval;
@@ -319,6 +322,16 @@ bool ANativeWadGuardian::TakeHit(int32 Damage, ANativeWadPlayer* Credit, uint8 D
     }
     if (DamageMask & SpecialDamage)
     {
+        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Slow)
+            || (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind) && Profile.bCanFly))
+        {
+            // CRELOGIC.C uses an absolute deadline; CLIENT.C resets SyncTime to 1 when loading a map.
+            const double Remaining = FMath::Max(0.0, (FMath::RandRange(0, 65535) + 2100.0) / TicksPerSecond - GetWorld()->GetTimeSeconds());
+            if (DamageMask == SpecialDamageFlag(ESpecialDamage::Slow)) { SlowSeconds = Remaining; }
+            else { EarthboundSeconds = Remaining; }
+            ApplyControlMovement();
+            return true;
+        }
         if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse))
         {
             // CRELOGIC.C loses the target, changes heading, and blocks the previous move.
@@ -413,6 +426,26 @@ void ANativeWadGuardian::RestorePoison(int32 Level, double Time)
     PoisonTime = FMath::Clamp(Time, 0.0, 5.0);
 }
 
+void ANativeWadGuardian::ApplyControlMovement()
+{
+    if (IsDefeated()) { return; }
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    const float MoveSpeed = SlowSeconds > 0.0 ? 2.0f * TicksPerSecond / 8.0f : Profile.WalkSpeed;
+    Movement->MaxWalkSpeed = Movement->MaxFlySpeed = MoveSpeed;
+    if (Profile.bCanFly)
+    {
+        if (EarthboundSeconds == 0.0 && !Movement->IsFlying()) { Movement->SetMovementMode(MOVE_Flying); }
+        else if (EarthboundSeconds > 0.0 && Movement->IsFlying()) { Movement->SetMovementMode(MOVE_Falling); }
+    }
+}
+
+void ANativeWadGuardian::RestoreControlEffects(double Slow, double Earthbound)
+{
+    SlowSeconds = FMath::IsFinite(Slow) ? FMath::Clamp(Slow, 0.0, MaxCreatureControlSeconds) : 0.0;
+    EarthboundSeconds = Profile.bCanFly && FMath::IsFinite(Earthbound) ? FMath::Clamp(Earthbound, 0.0, MaxCreatureControlSeconds) : 0.0;
+    ApplyControlMovement();
+}
+
 void ANativeWadGuardian::SetDefeatPickup(ANativeWadPickup* Pickup)
 {
     DefeatPickup = Pickup;
@@ -432,6 +465,8 @@ void ANativeWadGuardian::ResetForGenerator()
     Health = Profile.MaxHealth;
     PoisonLevel = BoltsFired = MeleeHits = RegeneratedHealth = 0;
     PoisonTime = 5.0;
+    SlowSeconds = EarthboundSeconds = 0.0;
+    GetCharacterMovement()->MaxWalkSpeed = GetCharacterMovement()->MaxFlySpeed = Profile.WalkSpeed;
     MeleeDelay = BoltDelay = 5;
     HitTime = HurtUntil = AttackPoseUntil = LogicTime = 0.0;
     bHasTarget = false;
