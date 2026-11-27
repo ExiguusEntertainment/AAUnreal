@@ -189,3 +189,22 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 
 
 - Fresh-process all30 reopen passed with zero changed payloads and identical map-file hashes: 1,942 authored pickup bindings and81,588 component states verified. Protection/journal milestone source coverage is93/108, with72 passing WAD tests and five rendered process reviews. Preparing commit/push for PLAN238-240.
+
+## 2026-11-27 15:59 CST - checkpoint pushed; terrain and treasure under build
+
+- Pushed c78f655d to origin/main, including259 original journal bitmaps and all30 pickup metadata updates. LFS uploaded405 objects/129MB.
+- Source terrain friction, Sticky Feet ring432/two spells and Orange Wizard373/407 treasure are integrated and under build. Their new tests and walking-route checks are pending.
+
+## 2026-11-27 16:09 CST - terrain verification and completeness audit
+
+- All77 tests passed after the editor topology fix. Terrain refresh diagnostic then exposed only Python Transform wrapper addresses, not geometry changes; numeric transform snapshots now preserve the full invariant. All30 terrain maps were saved; fresh-process reopen and actual walking-route checks are running.
+- Independent9,037-THINGS/475-types,443-script-body audit confirms all1,942 inventory placements are bound. PLAN now lists concrete remaining creature, scenery, ambient/light/glass and script registrations. Existing native maps are not being mislabeled as fully populated scenes.
+- Small Inn room costs200copper, so the carried Priest remainder150 cannot buy it. L32 already heals to3,200 before its fights. Further Destruction tactics must use real earned resources or combat/cover.
+
+- Terrain saved/reopen checks passed all30 maps (5,683 sectors); door147 cycle passed. The older Slice stopped at action7 Equip(type200), not a walk: its default Priest is now correctly forbidden the dagger. Recording that legacy fixture incompatibility and running the independent actual walking/door/light route. Movement unit tests still pass; no collision/friction tolerance has been weakened.
+
+## 2026-11-27 16:13 CST - terrain and Orange Wizard milestone verified
+
+- All77 WAD tests pass; source spell coverage95/108. Source ground friction/Sticky Feet and Orange Wizard373+407/104 loot are verified. All30 terrain maps (5,683 sectors) reopen correctly without geometry/component/material changes.
+- Actual L30 route walks from1608,432 through door147 to2762.6,1515.9; lighting changes84->160->84. Door cycle also passes. The older Slice stops at the class-forbidden Priest dagger equip, not movement; PLAN records fixture migration separately.
+- PLAN now includes the all-map source completeness audit and concrete remaining map/type/script omissions. Preparing checkpoint241-242, then original Magic Map, flight-owner and missing encounter integration.

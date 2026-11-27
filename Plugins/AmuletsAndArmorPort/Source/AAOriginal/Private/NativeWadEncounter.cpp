@@ -747,8 +747,9 @@ void ANativeWadGuardian::DropDefeatTreasure()
     {
         Drop->SetOwner(this);
         if (Treasure.AmmoIndex != INDEX_NONE) { Drop->SetAuthoredAmmo(Treasure.AmmoIndex, Treasure.AmmoQuantity); }
-        UE_LOG(LogTemp, Display, TEXT("Released source creature treasure: type %d, ammo %d, quantity %d, life %d."),
-            Treasure.ItemType, Treasure.AmmoIndex, Treasure.AmmoQuantity, CreatureLife);
+        if (Treasure.HasAccessoryData()) { Drop->SetAccessoryData(Treasure.AccessoryData); }
+        UE_LOG(LogTemp, Display, TEXT("Released source creature treasure: type %d, ammo %d, quantity %d, auxiliary %d, life %d."),
+            Treasure.ItemType, Treasure.AmmoIndex, Treasure.AmmoQuantity, Treasure.AccessoryData, CreatureLife);
     }
     else
     {

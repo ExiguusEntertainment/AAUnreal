@@ -13,6 +13,7 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UStaticMeshComponent;
 class UWorld;
+class UPrimitiveComponent;
 class ANativeWadPlayer;
 class ANativeWadPickup;
 class ANativeWadGuardian;
@@ -61,6 +62,10 @@ struct FAAWadNativeSector
 
     UPROPERTY()
     int32 FloorDepth = 0;
+
+    // Original G_3dSectorInfoArray friction; absent old-map property defaults to dirt.
+    UPROPERTY()
+    int32 SourceFriction = 12;
 
     UPROPERTY()
     bool bWater = false;
@@ -282,6 +287,9 @@ public:
     TOptional<double> FindWaterSurfaceZ(const FVector& Position) const;
     TOptional<double> FindLavaSurfaceZ(const FVector& Position) const;
     double GetWalkingHeight(int32 Sector) const;
+    UFUNCTION(BlueprintPure, Category="WAD|Terrain")
+    int32 GetWadSectorFriction(int32 Sector) const;
+    int32 GetSupportingWadFriction(const UPrimitiveComponent* Support, const FVector& Position) const;
     bool AttachActorToWadFloor(AActor& Actor, int32 Sector) const;
     FVector2D GetCurrentInput(const FVector& Feet, bool bWaterWalking = false) const;
     int32 CountPlayingAmbientEmitters(int32 Sound) const;

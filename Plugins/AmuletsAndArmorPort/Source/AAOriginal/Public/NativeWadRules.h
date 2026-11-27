@@ -45,7 +45,23 @@ namespace NativeWadRules
         FireAttackStatus, ElectricityAttackStatus, AcidAttackStatus, PoisonAttackStatus, PiercingAttackStatus, ManaDrainAttackStatus,
         FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus,
         AccuracyStatus, StealthStatus, MagicStatus, HealthRegenStatus, ManaRegenStatus,
-        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, ItemStatusCount };
+        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, StickyFeetStatus, ItemStatusCount };
+    inline constexpr int32 SourceNormalFriction = 12;
+    // OBJMOVE.C: XV -= (XV >> 8) * friction * ticks. This continuous
+    // extension matches one tick without the original integer truncation.
+    inline double SourceGroundRetention(int32 Friction, double Seconds)
+    {
+        if (Seconds <= 0.0) { return 1.0; }
+        if (Friction <= 0) { return 0.0; } // Source xDec==0 clears velocity.
+        return FMath::Pow(1.0 - FMath::Clamp(Friction, 1, 255) / 256.0, Seconds * double(TicksPerSecond));
+    }
+    inline double SourceGroundInputFactor(int32 Friction, double Seconds)
+    {
+        if (Seconds <= 0.0) { return 1.0; }
+        if (Friction <= 0) { return 0.0; }
+        const double Rate = -double(TicksPerSecond) * FMath::Loge(1.0 - FMath::Clamp(Friction, 1, 255) / 256.0);
+        return (1.0 - SourceGroundRetention(Friction, Seconds)) / (Rate * Seconds);
+    }
     // OBJMOVE.C's main falling step adds ZV<<4 to a 16.16 position at 70 Hz.
     // These continuous units preserve that main scale, not its old per-frame
     // gravity-before-position rounding or the extra ZV*delta/8 position term.
@@ -210,6 +226,8 @@ namespace NativeWadRules
         {TEXT("817"), TEXT("Holy Bread"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 1000, -5, 0, 298, INDEX_NONE, 87}, // SPL00087
         {TEXT("837"), TEXT("Holy Water"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 1000, -10, 0, 822, INDEX_NONE, 90}, // SPL00090
         {TEXT("1547"), TEXT("Invulnerability"), ESpellSchool::Mage, ESpellEffect::Status, 8000, -40, 2100, 1, INDEX_NONE, 42, InvulnerableStatus}, // SPL00042
+        {TEXT("765"), TEXT("Cast of Sand"), ESpellSchool::Arcane, ESpellEffect::Status, 1000, 30, 2100, 1, INDEX_NONE, 47, StickyFeetStatus}, // SPL00047
+        {TEXT("612"), TEXT("Cast of Sand"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, 30, 2100, 1, INDEX_NONE, 77, StickyFeetStatus}, // SPL00077
     };
     // SPELLS.C clamps negative difficulty to zero before comparing rand()%100. A zero roll can still succeed.
     constexpr int32 SpellCastingThreshold(int32 MagicAttributeValue, int32 Hardness, int32 Level)

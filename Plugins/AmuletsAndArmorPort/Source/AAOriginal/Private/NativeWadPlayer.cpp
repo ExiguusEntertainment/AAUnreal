@@ -546,6 +546,14 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     return Options;
 }
 
+int32 ANativeWadPlayer::GetWadGroundFriction(const UPrimitiveComponent* Support) const
+{
+    if (GetStatusPower(StickyFeetStatus) > 0) { return SourceNormalFriction; }
+    if (const ANativeWadLevel* Level = NativeLevel.Get())
+    { return Level->GetSupportingWadFriction(Support, GetActorLocation()); }
+    return SourceNormalFriction;
+}
+
 void ANativeWadPlayer::MoveInViewDirection(float Forward, float Right)
 {
     const FRotator Yaw(0.0, GetControlRotation().Yaw, 0.0);

@@ -1044,6 +1044,19 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD surface refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADTERRAINFRICTION")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadTerrainFriction(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadTerrainFriction failed. Usage: AA.RefreshNativeWadTerrainFriction <WadPath> <MapName> </Game/MapPackage>"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD terrain friction refresh finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADPICKUPMETADATA")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));

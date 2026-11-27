@@ -4,6 +4,31 @@
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 
+void UNativeWadMovement::CalcVelocity(float DeltaTime, float Friction, bool bFluid, float BrakingDeceleration)
+{
+    const auto* Player = Cast<ANativeWadPlayer>(CharacterOwner);
+    if (!Player || !HasValidData() || !IsMovingOnGround() || DeltaTime < MIN_TICK_TIME || HasAnimRootMotion()
+        || (CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy && !bWasSimulatingRootMotion))
+    { Super::CalcVelocity(DeltaTime, Friction, bFluid, BrakingDeceleration); return; }
+    const int32 SourceFriction = Player->GetWadGroundFriction(CurrentFloor.HitResult.GetComponent());
+    const double Retention = NativeWadRules::SourceGroundRetention(SourceFriction, DeltaTime);
+    const double InputFactor = SourceFriction / double(NativeWadRules::SourceNormalFriction)
+        * NativeWadRules::SourceGroundInputFactor(SourceFriction, DeltaTime);
+    const FVector SavedAcceleration = Acceleration;
+    const float SavedBrakingFriction = BrakingFriction;
+    Velocity.X *= Retention;
+    Velocity.Y *= Retention;
+    Acceleration.X *= InputFactor;
+    Acceleration.Y *= InputFactor;
+    BrakingFriction = 0.0f;
+    // No additional UE steering drag or constant braking deceleration. Keep its
+    // collision movement, speed caps and requested movement machinery. This is a
+    // continuous approximation, not original fixed-point/frame-order parity.
+    Super::CalcVelocity(DeltaTime, 0.0f, false, 0.0f);
+    BrakingFriction = SavedBrakingFriction;
+    Acceleration = SavedAcceleration;
+}
+
 float UNativeWadMovement::GetGravityZ() const
 {
     const auto* Player = Cast<ANativeWadPlayer>(CharacterOwner);

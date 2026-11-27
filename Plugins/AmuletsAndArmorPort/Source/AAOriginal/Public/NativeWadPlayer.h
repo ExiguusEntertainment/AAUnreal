@@ -7,6 +7,7 @@
 #include "NativeWadPlayerEffects.h"
 #include "NativeWadPlayer.generated.h"
 
+class UPrimitiveComponent;
 class UCameraComponent;
 class ANativeWadLevel;
 class UNativeWadHudData;
@@ -31,6 +32,7 @@ public:
     int32 GetWadJumpPower() const;
     bool TryWadLeap(int32 ExtraPower);
     bool BlinkWadForward(int32 Distance);
+    int32 GetWadGroundFriction(const UPrimitiveComponent* Support) const;
     bool HasLowGravity() const { return !CanFly() && GetStatusPower(NativeWadRules::LowGravityStatus) > 0; }
 
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")

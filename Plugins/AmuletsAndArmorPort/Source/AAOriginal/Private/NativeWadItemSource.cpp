@@ -144,6 +144,7 @@ namespace
             {
                 const FString SubEffect = Field(TEXT("EFFECT SUBTYPE"), Index + 2, EndEffect);
                 const int32 Status = SubEffect == TEXT("INVISIBLE") ? InvisibleStatus
+                    : SubEffect == TEXT("STICKY FEET") ? StickyFeetStatus
                     : SubEffect == TEXT("INVULNERABLE") ? InvulnerableStatus
                     : SubEffect == TEXT("TRANSLUCENT") ? TranslucentStatus
                     : SubEffect == TEXT("STRENGTH MOD") ? StrengthStatus

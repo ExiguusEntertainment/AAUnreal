@@ -1,4 +1,5 @@
 #include "NativeWadLevel.h"
+#include "NativeWadRules.h"
 
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -330,6 +331,28 @@ int32 ANativeWadLevel::FindWadSector(const FVector2D& Position) const
         }
     }
     return INDEX_NONE;
+}
+
+int32 ANativeWadLevel::GetWadSectorFriction(int32 Sector) const
+{
+    return Sectors.IsValidIndex(Sector) ? Sectors[Sector].SourceFriction : INDEX_NONE;
+}
+
+int32 ANativeWadLevel::GetSupportingWadFriction(const UPrimitiveComponent* Support, const FVector& Position) const
+{
+    // Prefer the actual supporting collision floor, including lowered liquid floors.
+    // Boundary fallback uses the center footprint, rather than the source engine's
+    // highest floor among every sector overlapped by the object's radius.
+    if (Support)
+    {
+        for (const FAAWadNativeSector& Sector : Sectors)
+        {
+            if (Support == Sector.Floor.Get() || Support == Sector.WalkingFloor.Get())
+            { return Sector.SourceFriction; }
+        }
+    }
+    const int32 Sector = FindWadSector(FVector2D(Position));
+    return Sectors.IsValidIndex(Sector) ? Sectors[Sector].SourceFriction : NativeWadRules::SourceNormalFriction;
 }
 
 double ANativeWadLevel::GetWalkingHeight(int32 Sector) const

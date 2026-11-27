@@ -17,6 +17,9 @@ struct FWadCreatureTreasure
     int32 ItemType = 0;
     int32 AmmoIndex = INDEX_NONE;
     int32 AmmoQuantity = 0;
+    // -1 means no source payload; recorded zero is a valid, distinct value.
+    int32 AccessoryData = INDEX_NONE;
+    bool HasAccessoryData() const { return AccessoryData >= 0 && AccessoryData <= MAX_uint16; }
 };
 
 // CRELOGIC.C CreatureDropTreasure's ordinary, single-item drops. These are full
@@ -31,6 +34,7 @@ inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 
     switch (SourceType)
     {
     case 1002: return {(Roll & 1) ? 102 : 362};
+    case 1006: return (Roll & 1) ? FWadCreatureTreasure{373, INDEX_NONE, 0, 407} : FWadCreatureTreasure{104};
     case 1008: return {147, 2, 6};
     case 1009: return {144, 0, 12};
     case 1011: return {Trojan[Roll % 12]};
@@ -44,8 +48,7 @@ inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 
     case 3001: case 3002: return {102};
     case 4080: return {EvilKnight[Roll % 12]};
     case 50158: return {417};
-    // Orange Wizard 1006 needs journal item 373's AccData/GET effect before its
-    // table can be enabled. Mighty Hunter has no unstolen ordinary-death case;
+    // Mighty Hunter has no unstolen ordinary-death case;
     // Momma Dragon's key is commented out. Packed-family restoration is separate.
     default: return {};
     }

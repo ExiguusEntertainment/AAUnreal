@@ -497,9 +497,43 @@ struct FAAWadNativeImport
         return true;
     }
 
+    bool InstallTerrainFriction(ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        // Saved editor worlds have not run BeginPlay's transient topology setup.
+        // Build only the lookup cache before resolving original marker sectors.
+        Actor.InitializeTopology();
+        TArray<int32> Values;
+        Values.Init(NativeWadRules::SourceNormalFriction, Actor.Sectors.Num());
+        // Source primary special-object traversal follows original THINGS order.
+        for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+        {
+            const FWadThing& Thing = Map.Things[Id];
+            int32 Value = INDEX_NONE;
+            switch (Thing.Type)
+            {
+                case 1503: Value = 12; break;
+                case 1504: Value = 2; break;
+                case 1505: Value = 16; break;
+                case 1506: Value = 24; break;
+                case 1507: Value = 14; break;
+                case 1543: Value = 24; break;
+                default: continue;
+            }
+            const int32 Sector = Actor.FindWadSector(FVector2D(Actor.GetActorTransform().TransformPosition(FVector(Thing.X, Thing.Y, 0))));
+            if (!Values.IsValidIndex(Sector))
+            { Output.Logf(TEXT("Terrain marker %d (Thing %d) is outside the native footprints."), Thing.Type, Id); return false; }
+            Values[Sector] = Value;
+        }
+        // Validate every authored marker before changing any saved metadata.
+        Actor.Modify();
+        for (int32 Index = 0; Index < Values.Num(); ++Index) { Actor.Sectors[Index].SourceFriction = Values[Index]; }
+        return true;
+    }
+
     bool InstallSurfaceEnvironment(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
         FOutputDevice& Output)
     {
+        if (!InstallTerrainFriction(Actor, Map, Output)) { return false; }
         constexpr int32 Water = 1505;
         constexpr int32 Lava = 1506;
         constexpr int32 Depth = 1521;
@@ -3286,14 +3320,14 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     Types.Add(234); // Original electric mace, also used by the ready/unready review.
     // Every branch of the restored ordinary creature treasure tables needs saved
     // rules and world art, including full packed equipment identities absent from shops.
-    const TSet<int32> OrdinaryTreasureTypes{100, 101, 102, 104, 105, 106, 144, 145, 147, 202, 204, 362,
+    const TSet<int32> OrdinaryTreasureTypes{100, 101, 102, 104, 105, 106, 144, 145, 147, 202, 204, 362, 373,
         416, 417, 708, 709, 710, 711, 818, 822, 12492, 12996, 12997, 12998, 12999, 37067};
     for (const int32 Type : OrdinaryTreasureTypes) { Types.Add(Type); }
     for (const int32 Type : {350, 351, 373}) { Types.Add(Type); } // Source identification scrolls and the accessory-data journal object.
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
     const TSet<int32> CreatedItemTypes{833, 298, 822}; // SPL00086/87/90 ordinary created inventory objects.
     Types.Append(CreatedItemTypes);
-    for (const int32 Type : {411, 417, 418, 419, 604, 610, 612, 614, 615, 712, 954, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
+    for (const int32 Type : {411, 417, 418, 419, 432, 604, 610, 612, 614, 615, 712, 954, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
     for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
@@ -4134,6 +4168,24 @@ bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Ou
     if (!Updates.IsEmpty() && !SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     Output.Logf(TEXT("Refreshed source auxiliary metadata on %d/%d authored pickups in %s; retained %d non-map actors and all geometry."),
         Updates.Num(), Matched, *MapPackage, Unbound);
+    return true;
+}
+
+bool RefreshNativeWadTerrainFriction(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage))
+    { Output.Log(TEXT("Terrain friction refresh needs a loaded source MAP and existing native map.")); return false; }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    { Output.Logf(TEXT("No matching native editor topology in %s."), *MapPackage); return false; }
+    FAAWadNativeImport Import;
+    if (!Import.InstallTerrainFriction(*Level, *Map, Output)) { return false; }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Refreshed source friction metadata on %d sectors in %s; all geometry/components/materials retained."),
+        Map->Sectors.Num(), *MapPackage);
     return true;
 }
 
