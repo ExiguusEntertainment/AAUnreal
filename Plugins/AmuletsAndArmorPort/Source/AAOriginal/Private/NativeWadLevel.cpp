@@ -168,26 +168,8 @@ bool ANativeWadLevel::ModifyDoorLocksNear(const FVector2D& Impact, bool bLock, d
 
 void ANativeWadLevel::LockScriptDoorsNear(const FVector2D& Impact)
 {
-    InitializeTopology();
-    constexpr double Radius = 40.0;
-    const FVector2D Point(GetActorTransform().InverseTransformPosition(FVector(Impact, GetActorLocation().Z)));
-    for (const FAAWadNativeLine& Line : Lines)
-    {
-        const FVector2D Start(Vertices[Line.Endpoints.X]);
-        const FVector2D End(Vertices[Line.Endpoints.Y]);
-        if (FVector2D::DistSquared(Point, FMath::ClosestPointOnSegment2D(Point, Start, End)) > FMath::Square(Radius))
-        {
-            continue;
-        }
-        for (const int32 Side : {Line.Sides.X, Line.Sides.Y})
-        {
-            const int32 Sector = Sides.IsValidIndex(Side) ? Sides[Side].Sector : INDEX_NONE;
-            if (DoorBySector.Contains(Sector))
-            {
-                ScriptLockedDoors.Add(Sector);
-            }
-        }
-    }
+    // Script missile 4012 uses SERVERSH.C's ordinary +10 lock in a radius-100 XY box.
+    ModifyDoorLocksNear(Impact, true, 100.0);
 }
 
 bool ANativeWadLevel::UseDoorFromView(const FVector& Position, const FVector& Direction, double Reach, ANativeWadPlayer* Player)

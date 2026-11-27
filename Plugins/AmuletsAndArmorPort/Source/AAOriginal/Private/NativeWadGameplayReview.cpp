@@ -1980,6 +1980,7 @@ namespace
         FVector PresentationPlayerStart = FVector::ZeroVector;
         bool bAmmoReview = false;
         bool bAmmoBannerReview = false;
+        bool bScriptDoorLockReload = false;
         bool bDoorMagicReview = false;
         bool bDoorMagicReload = false;
         bool bDoorMagicCompleteReload = false;
@@ -2438,7 +2439,9 @@ namespace
 
         bool CaptureTownFrame(const TCHAR* Name, bool& bSaved)
         {
-            if ((bWholeCampaign || CampaignLaunch) && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            // These headless route checks prove state only; rendered UI reviews still require an image.
+            if ((bWholeCampaign || CampaignLaunch || L25Review == EL25Review::ElmoreL151Exit || L25Review == EL25Review::ElmoreL152)
+                && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
             {
                 bSaved = true;
                 return true;
@@ -5197,12 +5200,14 @@ namespace
                 if (Now - StageTime > 7.2)
                 {
                     FWadLevelCheckpoint State;
-                    if (Level.GetScriptMissileCount(4012) != 5 || !Level.WriteCheckpoint(State, true) || !State.ScriptLockedDoors.Contains(70)
+                    if (Level.GetScriptMissileCount(4012) != 5 || !Level.WriteCheckpoint(State, true)
+                        || Level.GetDoorLockStrength(70) != 190 || State.DoorLockStrengths.FindRef(70) != 190 || State.ScriptLockedDoors.Contains(70)
+                        || !Player.SaveWadCheckpoint(TEXT("NativeWadL152NumericLockReview"))
                         || !PlaceReviewPlayer(Level, Player, {-25, -94}))
                     {
                         return Finish(&Player, TEXT("L152's delayed five-shot volley did not lock the authored door"));
                     }
-                    UE_LOG(LogTemp, Display, TEXT("Verified L152 sector 69 fires five lock missiles and locks door 70."));
+                    UE_LOG(LogTemp, Display, TEXT("Verified L152 sector 69 fires five lock missiles and strengthens door 70 from source 140 to 190 without an absolute lock."));
                     ++NextPoint;
                 }
                 break;
@@ -7538,17 +7543,18 @@ namespace
                 if (bArrivedL153)
                 {
                     const auto* SavedL152 = Travel.VisitedLevels.Find(TEXT("/Game/Maps/L152"));
-                    if (!SavedL152 || SavedL152->SectorHeights.FindRef(27).X != -476 || !SavedL152->ScriptLockedDoors.Contains(70))
+                    if (!SavedL152 || SavedL152->SectorHeights.FindRef(27).X != -476
+                        || SavedL152->DoorLockStrengths.FindRef(70) != 190 || SavedL152->ScriptLockedDoors.Contains(70))
                     {
                         return Finish(&Player, TEXT("the L153 handoff did not archive L152's reservoir and locked door"));
                     }
                 }
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
                 if (CaptureTownFrame(bArrivedL152 ? TEXT("l152-arrival") : TEXT("l153-arrival"), bSaved))
                 {
-                    if (!bSaved || !Player.SaveWadCheckpoint(bArrivedL152 ? ElmoreL152Slot : ElmoreL153Slot))
-                    {
-                        return Finish(&Player, TEXT("could not save the original Elmore map handoff"));
-                    }
+                    if (!bSaved) { return Finish(&Player, TEXT("could not capture the rendered Elmore map handoff")); }
+                    if (!Player.SaveWadCheckpoint(bArrivedL152 ? ElmoreL152Slot : ElmoreL153Slot))
+                    { return Finish(&Player, TEXT("could not save the original Elmore map handoff checkpoint")); }
                     UE_LOG(LogTemp, Display, TEXT("%s"), bArrivedL152 ? TEXT("Verified L151 Thing 84 takes the active quest to L152.")
                         : TEXT("Verified L152 Thing 266 takes the active quest and reservoir state to L153."));
                     return Finish(&Player);
@@ -12324,6 +12330,20 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bScriptDoorLockReload)
+            {
+                if (!Player->HasRestoredWadCheckpoint()) { return true; }
+                if (NextPoint == 0) { StageTime = Current->GetTimeSeconds(); ++NextPoint; }
+                if (Current->GetTimeSeconds() - StageTime < 1.0) { return true; }
+                const TActorIterator<ANativeWadLevel> Level(Current);
+                FWadLevelCheckpoint State;
+                if (!Level || Level->GetDoorLockStrength(70) != 190 || !Level->WriteCheckpoint(State)
+                    || State.DoorLockStrengths.FindRef(70) != 190 || State.ScriptLockedDoors.Contains(70)
+                    || Level->GetScriptMissileCount(4012) != 0)
+                { return Finish(Player, TEXT("the restored L152 missile lock lost numeric strength or repeated its volley")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified L152's five-shot trap restores ordinary strength 190 after restart without an absolute lock or a duplicate volley."));
+                return Finish(Player);
+            }
             if (bDoorMagicReview) { return TickDoorMagic(*Player); }
             if (bBerserkReview) { return TickBerserkWand(*Player); }
             if (bDispelReview) { return TickDispelEffects(*Player); }
@@ -12784,6 +12804,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bBoulder = Mode == TEXT("boulderrail") || Mode == TEXT("boulderrail75");
     const bool bAmmo = Mode == TEXT("specialammo") || Mode == TEXT("specialammoreload");
     const bool bAmmoBanner = Mode == TEXT("ammobanner");
+    const bool bScriptDoorLockReload = Mode == TEXT("scriptdoorlockreload");
     const bool bDoorMagic = Mode == TEXT("doormagic") || Mode == TEXT("doormagicreload") || Mode == TEXT("doormagiccompletereload");
     const bool bBerserk = Mode == TEXT("berserkwand") || Mode == TEXT("berserkwandreload");
     const bool bDispel = Mode == TEXT("dispeleffects") || Mode == TEXT("dispeleffectsreload");
@@ -12803,7 +12824,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         || L25Review == EL25Review::L20Exit;
     const FString CampaignMap = CampaignRoute ? FString::Printf(TEXT("L%d"), CampaignRoute->Map) : FString();
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : CampaignRoute ? *CampaignMap : bStartsInL20 ? TEXT("L20")
-        : bDoorMagic ? TEXT("L25") : bControlWands || bBerserk ? TEXT("L61")
+        : bScriptDoorLockReload ? TEXT("L152") : bDoorMagic ? TEXT("L25") : bControlWands || bBerserk ? TEXT("L61")
         : Mode == TEXT("elymaspresentation") ? TEXT("L44") : Mode == TEXT("templegenerator") ? TEXT("L41") : Mode == TEXT("undeadwizardgenerator") ? TEXT("L10")
         : (Mode == TEXT("infinitegenerator") || Mode == TEXT("lavaterrain")) ? TEXT("L71")
         : TempleReview == ETempleReview::L51 ? TEXT("L51") : TempleReview != ETempleReview::None ? TEXT("L52")
@@ -12848,6 +12869,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bElymasPresentationReview = Mode == TEXT("elymaspresentation");
     Review->bAmmoReview = bAmmo;
     Review->bAmmoBannerReview = bAmmoBanner;
+    Review->bScriptDoorLockReload = bScriptDoorLockReload;
     Review->bDoorMagicReview = bDoorMagic;
     Review->bDoorMagicReload = Mode == TEXT("doormagicreload");
     Review->bDoorMagicCompleteReload = Mode == TEXT("doormagiccompletereload");
