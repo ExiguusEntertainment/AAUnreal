@@ -637,6 +637,7 @@ void ANativeWadLevel::SetSectorHeight(int32 Sector, double Z, bool bCeiling)
         return;
     }
     Height = NewHeight;
+    ++WallGeometryRevision;
     FVector Location = Mesh->GetRelativeLocation();
     Location.Z = Height;
     Mesh->SetRelativeLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);

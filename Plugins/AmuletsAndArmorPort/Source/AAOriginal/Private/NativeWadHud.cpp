@@ -17,6 +17,7 @@
 #include "NativeWadNotes.h"
 #include "NativeWadOptions.h"
 #include "NativeWadLook.h"
+#include "NativeWadLevel.h"
 #include "Materials/MaterialInterface.h"
 #include "TextureResource.h"
 #include "UObject/ConstructorHelpers.h"
@@ -818,6 +819,29 @@ void ANativeWadHUD::DrawHUD()
         DrawRect(FLinearColor::Black, 0, Canvas->ClipY - Border, Canvas->ClipX, Border);
     }
     Screen.Frame();
+    const FWadMagicMap& Map = Player->GetMagicMap();
+    if (Map.bOn)
+    {
+        const auto Markers = (Map.Features&FWadMagicMap::Objects)?Player->GetMagicMapMarkers():TArray<FWadMagicMap::FMarker>();
+        const auto Page = Map.Rasterize(Player->GetMagicMapName(),Player->GetMagicMapLines(),Markers,
+            FVector2D(Player->GetActorLocation() - (Player->NativeLevel.IsValid()?Player->NativeLevel->GetActorLocation():FVector::ZeroVector)),
+            Player->GetControlRotation().Yaw,FWadMagicMap::PlayerRadius);
+        const FIntPoint At=Map.Location(FIntRect(4,3,Player->IsInventoryOpen()?204:315,150));
+        for(int32 Y=0;Y<FWadMagicMap::Size;++Y)
+        {
+            for(int32 X=0;X<FWadMagicMap::Size;)
+            {
+                const uint8 Index=Page[Y*FWadMagicMap::Size+X];const int32 Start=X++;
+                while(X<FWadMagicMap::Size&&Page[Y*FWadMagicMap::Size+X]==Index){++X;}
+                if(Index==0&&(Map.Features&FWadMagicMap::Transparent)){continue;}
+                FLinearColor Ink=Screen.Color(Index);
+                // Source uses an indexed MDAT lookup against the software framebuffer.
+                // Native scene translucency approximates it; indexed foreground remains original.
+                Ink.A=(Map.Features&FWadMagicMap::Translucent)?0.5f:1.0f;
+                Screen.Rect(FBox2D(FVector2D(At.X+Start,At.Y+Y),FVector2D(At.X+X,At.Y+Y+1)),Ink);
+            }
+        }
+    }
     if (Player->IsMouseLook())
     {
         const float X = Canvas->ClipX * 0.5f;

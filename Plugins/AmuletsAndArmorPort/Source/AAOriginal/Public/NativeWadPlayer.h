@@ -5,6 +5,7 @@
 #include "GameFramework/HUD.h"
 #include "NativeWadRules.h"
 #include "NativeWadPlayerEffects.h"
+#include "NativeWadMagicMap.h"
 #include "NativeWadPlayer.generated.h"
 
 class UPrimitiveComponent;
@@ -111,12 +112,17 @@ public:
     void ReceiveTrapParalysis();
     void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
-    bool CanFly() const { return FlightSeconds > 0.0 || (HasEquippedItem(NativeWadRules::FlyingAmulet) && !bReadiedFlightSuppressed); }
+    bool CanFly() const { return FlightSeconds > 0.0 || HasActiveFlightEquipment(); }
     bool HasFeatherfall() const { return FeatherfallSeconds > 0.0 || HasEquippedItem(NativeWadRules::FeatherfallAmulet); }
     bool IsWaterWalking() const { return bOnWaterSurface; }
     bool IsConcealed() const { return bConcealed; }
     int32 GetStatusPower(NativeWadRules::EItemStatus Status) const;
     int32 GetOwnedEffectCount() const { return TimedEffects.Num(); }
+    const FWadMagicMap& GetMagicMap() const { return MagicMap; }
+    const TArray<FWadMagicMap::FLine>& GetMagicMapLines() const { return MagicMapLines; }
+    FString GetMagicMapName() const;
+    TArray<FWadMagicMap::FMarker> GetMagicMapMarkers() const;
+    void MagicMapCommand(FKey Key);
     double GetOwnedEffectRemaining(const FString& EffectOwner) const { return TimedEffects.Remaining(EffectOwner); }
     void StartWadEarthquake(double Duration);
     bool IsWadEarthquakeActive() const { return QuakeTime > 0.0; }
@@ -163,7 +169,22 @@ private:
     void UseConsumable(const FWadInventoryDetails& Details);
     void ApplyTimedEffect(const FString& EffectOwner, EWadTimedEffectKind Kind, int32 Status, int32 Power, double Seconds);
     void RefreshTimedEffectCache();
+    void SynchronizeMagicMapOwners();
+    void ReadyMagicMapRing();
+    void TickMagicMap(float DeltaSeconds);
+    FWadMagicMap MagicMap;
+    TArray<FWadMagicMap::FLine> MagicMapLines;
+    uint32 MagicMapGeometryRevision = MAX_uint32;
+    int32 MagicMapObserverLine = 0;
+    int32 MagicMapObserverSample = 0;
     void ApplyReadiedDefenseOrbEffect();
+    bool IsFlightEquipmentOwner(int32 Slot) const;
+    bool HasActiveFlightEquipment() const;
+    void PruneFlightEquipmentOwners();
+    void ActivateFlightEquipmentOwner(int32 Slot);
+    void SuppressFlightEquipmentOwners();
+    void RestoreFlightEquipmentOwners(const FURL& URL);
+    FString EncodeFlightEquipmentOwners() const;
     bool bApplyingDefenseOrbReady = false;
     void RestoreTimedEffects(const TCHAR* Payload);
     void DropInventoryItem();
@@ -246,7 +267,9 @@ private:
     int32 PoisonLevel = 0;
     double ParalysisSeconds = 0.0;
     double FlightSeconds = 0.0;
-    bool bReadiedFlightSuppressed = false; // Includes a worn amulet; only a new READY trigger restores its flight.
+    // Carried indices identify individual objects and are remapped together on removal.
+    // Only currently equipped Earthbound owners live here; a new READY clears that owner alone.
+    TArray<int32> SuppressedFlightEquipment;
     double WaterWalkSeconds = 0.0;
     double FeatherfallSeconds = 0.0;
     double ShieldSeconds[NativeWadRules::ShieldPotionLast - NativeWadRules::ShieldPotionFirst + 1] = {};

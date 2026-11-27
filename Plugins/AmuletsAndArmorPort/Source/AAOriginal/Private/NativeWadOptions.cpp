@@ -152,6 +152,7 @@ namespace NativeWadOptions
             TEXT("^009I / Alt+keypad 7\n^007Inventory\n^009G\n^007Drop selected item\n^009Wheel / PgUp / PgDn\n^007Change inventory page or scroll open form\n\n")
             TEXT("^009Alt+keypad 6\n^007Finances\n^009Alt+keypad 2\n^007Player-written Notes\n^009Alt+keypad 3\n^007Authored Journal pages\n\n")
             TEXT("^009Alt+keypad 4\n^007Music and effects options\n^009F1\n^007Open / close Controls\n^009F5 / F9\n^007Save / load checkpoint\n\n")
+            TEXT("^009Row 1 / 2 / 3 / 4 / 7\n^007Magic map: show, rotate, translucency, transparency, position.\n\n")
             TEXT("^009NOTES\n^007Type to write. Arrows move the cursor. Home/End move within a line; Ctrl+Home/End move to the beginning/end. Enter inserts a line. Tab inserts a tab. Backspace/Delete edit. Escape closes Notes.\n"));
         return Text;
     }

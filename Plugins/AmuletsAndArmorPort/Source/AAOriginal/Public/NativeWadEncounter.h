@@ -189,6 +189,7 @@ public:
     bool CanSeePlayer(const ANativeWadPlayer& Player) const;
     const FString& GetEncounterName() const { return Profile.Name; }
     int32 GetSourceType() const { return Profile.SourceType; }
+    double GetMagicMapRadius() const { return Profile.CollisionRadius; }
 
 private:
     UPROPERTY(VisibleAnywhere)
@@ -316,6 +317,8 @@ public:
     static ANativeWadPickup* SpawnDropped(ANativeWadLevel& Level, int32 Type, const FVector& Position);
     UFUNCTION(BlueprintPure, Category="WAD|Pickups")
     bool IsDropped() const { return bDropped; }
+    double GetMagicMapRadius() const;
+    bool IsMagicMapInvisible() const;
 
 private:
     UPROPERTY(VisibleAnywhere)

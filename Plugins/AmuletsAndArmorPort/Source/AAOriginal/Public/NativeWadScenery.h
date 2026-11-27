@@ -46,6 +46,9 @@ struct FWadSceneryDefinition
     int32 Radius = 0;
 
     UPROPERTY()
+    uint16 SourceAttributes = 0;
+
+    UPROPERTY()
     int32 FrameTicks = 0;
 
     UPROPERTY()
@@ -79,6 +82,8 @@ public:
     void SetPickup(ANativeWadPickup* Item);
     ANativeWadPickup* GetPickup() const;
     int32 GetSourceThingId() const { return ThingId; }
+    int32 GetMagicMapRadius() const { return Definition.Radius; }
+    bool IsMagicMapInvisible() const { return (Definition.SourceAttributes & 0x0004) != 0; }
 
 private:
     virtual void BeginPlay() override;

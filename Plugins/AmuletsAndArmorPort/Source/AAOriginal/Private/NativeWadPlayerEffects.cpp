@@ -191,12 +191,16 @@ void ANativeWadPlayer::RefreshTimedEffectCache()
         ItemStatusSeconds[Index] = TimedEffects.Duration(EWadTimedEffectKind::Status, Index);
         ItemStatusPower[Index] = TimedEffects.Power(EWadTimedEffectKind::Status, Index);
     }
+    SynchronizeMagicMapOwners();
 }
 
 void ANativeWadPlayer::ApplyTimedEffect(const FString& EffectOwner, EWadTimedEffectKind Kind, int32 Status, int32 Power, double Seconds)
 {
-    if (!TimedEffects.Apply({EffectOwner, Kind, Status, Power, Seconds}))
+    const bool bApplied = TimedEffects.Apply({EffectOwner, Kind, Status, Power, Seconds});
+    if (!bApplied)
     { UE_LOG(LogTemp, Error, TEXT("Rejected invalid WAD temporary effect for %s."), *EffectOwner); }
+    if (bApplied && Kind == EWadTimedEffectKind::Status && Status == NativeWadRules::MagicMapStatus)
+    { MagicMap.StartOwner(EffectOwner, Power); }
     RefreshTimedEffectCache();
 }
 

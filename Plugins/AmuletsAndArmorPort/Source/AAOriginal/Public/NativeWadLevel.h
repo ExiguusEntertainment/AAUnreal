@@ -312,6 +312,8 @@ public:
     int32 FindLevelLinkAt(const FVector2D& Position) const;
     bool GetWallLine(int32 Line, FWadWallLine& Wall);
     int32 GetLineCount() const { return Lines.Num(); }
+    int32 GetWadLineFlags(int32 Index) const { return Lines.IsValidIndex(Index) ? int32(Lines[Index].Flags) : 0; }
+    uint32 GetWallGeometryRevision() const { return WallGeometryRevision; }
 
     // Read the saved lower/middle/upper picture names without exposing mutable topology.
     UFUNCTION(BlueprintPure, Category="WAD|Surfaces")
@@ -319,6 +321,7 @@ public:
 
 private:
     friend struct FAAWadNativeImport;
+    uint32 WallGeometryRevision = 0;
 
     void InitializeTopology();
     void InitializeWaterSurfaces();

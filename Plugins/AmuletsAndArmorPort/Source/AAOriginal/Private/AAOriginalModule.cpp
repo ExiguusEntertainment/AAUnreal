@@ -1160,6 +1160,10 @@ public:
                 {
                     bStarted = StartNativeWadRiverReview(InWorld, Output, ImageSize, Review == TEXT("riverreload"));
                 }
+                else if (Review == TEXT("magicmap") || Review == TEXT("magicmapreload"))
+                {
+                    bStarted = StartNativeWadMagicMapReview(InWorld, Output, Review == TEXT("magicmapreload"));
+                }
                 else if (Review == TEXT("ravine") || Review == TEXT("ambient") || Review == TEXT("l31tol22")
                     || Review == TEXT("l22trap") || Review == TEXT("liftsave") || Review == TEXT("liftreload")
                     || Review == TEXT("doorreload") || Review == TEXT("towntour") || Review == TEXT("townfailure")

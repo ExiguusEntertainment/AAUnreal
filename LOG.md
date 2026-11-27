@@ -208,3 +208,27 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All77 WAD tests pass; source spell coverage95/108. Source ground friction/Sticky Feet and Orange Wizard373+407/104 loot are verified. All30 terrain maps (5,683 sectors) reopen correctly without geometry/component/material changes.
 - Actual L30 route walks from1608,432 through door147 to2762.6,1515.9; lighting changes84->160->84. Door cycle also passes. The older Slice stops at the class-forbidden Priest dagger equip, not movement; PLAN records fixture migration separately.
 - PLAN now includes the all-map source completeness audit and concrete remaining map/type/script omissions. Preparing checkpoint241-242, then original Magic Map, flight-owner and missing encounter integration.
+
+## 2026-11-27 16:15 CST - map and flight integration; source inventory geometry
+
+- Pushed a5aa4777 to origin/main (31 LFS objects/125MB), covering verified terrain/Orange Wizard work and the concrete completeness backlog.
+- Original75x75 Magic Map, eight spells/ring435, exploration/control persistence and individual613 flight suppression are merged and under build. Map alpha/visibility sampling remain documented rendering approximations; no global player-light changes are used.
+- Inventory audit confirms five6x8 bags, source17x14 spacing and variable bitmap footprints, unlike the current one-cell grouped pages. A pure layout/codec patch is frozen; normal-input/HUD/Town adapters are being implemented separately. Readied-stack refill remains an explicit followup.
+
+## 2026-11-27 16:21 CST - integration checks and parallel packages
+
+- Fixed MagicMap TMap key access, compile-time name shadowing and self-contained review includes; restoration now clears cached map lines so topology rebinds. Rebuild pending; map/flight runtime checks not yet claimed.
+- EncounterCoverage.patch combines19 missing L151 Barbarians and5 L74 Skeleton Knights, preserving the existing L151Thing31/L34 identities; AcidTerrain and separate typed-lava fixes are frozen pending integration.
+- Active agents now handle original inventory footprint adapters, neutral per-player Night Vision with sky/HUD exclusions, and missing authored ambient marker coverage. Night Vision is explicitly a native rendering approximation; strongest remaining owner policy replaces the source stop-reset interaction.
+
+## 2026-11-27 16:26 CST - map/flight regression pass, rendered fixture correction
+
+- All86 WAD regressions pass, including all8 original map spells, map ownership/visibility/raster checks and four flight-owner tests. Source coverage103/108 is unit-verified, with rendered map verification still pending.
+- Corrected the invisible-marker assertion to test actual output pixels, including a visible-object negative control; attributed invisible records are intentionally filtered at rasterization.
+- First rendered map run passed initial ring placement, row controls, tier4 cast and unREADY, then its helper toggled an already-open Equipment form incorrectly. Fixed the ordinary button sequence and rerunning the two process reviews. No gameplay permissions or map behavior were weakened.
+
+## 2026-11-27 16:28 CST - original map and flight ownership verified
+
+- All86 WAD regressions pass;103/108 original spells verified. Both rendered MagicMap processes passed. Inspected tier4 and actual opened-door frames; line79 stayed unseen behind closed door147, then ordinary E revealed it. Controls/owners/exploration survive L301 travel and process restart. Profile: Saved/MagicMapProcessProfile-20261127-162600.
+- Individual Flying Amulet suppression, legacy migration, index remapping and source Dispel reREADY pass actual save/disk tests alongside Ward/Orb.
+- PLAN243-244 are checked; full roadmap now explicitly distinguishes historical seven-quest archive proof from the current restored encounters. Preparing commit/push before encounter/hazard work.

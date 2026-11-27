@@ -81,6 +81,10 @@ void ANativeWadPlayer::BeginPlay()
 
 void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
 {
+    MagicMap = FWadMagicMap();
+    MagicMapLines.Reset();
+    MagicMapGeometryRevision = MAX_uint32;
+    MagicMapObserverLine = MagicMapObserverSample = 0;
     TravelHour.Reset();
     double Hour;
     if (const TCHAR* Option = URL.GetOption(TEXT("WadHour="), nullptr);
@@ -142,7 +146,6 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
         return 0.0;
     };
     FlightSeconds = ReadDuration(TEXT("WadFlight="), FlyingScrollSeconds);
-    bReadiedFlightSuppressed = FCString::Atoi(URL.GetOption(TEXT("WadFlightSuppressed="), TEXT("0"))) != 0;
     WaterWalkSeconds = ReadDuration(TEXT("WadWaterWalk="), 8400.0 / TicksPerSecond);
     FeatherfallSeconds = ReadDuration(TEXT("WadFeatherfall="), FeatherfallPotionSeconds);
     for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
@@ -272,7 +275,11 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
             && !IsWornInventorySlot(Slot) && !IsRuneItem(CarriedItems[Slot]))
         { SelectedInventorySlot = Slot; }
     }
+    RestoreFlightEquipmentOwners(URL);
     RestoreTimedEffects(URL.GetOption(TEXT("WadOwnedEffects="), nullptr));
+    if (const TCHAR* MapState = URL.GetOption(TEXT("WadMagicMap="), nullptr))
+    { if (!MagicMap.Decode(MapState)) { UE_LOG(LogTemp, Warning, TEXT("Rejected invalid character magic-map state.")); } }
+    SynchronizeMagicMapOwners();
     if (IsDefeated()) { GetCharacterMovement()->DisableMovement(); }
     else if (!IsInWadTown() && GetCharacterMovement()->MovementMode == MOVE_None)
     { GetCharacterMovement()->SetMovementMode(MOVE_Falling); }
@@ -305,6 +312,8 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
         Input->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ANativeWadPlayer::TownClick);
         return;
     }
+    for (const FKey Key : {EKeys::One,EKeys::Two,EKeys::Three,EKeys::Four,EKeys::Five,EKeys::Six,EKeys::Seven})
+    { Input->BindKey(Key, IE_Pressed, this, &ANativeWadPlayer::MagicMapCommand); }
     Input->BindKey(EKeys::E, IE_Pressed, this, &ANativeWadPlayer::UsePressed);
     Input->BindKey(EKeys::F5, IE_Pressed, this, &ANativeWadPlayer::WadSave);
     Input->BindKey(EKeys::F9, IE_Pressed, this, &ANativeWadPlayer::WadLoad);
@@ -363,6 +372,7 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         CompleteTownArrival();
         return;
     }
+    TickMagicMap(DeltaSeconds); // Observation runs independently of display/effect activation.
     if (QuakeTime > 0.0)
     {
         QuakeTime = FMath::Max(0.0, QuakeTime - DeltaSeconds);
@@ -498,7 +508,9 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     };
     Options += FString::Printf(TEXT("?WadClass=%d"), CharacterClass);
     WriteDuration(TEXT("WadFlight"), FlightSeconds);
-    if (bReadiedFlightSuppressed && HasEquippedItem(FlyingAmulet)) { Options += TEXT("?WadFlightSuppressed=1"); }
+    Options += TEXT("?WadFlightOwners=") + EncodeFlightEquipmentOwners();
+    // Older native readers conservatively suppress all gear if any owner is Earthbound.
+    if (!SuppressedFlightEquipment.IsEmpty()) { Options += TEXT("?WadFlightSuppressed=1"); }
     if (SelectedAmmo != 0)
     {
         Options += FString::Printf(TEXT("?WadAmmo=%d"), SelectedAmmo);
@@ -523,6 +535,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
         }
     }
     Options += TEXT("?WadOwnedEffects=") + TimedEffects.Encode();
+    Options += TEXT("?WadMagicMap=") + MagicMap.Encode();
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
         Options += FString::Printf(TEXT("?WadHour=%.9f"), Level->GetTimeOfDayHours());
@@ -768,15 +781,19 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
             // EFFECT.C removes one random temporary effect after excluding equipped effects.
             if (TimedEffects.Num() > 0) { TimedEffects.Dispel(FMath::RandRange(0, TimedEffects.Num() - 1)); }
             RefreshTimedEffectCache();
+            ReadyMagicMapRing(); // Source Dispel restores equipped READY effects after removing temporary magic.
             // EFFECT.C restores equipped READY effects after choosing a
             // temporary owner; the defense orb's health cost precedes its buff.
             ApplyReadiedDefenseOrbEffect();
+            // InventoryRestoreEquippedEffects sends a new READY to every surviving
+            // equipped owner, even when Dispel found no temporary spell to remove.
+            SuppressedFlightEquipment.Reset();
         }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind))
         {
             TimedEffects.RemoveKind(EWadTimedEffectKind::Flight);
             RefreshTimedEffectCache();
-            bReadiedFlightSuppressed = HasEquippedItem(FlyingAmulet);
+            SuppressFlightEquipmentOwners();
         }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Slow))
         {
@@ -909,7 +926,7 @@ void ANativeWadPlayer::TickItemStatuses(float DeltaSeconds)
 {
     TimedEffects.Tick(DeltaSeconds);
     RefreshTimedEffectCache();
-    if (!HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+    PruneFlightEquipmentOwners();
     const int32 EffectiveSpeed = GetEffectiveAttribute(SpeedAttribute);
     // Keep the existing native baseline while applying the original MaxVWalking=(Speed/5)+10 modifier ratio.
     const float SpeedRatio = float(EffectiveSpeed / 5 + 10) / float(EffectiveAttribute(Attributes[SpeedAttribute], 0) / 5 + 10);

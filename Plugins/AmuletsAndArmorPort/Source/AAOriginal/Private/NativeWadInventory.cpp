@@ -208,7 +208,14 @@ bool ANativeWadPlayer::RemoveInventorySlot(int32 Slot)
         if (Worn == Slot) { Worn = INDEX_NONE; }
         else if (Worn > Slot) { --Worn; }
     }
-    if (!HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+    for (int32 Index = SuppressedFlightEquipment.Num() - 1; Index >= 0; --Index)
+    {
+        int32& FlightSlot = SuppressedFlightEquipment[Index];
+        if (FlightSlot == Slot) { SuppressedFlightEquipment.RemoveAt(Index); }
+        else if (FlightSlot > Slot) { --FlightSlot; }
+    }
+    PruneFlightEquipmentOwners();
+    SynchronizeMagicMapOwners();
     return true;
 }
 
@@ -324,7 +331,8 @@ bool ANativeWadPlayer::EquipJewelry(int32 Slot, const FWadInventoryDetails& Deta
     if (Existing != INDEX_NONE && (Location == INDEX_NONE || Location == Existing))
     {
         JewelrySlots[Existing] = INDEX_NONE;
-        if (!HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+        PruneFlightEquipmentOwners();
+        SynchronizeMagicMapOwners();
         ShowInteractionMessage(FString::Printf(TEXT("Removed %s"), *GetInventoryItemDescription(CarriedItems[Slot])));
         return true;
     }
@@ -348,7 +356,9 @@ bool ANativeWadPlayer::EquipJewelry(int32 Slot, const FWadInventoryDetails& Deta
     if (ReadySlot == Slot) { ReadySlot = INDEX_NONE; }
     // Equipping is a new READY trigger. Changing a weapon alone does not restart a
     // worn flight amulet that Earthbind suppressed.
-    if (CarriedItems[Slot] == FlyingAmulet) { bReadiedFlightSuppressed = false; }
+    ActivateFlightEquipmentOwner(Slot);
+    if (CarriedItems[Slot] == 435) { ReadyMagicMapRing(); }
+    SynchronizeMagicMapOwners();
     ShowInteractionMessage(FString::Printf(TEXT("Equipped %s"), *GetInventoryItemDescription(CarriedItems[Slot])));
     return true;
 }
@@ -406,8 +416,10 @@ bool ANativeWadPlayer::SwapMouseAndReady()
         }
     }
     Swap(SelectedInventorySlot, ReadySlot);
-    if (GetReadyItem() == FlyingAmulet || !HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+    ActivateFlightEquipmentOwner(ReadySlot);
     ApplyReadiedDefenseOrbEffect();
+    if (GetReadyItem() == 435) { ReadyMagicMapRing(); }
+    SynchronizeMagicMapOwners();
     if (IsDefeated()) { return true; }
     ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
     return true;

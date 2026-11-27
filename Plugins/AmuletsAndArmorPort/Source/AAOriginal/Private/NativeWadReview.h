@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CoreMinimal.h"
+
 class UWorld;
 class ASceneCapture2D;
 class USceneCaptureComponent2D;
@@ -15,3 +17,5 @@ bool StartNativeWadWalkReview(UWorld* World, const FString& OutputPath, int32 Im
     bool bSecondMap, bool bCampaign, bool bCheckpoint);
 bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 ImageSize, bool bReload);
 bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, const FString& Mode);
+
+bool StartNativeWadMagicMapReview(UWorld* World, const FString& OutputPath, bool bReload);

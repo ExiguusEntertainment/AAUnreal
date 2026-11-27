@@ -45,7 +45,7 @@ namespace NativeWadRules
         FireAttackStatus, ElectricityAttackStatus, AcidAttackStatus, PoisonAttackStatus, PiercingAttackStatus, ManaDrainAttackStatus,
         FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus,
         AccuracyStatus, StealthStatus, MagicStatus, HealthRegenStatus, ManaRegenStatus,
-        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, StickyFeetStatus, ItemStatusCount };
+        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, StickyFeetStatus, MagicMapStatus, ItemStatusCount };
     inline constexpr int32 SourceNormalFriction = 12;
     // OBJMOVE.C: XV -= (XV >> 8) * friction * ticks. This continuous
     // extension matches one tick without the original integer truncation.
@@ -134,6 +134,15 @@ namespace NativeWadRules
     };
     // Original SPELDESC metadata; projectile records name their individual source files.
     inline constexpr FWadSpell SupportedSpells[] = {
+        {TEXT("43"), TEXT("Magic Map"), ESpellSchool::Mage, ESpellEffect::Status, 1500, 10, 27999, 1, INDEX_NONE, 13, MagicMapStatus}, // SPL00013
+        {TEXT("436"), TEXT("Magic Map"), ESpellSchool::Mage, ESpellEffect::Status, 4000, -25, 27999, 2, INDEX_NONE, 34, MagicMapStatus}, // SPL00034
+        {TEXT("4367"), TEXT("Magic Map"), ESpellSchool::Mage, ESpellEffect::Status, 9000, -40, 27999, 3, INDEX_NONE, 43, MagicMapStatus}, // SPL00043
+        {TEXT("4967"), TEXT("Magic Map"), ESpellSchool::Mage, ESpellEffect::Status, 12000, 0, 27999, 4, INDEX_NONE, 44, MagicMapStatus}, // SPL00044
+        {TEXT("934"), TEXT("Magic Map"), ESpellSchool::Arcane, ESpellEffect::Status, 1500, 10, 27999, 1, INDEX_NONE, 54, MagicMapStatus}, // SPL00054
+        {TEXT("9734"), TEXT("Magic Map"), ESpellSchool::Arcane, ESpellEffect::Status, 4000, -25, 27999, 2, INDEX_NONE, 68, MagicMapStatus}, // SPL00068
+        {TEXT("17"), TEXT("Magic Map"), ESpellSchool::Cleric, ESpellEffect::Status, 1500, 10, 27999, 1, INDEX_NONE, 80, MagicMapStatus}, // SPL00080
+        {TEXT("4197"), TEXT("Magic Map"), ESpellSchool::Cleric, ESpellEffect::Status, 5000, -35, 27999, 2, INDEX_NONE, 100, MagicMapStatus}, // SPL00100
+
         {TEXT("14"), TEXT("Deflect"), ESpellSchool::Mage, ESpellEffect::Shield, 500, 50, 8400, 25, INDEX_NONE, 0},
         {TEXT("41"), TEXT("Feather Fall"), ESpellSchool::Mage, ESpellEffect::FeatherFall, 250, 50, 2100, 1, INDEX_NONE, 2},
         {TEXT("21"), TEXT("Water Walk"), ESpellSchool::Cleric, ESpellEffect::WaterWalk, 500, 50, 8400, 1, INDEX_NONE, 71},

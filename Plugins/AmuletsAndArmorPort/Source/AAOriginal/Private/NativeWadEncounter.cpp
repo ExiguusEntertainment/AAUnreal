@@ -1113,6 +1113,20 @@ ANativeWadPickup* ANativeWadPickup::SpawnDropped(ANativeWadLevel& Level, int32 T
     return Pickup;
 }
 
+double ANativeWadPickup::GetMagicMapRadius() const
+{
+    const auto* Catalog=UNativeWadHudData::LoadCatalog();
+    const auto* Rules=Catalog?Catalog->ItemDetails.Find(ItemType):nullptr;
+    return Rules?Rules->WorldRadius:0;
+}
+
+bool ANativeWadPickup::IsMagicMapInvisible() const
+{
+    const auto* Catalog=UNativeWadHudData::LoadCatalog();
+    const auto* Rules=Catalog?Catalog->ItemDetails.Find(ItemType):nullptr;
+    return Rules&&(Rules->WorldAttributes&0x0004)!=0;
+}
+
 void ANativeWadPickup::Destroyed()
 {
     if (IsValid(Scenery) && GetWorld() && GetWorld()->IsGameWorld())

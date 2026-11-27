@@ -143,7 +143,8 @@ namespace
             else if (Name == TEXT("ADD PLAYER EFFECT") && (Trigger == TEXT("USE") || Trigger == TEXT("READY")))
             {
                 const FString SubEffect = Field(TEXT("EFFECT SUBTYPE"), Index + 2, EndEffect);
-                const int32 Status = SubEffect == TEXT("INVISIBLE") ? InvisibleStatus
+                const int32 Status = SubEffect == TEXT("MAGIC MAP") ? MagicMapStatus
+                    : SubEffect == TEXT("INVISIBLE") ? InvisibleStatus
                     : SubEffect == TEXT("STICKY FEET") ? StickyFeetStatus
                     : SubEffect == TEXT("INVULNERABLE") ? InvulnerableStatus
                     : SubEffect == TEXT("TRANSLUCENT") ? TranslucentStatus
@@ -179,7 +180,7 @@ namespace
                     Details.StatusTicks = Ticks;
                     Details.StatusPower = Status == StrengthStatus || Status == SpeedStatus || Status == SpellShieldStatus
                         || Status == AccuracyStatus || Status == StealthStatus || Status == MagicStatus
-                        || Status == HealthRegenStatus || Status == ManaRegenStatus || Status == JumpStatus ? Power : 1;
+                        || Status == HealthRegenStatus || Status == ManaRegenStatus || Status == JumpStatus || Status == MagicMapStatus ? Power : 1;
                 }
                 else if (Trigger == TEXT("USE"))
                 {
@@ -310,6 +311,7 @@ namespace
         }
         Item.Picture = FPaths::GetPath(Resource) / Picture;
         Item.Radius = Values[1];
+        Item.Details.WorldAttributes = uint16(Values[2]);
         Item.Weight = Values[3];
         Item.Details.ValueCopper = Values[4];
         Item.bPassable = (Values[2] & (0x0001 | 0x2000)) != 0 || Item.Radius == 0;

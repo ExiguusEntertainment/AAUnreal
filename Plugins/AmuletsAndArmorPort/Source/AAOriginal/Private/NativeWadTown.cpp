@@ -535,6 +535,7 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
         Slot = INDEX_NONE;
     }
     for (int32& Slot : JewelrySlots) { Slot = INDEX_NONE; }
+    SuppressedFlightEquipment.Reset();
     for (int32 Ammo = 0; Ammo < UE_ARRAY_COUNT(AmmoReserve); ++Ammo)
     {
         AmmoReserve[Ammo] = Equipment.Ammo.IsValidIndex(Ammo) ? Equipment.Ammo[Ammo] : 0;

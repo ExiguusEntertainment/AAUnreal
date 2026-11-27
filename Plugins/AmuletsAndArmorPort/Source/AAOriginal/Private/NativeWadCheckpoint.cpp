@@ -14,6 +14,7 @@
 #include "NativeWadOptions.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadPickupMetadata.h"
+#include "NativeWadFlightOwners.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #include "TimerManager.h"
@@ -35,6 +36,11 @@ namespace
         const FURL URL(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
         if (const TCHAR* Defeated = URL.GetOption(TEXT("WadDefeated="), nullptr);
             Defeated && FCString::Strcmp(Defeated, TEXT("0")) != 0 && FCString::Strcmp(Defeated, TEXT("1")) != 0) { return nullptr; }
+        if (const TCHAR* Payload = URL.GetOption(TEXT("WadFlightOwners="), nullptr))
+        {
+            TArray<int32> Owners;
+            if (!NativeWadFlightOwners::Decode(Payload, Owners)) { return nullptr; }
+        }
         if (const TCHAR* Payload = URL.GetOption(TEXT("WadOwnedEffects="), nullptr))
         {
             FWadPlayerEffects Effects;

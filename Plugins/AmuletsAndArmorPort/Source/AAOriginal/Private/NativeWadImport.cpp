@@ -892,6 +892,7 @@ struct FAAWadNativeImport
             }
             Catalog->ItemWeights.Add(Type, Item.Weight);
             FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
+        Details.WorldRadius = Item.Radius;
             Details.WorldMaterial = Material;
             Details.SpriteSize = FIntPoint(int32(Image->Source.GetSizeX()), int32(Image->Source.GetSizeY()));
         }
@@ -1867,6 +1868,7 @@ struct FAAWadNativeImport
         constexpr int32 StickToCeiling = 0x0200;
         constexpr int32 Raised = 0x0400;
         Definition.Radius = Values[1];
+        Definition.SourceAttributes = uint16(Values[2]);
         Definition.bPassable = (Values[2] & (Passable | FullyPassable)) != 0 || Definition.Radius == 0;
         Definition.bStaysAboveLiquid = (Values[7] & DoNotSink) != 0;
         Definition.bHanging = (Values[7] & StickToCeiling) != 0;
@@ -3327,7 +3329,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
     const TSet<int32> CreatedItemTypes{833, 298, 822}; // SPL00086/87/90 ordinary created inventory objects.
     Types.Append(CreatedItemTypes);
-    for (const int32 Type : {411, 417, 418, 419, 432, 604, 610, 612, 614, 615, 712, 954, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
+    for (const int32 Type : {411, 417, 418, 419, 432, 435, 604, 610, 612, 614, 615, 712, 954, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
     for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
@@ -3441,6 +3443,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
             Catalog->ItemWeights.Add(Type, Item.Weight);
         }
         FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
+        Details.WorldRadius = Item.Radius;
         const FString MaterialPackage = Item.WorldMaterialPackage();
         const FString MaterialPath = MaterialPackage + TEXT(".") + FPackageName::GetShortName(MaterialPackage);
         if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351 || Type == 373 || Type == NativeWadRules::OrbOfDefense || OrdinaryTreasureTypes.Contains(Type) || CreatedItemTypes.Contains(Type))

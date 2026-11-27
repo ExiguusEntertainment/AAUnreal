@@ -90,6 +90,10 @@ struct FWadInventoryDetails
     TSoftObjectPtr<UMaterialInterface> WorldMaterial;
     UPROPERTY()
     FIntPoint SpriteSize = FIntPoint::ZeroValue;
+    UPROPERTY()
+    int32 WorldRadius = 0;
+    UPROPERTY()
+    uint16 WorldAttributes = 0;
 };
 
 USTRUCT()
