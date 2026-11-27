@@ -2012,6 +2012,10 @@ namespace
         bool bItemOwnersReview = false;
         bool bItemOwnersReload = false;
         bool bItemOwnersCompleteReload = false;
+        int32 BagReviewPageBefore=0;
+        bool bInventoryGridReview = false;
+        bool bInventoryGridReload = false;
+        FString InventoryGridExpected;
         bool bRetainedHandReview = false;
         bool bRetainedHandReload = false;
         double RefreshedOwnerBefore = 0.0;
@@ -2902,30 +2906,30 @@ namespace
             case 15:
                 if (!bCampaignActionStarted)
                 {
-                    Hud->ClickHUD(Hud->InventorySlotCenter(Player.GetCarriedItems().Num() - 1));
+                    if(Player.GetBagPage()!=1||!SelectReviewBagItem(Player,Player.GetCarriedItems().Num()-1))
+                    {return Finish(&Player,TEXT("source page-down or actual footprint selection failed"));}
                     bCampaignActionStarted = true;
                 }
                 if (Player.GetSelectedInventorySlot() != Player.GetCarriedItems().Num() - 1)
                 {
-                    return Finish(&Player, TEXT("Page Down did not load the second page's clickable cells"));
+                    return Finish(&Player, TEXT("Source paging did not select the requested physical footprint"));
                 }
-                if (!CaptureTownFrame(TEXT("second-page"), bSaved))
+                if (!CaptureTownFrame(TEXT("paged-bag"), bSaved))
                 {
                     return true;
                 }
                 if (!bSaved)
                 {
-                    return Finish(&Player, TEXT("could not capture the second page of the classic inventory"));
+                    return Finish(&Player, TEXT("could not capture the selected source inventory bag"));
                 }
-                if (!StowReviewMouseHand(Player)) { return Finish(&Player, TEXT("could not place the second-page object in an empty bag cell")); }
+                if (!StowReviewMouseHand(Player)) { return Finish(&Player, TEXT("could not place the source object in a valid bag footprint")); }
+                BagReviewPageBefore=Player.GetBagPage();
                 Press(Player, EKeys::PageUp);
                 break;
             case 16:
-                Hud->ClickHUD(Hud->InventorySlotCenter(0));
-                if (Player.GetSelectedInventorySlot() != 0)
-                {
-                    return Finish(&Player, TEXT("Page Up did not return to the first page"));
-                }
+                if(Player.GetBagPage()!=FMath::Max(0,BagReviewPageBefore-1)||!SelectReviewBagItem(Player,0)
+                    ||Player.GetSelectedInventorySlot()!=0)
+                {return Finish(&Player,TEXT("source PageUp or original footprint selection failed"));}
                 UE_LOG(LogTemp, Display, TEXT("Verified authored world pickups, descriptions, stacking, paging, and the ready hand."));
                 return Finish(&Player);
             }
@@ -6402,14 +6406,21 @@ namespace
             if (!Catalog) { return false; }
             if (bTown) { ClickReviewPoint(Player, {13, 161}); }
             else if (!ShowReviewBag(Player)) { return false; }
-            const NativeWadInventoryView::FView Bag(Player, *Catalog, true, Player.GetMouseHandSlot());
-            // Navigate to the last page's genuinely empty placement cell, even at exactly 48/96
-            // occupied visible cells. This exercises normal HUD hit tests instead of auto-stashing.
-            for (int32 Page = 0; Page < FMath::Max(6, Bag.PageCount()); ++Page) { ClickReviewPoint(Player, {271, 132}); }
-            for (int32 Page = 0; Page < Bag.Cells.Num() / NativeWadInventoryView::SlotsPerPage; ++Page)
-            { ClickReviewPoint(Player, {281, 132}); }
-            ClickReviewPoint(Player, NativeWadInventoryView::SlotBox(Bag.Cells.Num()).GetCenter());
-            return Player.GetMouseHandItem() == 0;
+            const auto& Layout=Player.GetBagLayout();auto Items=Player.GetBagItems();const int32 Held=Player.GetMouseHandSlot();
+            Items[Held].bOffPage=false;const auto Shape=FWadBagLayout::Footprint(Items[Held].Bitmap);
+            for(int32 Page=0;Page<Layout.PageCount();++Page)
+            for(int32 X=6-Shape.X;X>=0;--X)for(int32 Y=8-Shape.Y;Y>=0;--Y)
+            {
+                FWadBagLayout Candidate=Layout;
+                if(!Candidate.Place(Held,Page,{X,Y},Items)){continue;}
+                // Pure layout preview chooses a valid source footprint, but only
+                // the actual original bag arrow/cell click performs the transfer.
+                for(int32 I=0;I<Layout.PageCount();++I){ClickReviewPoint(Player,{271,132});}
+                for(int32 I=0;I<Page;++I){ClickReviewPoint(Player,{281,132});}
+                ClickReviewPoint(Player,{213.0+X*17+Items[Held].Bitmap.X/2+1,16.0+Y*14+Items[Held].Bitmap.Y/2+1});
+                return Player.GetMouseHandItem()==0;
+            }
+            return false;
         }
 
         int32 FindReviewItemSlot(const ANativeWadPlayer& Player, int32 Type) const
@@ -6425,6 +6436,9 @@ namespace
         {
             if (!Player.GetCarriedItems().IsValidIndex(Slot)) { return false; }
             if (Player.GetMouseHandSlot() == Slot) { return true; }
+            // A visible source stack selects its canonical individual representative.
+            // Copies are fungible full-type records; no carried index is reordered or deleted.
+            if(const int32 Leader=Player.GetBagLayout().LeaderOf(Slot);Leader!=INDEX_NONE){Slot=Leader;}
             if (!StowReviewMouseHand(Player) || !ShowReviewBag(Player)) { return false; }
             if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
             {
@@ -6456,8 +6470,8 @@ namespace
                 return false; // Armor fixtures use their explicit body rectangle instead of guessing a bracing side.
             }
             for (int32 Page = 0; Page < Bag.PageCount(); ++Page) { ClickReviewPoint(Player, {271, 132}); }
-            for (int32 Page = 0; Page < Cell / NativeWadInventoryView::SlotsPerPage; ++Page) { ClickReviewPoint(Player, {281, 132}); }
-            ClickReviewPoint(Player, NativeWadInventoryView::SlotBox(Cell).GetCenter());
+            for (int32 Page = 0; Page < Bag.Cells[Cell].Page; ++Page) { ClickReviewPoint(Player, {281, 132}); }
+            ClickReviewPoint(Player, Bag.Box(Cell).GetCenter());
             return Player.GetMouseHandSlot() == Slot;
         }
 
@@ -7907,16 +7921,13 @@ namespace
             if (Scale <= 0 && !bHeadlessShop) { return true; }
             const FVector2D Origin((Width - 320 * Scale) / 2, (Height - 200 * Scale) / 2);
             const auto Click = [&](double X, double Y) { Hud->ClickAction(Origin + FVector2D(X, Y) * Scale); };
-            const auto StockItem = [&](int32 Item)
+            const auto StockItem=[&](int32 Item)
             {
-                int32 Index = 0;
-                for (const auto& [Type, Tier] : Content->StoreStock)
-                {
-                    Index += Type < Item && Tier <= Progress.ShopTier;
-                }
-                for (int32 Page = 0; Page < Index / 42; ++Page) { Click(78, 129); }
-                Index %= 42;
-                return FVector2D(18 + Index % 6 * 17, 32 + Index / 6 * 14);
+                const int32 Target=Hud->ServiceStockItemPage(Item);if(Target==INDEX_NONE){return FVector2D(-1,-1);}
+                const int32 CurrentPage=Hud->GetServiceStockPage();
+                for(int32 I=CurrentPage;I>Target;--I){Click(68,129);}
+                for(int32 I=CurrentPage;I<Target;++I){Click(78,129);}
+                return Hud->ServiceStockItemCenter(Item);
             };
             const auto ClickStock = [&](int32 Item)
             {
@@ -11392,6 +11403,175 @@ namespace
             return true;
         }
 
+        bool TickInventoryGrid(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            auto* Controller=Player.GetController<APlayerController>();
+            auto* Hud=Controller?Controller->GetHUD<ANativeWadHUD>():nullptr;
+            const auto* Catalog=UNativeWadHudData::LoadCatalog();
+            if(!Controller||!Hud||!Catalog||!Hud->HasClassicHud()||FParse::Param(FCommandLine::Get(),TEXT("nullrhi")))
+            {return Finish(&Player,TEXT("inventory grid fixture requires original art and a rendered viewport"));}
+            if(HeldKey){SendKey(Player,HeldKey.GetValue(),IE_Released);HeldKey.Reset();}
+            if(bInventoryGridReload&&!Player.HasRestoredWadCheckpoint()){return true;}
+            if(Player.IsDefeated()){return Finish(&Player,TEXT("controlled inventory grid fixture was defeated"));}
+            const FString Manifest=FPaths::ProjectSavedDir()/TEXT("ReviewArtifacts/InventoryGrid-layout.txt");
+            const auto Encode=[&]{return Player.GetBagLayout().Encode(Player.GetBagItems());};
+            const auto Page=[&](int32 Target)
+            {
+                if(!ShowReviewBag(Player)){return false;}
+                for(int32 I=0;I<5;++I){ClickReviewPoint(Player,{271,132});}
+                for(int32 I=0;I<Target;++I){ClickReviewPoint(Player,{281,132});}
+                return Player.GetBagPage()==Target;
+            };
+            const auto Drop=[&](int32 Target,FIntPoint A)
+            {
+                const int32 Held=Player.GetMouseHandSlot();if(Held==INDEX_NONE||!Page(Target)){return false;}
+                const auto Size=Player.GetBagItems()[Held].Bitmap;
+                ClickReviewPoint(Player,{213.0+A.X*17+Size.X/2+1,16.0+A.Y*14+Size.Y/2+1});
+                return Player.GetMouseHandSlot()==INDEX_NONE;
+            };
+            const auto TakePotion=[&]
+            {
+                const auto& Layout=Player.GetBagLayout();
+                for(int32 I:Layout.LeadersInOrder())
+                {
+                    if(Player.GetCarriedItems()[I]==806&&Layout.GetPlacements()[I].Page==0)
+                    {return SelectReviewBagItem(Player,I)&&Player.GetMouseHandItem()==806;}
+                }
+                return false;
+            };
+            const auto State=[&]
+            {
+                const auto& Layout=Player.GetBagLayout();const auto Items=Player.GetBagItems();
+                if(!Layout.Validate(Items)||Layout.PageCount()!=5||Layout.HasLegacyOverflow()
+                    ||Player.GetMouseHandItem()||Player.GetReadyItem()!=NativeWadRules::IronMace
+                    ||Player.GetItemCount(806)!=3||Player.GetItemCount(712)!=1||Player.GetItemCount(NativeWadRules::IronMace)!=1)
+                {return false;}
+                int32 Stacks=0;bool bLeft=false,bRight=false,bShield=false;
+                for(int32 I:Layout.LeadersInOrder())
+                {
+                    const auto& P=Layout.GetPlacements()[I];
+                    if(Items[I].Type==806)
+                    {
+                        ++Stacks;
+                        bLeft|=P.Page==1&&P.X==0&&P.Y==0&&Layout.StackCount(I)==2;
+                        bRight|=P.Page==1&&P.X==3&&P.Y==0&&Layout.StackCount(I)==1;
+                    }
+                    if(Items[I].Type==712)
+                    {bShield=P.Page==3&&P.X==0&&P.Y==2&&FWadBagLayout::Footprint(Items[I].Bitmap)==FIntPoint(4,5);}
+                }
+                return Stacks==2&&bLeft&&bRight&&bShield;
+            };
+            const auto Capture=[&](const TCHAR* Name)
+            {
+                int32 Width=0,Height=0;Controller->GetViewportSize(Width,Height);
+                const double Scale=FMath::Min(Width/320.0,Height/200.0);
+                const FVector2D Cursor=(FVector2D(Width,Height)-FVector2D(320,200)*Scale)*0.5+FVector2D(180,105)*Scale;
+                Controller->SetMouseLocation(FMath::RoundToInt(Cursor.X),FMath::RoundToInt(Cursor.Y));
+                bool bSaved=false;if(!CaptureTownFrame(Name,bSaved)){return 0;}return bSaved?1:-1;
+            };
+            switch(NextPoint)
+            {
+            case 0:
+                if(Player.IsMouseLook()){Press(Player,EKeys::Tab);return true;}
+                if(bInventoryGridReload)
+                {
+                    if(!FFileHelper::LoadFileToString(InventoryGridExpected,*Manifest)||!State()||Encode()!=InventoryGridExpected)
+                    {return Finish(&Player,TEXT("another process did not restore exact manual stack positions/source bitmap footprints"));}
+                    NextPoint=20;return true;
+                }
+                for(int32 Type:Player.GetCarriedItems())
+                {if(!NativeWadRules::IsRuneItem(Type)){return Finish(&Player,TEXT("controlled inventory grid fixture requires initially empty physical inventory"));}}
+                // Explicit QA provisioning, not an earned campaign reward or route.
+                for(int32 Type:{NativeWadRules::IronMace,712,806,806,806})
+                {if(!Player.CollectItem(Type)){return Finish(&Player,TEXT("could not provision source inventory QA objects"));}}
+                if(!SelectReviewBagItem(Player,Player.GetCarriedItems().Find(NativeWadRules::IronMace)))
+                {return Finish(&Player,TEXT("normal bag click could not take source ready weapon"));}
+                ClickReviewPoint(Player,NativeWadInventoryView::Ready.GetCenter());
+                if(!TakePotion()||!Drop(1,{0,0})||!TakePotion()||!Drop(1,{0,0})||!TakePotion()||!Drop(1,{3,0}))
+                {return Finish(&Player,TEXT("normal source take/place clicks could not split three potions into two manual stacks"));}
+                if(!SelectReviewBagItem(Player,Player.GetCarriedItems().Find(712))||!Drop(2,{1,1}))
+                {return Finish(&Player,TEXT("normal source bag clicks could not place the four-by-five shield footprint"));}
+                if(!Page(4)){return Finish(&Player,TEXT("source next-page controls did not reach fifth bag"));}
+                ClickReviewPoint(Player,{281,132});
+                if(Player.GetBagPage()!=4||!Page(0)){return Finish(&Player,TEXT("normal source controls created an unlimited sixth bag"));}
+                ClickReviewPoint(Player,{271,132});
+                if(Player.GetBagPage()!=0||!Page(1)){return Finish(&Player,TEXT("source previous-page boundary failed"));}
+                ++NextPoint;return true;
+            case 1:
+            {
+                const int32 Image=Capture(TEXT("manual-stacks"));if(!Image){return true;}
+                if(Image<0){return Finish(&Player,TEXT("could not capture original potion icons and two independent stack counts"));}
+                InventoryGridExpected=Encode();
+                ClickReviewPoint(Player,{218,144});
+                if(Encode()!=InventoryGridExpected){return Finish(&Player,TEXT("source Equipment form changed manual stack locations"));}
+                ClickReviewPoint(Player,{218,144});
+                ClickReviewPoint(Player,{310,9});Press(Player,EKeys::F1);++NextPoint;return true;
+            }
+            case 2:
+                if(!Hud->IsControlsOpen()||Encode()!=InventoryGridExpected)
+                {return Finish(&Player,TEXT("normal F1 form lost spatial inventory"));}
+                ClickReviewPoint(Player,{310,9});ClickReviewPoint(Player,{30,189});++NextPoint;return true;
+            case 3:
+                if(!Hud->IsNotesOpen()||Encode()!=InventoryGridExpected)
+                {return Finish(&Player,TEXT("source Notes form lost spatial inventory"));}
+                ClickReviewPoint(Player,{310,9});
+                if(!Page(2)){return Finish(&Player,TEXT("could not return to shield page"));}
+                // Select the lower-right covered cell, away from the bitmap hotspot.
+                ClickReviewPoint(Player,{213+4*17+2,16+5*14+2});
+                if(Player.GetMouseHandItem()!=712||!Drop(3,{0,2})||!State())
+                {return Finish(&Player,TEXT("covered source footprint click or manual cross-page shield placement failed"));}
+                ++NextPoint;return true;
+            case 4:
+            {
+                const int32 Image=Capture(TEXT("large-shield"));if(!Image){return true;}
+                if(Image<0||!State()||!Page(1)){return Finish(&Player,TEXT("original shield image or spatial state invalid before travel"));}
+                InventoryGridExpected=Encode();
+                IFileManager::Get().MakeDirectory(*FPaths::GetPath(Manifest),true);
+                if(!FFileHelper::SaveStringToFile(InventoryGridExpected,*Manifest)
+                    ||!Player.SaveWadCheckpoint(TEXT("NativeWadInventoryGridL30Review")))
+                {return Finish(&Player,TEXT("could not save exact inventory-grid fixture evidence"));}
+                ClickReviewPoint(Player,{310,9});
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                ++NextPoint;return true;
+            }
+            case 5:
+                if(!Current.GetMapName().EndsWith(TEXT("L301"))||!Player.GetCharacterMovement()->IsMovingOnGround()){return true;}
+                if(!State()||Encode()!=InventoryGridExpected)
+                {return Finish(&Player,TEXT("normal L30 to L301 travel changed exact manual stack positions or large footprint"));}
+                if(Player.IsMouseLook()){Press(Player,EKeys::Tab);return true;}
+                if(!Page(1)||!Player.SaveWadCheckpoint(TEXT("NativeWadInventoryGridReview")))
+                {return Finish(&Player,TEXT("could not save inventory-grid state for independent process reload"));}
+                ++NextPoint;return true;
+            case 6:
+            {
+                const int32 Image=Capture(TEXT("stacks-arrival"));if(!Image){return true;}
+                if(Image<0||!State()){return Finish(&Player,TEXT("arrival screenshot/state failed"));}
+                UE_LOG(LogTemp,Display,TEXT("Verified explicitly provisioned inventory-grid fixture: original multi-cell shield and potion icons, two manual stack positions, five-page normal controls, Equipment/Controls/Notes retention, L30 to L301 travel and disk checkpoint. No campaign reward claim."));
+                return Finish(&Player);
+            }
+            case 20:
+                if(!Page(1)||!State()){return Finish(&Player,TEXT("restored two-stack page is invalid"));}
+                ++NextPoint;return true;
+            case 21:
+            {
+                const int32 Image=Capture(TEXT("stacks-reloaded"));if(!Image){return true;}
+                if(Image<0||!Page(3)){return Finish(&Player,TEXT("could not capture restored original potion icons"));}
+                ++NextPoint;return true;
+            }
+            case 22:
+            {
+                const int32 Image=Capture(TEXT("shield-reloaded"));if(!Image){return true;}
+                if(Image<0||!State()){return Finish(&Player,TEXT("restored original shield image/state failed"));}
+                ClickReviewPoint(Player,{213+3*17+2,16+6*14+2});
+                if(Player.GetMouseHandItem()!=712||!Drop(3,{0,2})||!State()||Encode()!=InventoryGridExpected)
+                {return Finish(&Player,TEXT("another-process normal footprint take/replace lost identity or spatial metadata"));}
+                UE_LOG(LogTemp,Display,TEXT("Verified inventory-grid independent process restoration: exact persisted positions/record order, two separate same-type stacks, original icons, multi-cell cursor selection and normal take/replace without duplicate objects."));
+                return Finish(&Player);
+            }
+            }
+            return true;
+        }
+
         bool TickRetainedHand(UWorld& Current, ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
@@ -13716,6 +13896,7 @@ namespace
             if (bJewelryReview) { return TickJewelry(*Current, *Player); }
             if (bOptionsReview) { return TickOptions(*Current, *Player); }
             if (bItemOwnersReview) { return TickItemOwners(*Current, *Player); }
+            if (bInventoryGridReview) { return TickInventoryGrid(*Current, *Player); }
             if (bRetainedHandReview) { return TickRetainedHand(*Current, *Player); }
             if (bNotesReview) { return TickNotes(*Current, *Player); }
             if (bPoisonCureReview) { return TickPoisonCures(*Player); }
@@ -14235,6 +14416,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bJournalPickup = Mode == TEXT("journalpickup") || Mode == TEXT("journalpickupreload");
     const bool bWardZero = Mode == TEXT("wardzero") || Mode == TEXT("wardzeroreload") || Mode == TEXT("wardexpiredzeroreload");
     const bool bItemOwners = Mode == TEXT("itemowners") || Mode == TEXT("itemownersreload") || Mode == TEXT("itemownerscompletereload");
+    const bool bInventoryGrid = Mode == TEXT("inventorygrid") || Mode == TEXT("inventorygridreload");
     const bool bRetainedHand = Mode == TEXT("retainedhand") || Mode == TEXT("retainedhandreload");
     const bool bJewelry = Mode == TEXT("wornjewelry") || Mode == TEXT("wornjewelryreload");
     const bool bLook = Mode == TEXT("creaturelook");
@@ -14273,6 +14455,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bEconomyReload ? TEXT("L301")
         : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
+        : bInventoryGrid ? (Mode == TEXT("inventorygrid") ? TEXT("L30") : TEXT("L301"))
         : bRetainedHand ? (Mode == TEXT("retainedhand") ? TEXT("L30") : TEXT("L301"))
         : bJournalPickup ? (Mode == TEXT("journalpickup") ? TEXT("L30") : TEXT("L301"))
         : bWardZero ? (Mode == TEXT("wardzero") ? TEXT("L30") : TEXT("L301"))
@@ -14316,6 +14499,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bNotesReload = Mode == TEXT("notesreload");
     Review->bOptionsReview = bOptions;
     Review->bOptionsReload = Mode == TEXT("optionsreload");
+    Review->bInventoryGridReview = bInventoryGrid;
+    Review->bInventoryGridReload = Mode == TEXT("inventorygridreload");
     Review->bRetainedHandReview = bRetainedHand;
     Review->bRetainedHandReload = Mode == TEXT("retainedhandreload");
     Review->bJournalPickupReview = bJournalPickup;

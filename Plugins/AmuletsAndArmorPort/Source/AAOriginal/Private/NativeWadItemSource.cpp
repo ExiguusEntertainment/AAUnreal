@@ -39,6 +39,11 @@ namespace
         const int32 End = Lines.Num();
         const FString Type = Field(TEXT("TYPE"), 0, End);
         const FString Subtype = Field(TEXT("SUBTYPE"), 0, End);
+        static const TCHAR* Categories[]={TEXT("WEAPON"),TEXT("ARMOR"),TEXT("AMULET"),TEXT("RING"),TEXT("POTION"),TEXT("WAND"),
+            TEXT("SCROLL"),TEXT("FOODSTUFF"),TEXT("POWERUP"),TEXT("THING"),TEXT("COIN"),TEXT("BOLT"),TEXT("QUIVER")};
+        Details.SourceCategory=13;
+        for(int32 Category=0;Category<UE_ARRAY_COUNT(Categories);++Category)
+        {if(Type==Categories[Category]){Details.SourceCategory=Category;break;}}
         Details.UsableClasses = AllClasses;
         uint16 Denied = 0;
         // INVENTOR.C applies these proficiency checks in addition to each item's useable list.
@@ -146,6 +151,7 @@ namespace
                 const int32 Status = SubEffect == TEXT("MAGIC MAP") ? MagicMapStatus
                     : SubEffect == TEXT("INVISIBLE") ? InvisibleStatus
                     : SubEffect == TEXT("STICKY FEET") ? StickyFeetStatus
+                    : SubEffect == TEXT("NIGHT VISION") ? NightVisionStatus
                     : SubEffect == TEXT("INVULNERABLE") ? InvulnerableStatus
                     : SubEffect == TEXT("TRANSLUCENT") ? TranslucentStatus
                     : SubEffect == TEXT("STRENGTH MOD") ? StrengthStatus
@@ -180,7 +186,7 @@ namespace
                     Details.StatusTicks = Ticks;
                     Details.StatusPower = Status == StrengthStatus || Status == SpeedStatus || Status == SpellShieldStatus
                         || Status == AccuracyStatus || Status == StealthStatus || Status == MagicStatus
-                        || Status == HealthRegenStatus || Status == ManaRegenStatus || Status == JumpStatus || Status == MagicMapStatus ? Power : 1;
+                        || Status == HealthRegenStatus || Status == ManaRegenStatus || Status == JumpStatus || Status == MagicMapStatus || Status == NightVisionStatus ? Power : 1;
                 }
                 else if (Trigger == TEXT("USE"))
                 {

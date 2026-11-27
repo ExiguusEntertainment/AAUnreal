@@ -75,8 +75,10 @@ namespace
             if(!P.IsInventoryOpen()){Click(HUD,PC,{13,161});}
             const int32 Slot=P.GetCarriedItems().Find(435);
             const NativeWadInventoryView::FView Bag(P,*Catalog,true,P.GetMouseHandSlot());
-            const int32 Cell=Bag.CellForSlot(Slot);if(Cell<0||Cell>=NativeWadInventoryView::SlotsPerPage){return false;}
-            return Click(HUD,PC,NativeWadInventoryView::SlotBox(Cell).GetCenter())&&P.GetMouseHandItem()==435;
+            const int32 Cell=Bag.CellForSlot(Slot);if(!Bag.Cells.IsValidIndex(Cell)){return false;}
+            for(int32 Page=0;Page<Bag.PageCount();++Page){Click(HUD,PC,{271,132});}
+            for(int32 Page=0;Page<Bag.Cells[Cell].Page;++Page){Click(HUD,PC,{281,132});}
+            return Click(HUD,PC,Bag.Box(Cell).GetCenter())&&P.GetMouseHandItem()==435;
         }
         bool EquipRing(ANativeWadPlayer& P,ANativeWadHUD& HUD,APlayerController& PC)
         {

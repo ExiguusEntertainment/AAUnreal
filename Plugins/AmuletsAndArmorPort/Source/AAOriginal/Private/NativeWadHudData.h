@@ -28,6 +28,8 @@ struct FWadInventoryDetails
 
     UPROPERTY()
     int32 StackLimit = 1;
+    UPROPERTY()
+    int32 SourceCategory = 13; // Original EQUIP_OBJECT_TYPE order, for merchant inventory pages.
 
     UPROPERTY()
     int32 ValueCopper = 0;
@@ -128,6 +130,7 @@ class UNativeWadHudData : public UDataAsset
 public:
     static constexpr const TCHAR* ObjectPath = TEXT("/Game/WadInterface/Graphics/ClassicHud.ClassicHud");
     static const UNativeWadHudData* LoadCatalog();
+    AAORIGINAL_API FIntPoint GetItemBitmapSize(int32 Type) const;
 
     UPROPERTY()
     TMap<FName, TObjectPtr<UTexture2D>> Pictures;
@@ -146,6 +149,10 @@ public:
 
     UPROPERTY()
     TObjectPtr<UMaterialInterface> PlasmaProjectile;
+
+    // Shared cooked parent only. Player power belongs to each camera's private MID.
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> NightVisionPostProcess;
 
     UPROPERTY()
     TMap<int32, TObjectPtr<UMaterialInterface>> AmmoProjectiles;

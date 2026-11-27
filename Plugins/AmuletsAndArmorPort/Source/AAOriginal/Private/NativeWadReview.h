@@ -19,3 +19,5 @@ bool StartNativeWadRiverReview(UWorld* World, const FString& OutputPath, int32 I
 bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int32 ImageSize, const FString& Mode);
 
 bool StartNativeWadMagicMapReview(UWorld* World, const FString& OutputPath, bool bReload);
+
+bool StartNativeWadNightVisionReview(UWorld* World, const FString& OutputPath, int32 ImageSize);

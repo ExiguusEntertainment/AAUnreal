@@ -25,6 +25,23 @@ const UNativeWadHudData* UNativeWadHudData::LoadCatalog()
     return Catalog.Get();
 }
 
+FIntPoint UNativeWadHudData::GetItemBitmapSize(int32 Type) const
+{
+    // Source dimensions are ownership/layout metadata. GetSizeX/Y may return
+    // a temporary default texture during asynchronous editor compilation.
+    if(const auto* Details=ItemDetails.Find(Type);Details&&Details->SpriteSize.X>0&&Details->SpriteSize.Y>0)
+    {return Details->SpriteSize;}
+    if(const UTexture2D* Image=Items.FindRef(Type))
+    {
+#if WITH_EDITORONLY_DATA
+        if(Image->Source.GetSizeX()>0&&Image->Source.GetSizeY()>0)
+        {return {int32(Image->Source.GetSizeX()),int32(Image->Source.GetSizeY())};}
+#endif
+        if(Image->GetSizeX()>0&&Image->GetSizeY()>0){return {Image->GetSizeX(),Image->GetSizeY()};}
+    }
+    return {17,14}; // Art-less legacy ownership remains representable.
+}
+
 namespace
 {
     using namespace NativeWadRules;
@@ -101,6 +118,7 @@ bool ANativeWadPlayer::CanUseWadItem(int32 Type) const
 int32 ANativeWadPlayer::GetStatusPower(EItemStatus Status) const
 {
     if (Status < 0 || Status >= ItemStatusCount) { return 0; }
+    if (Status == NightVisionStatus) { return GetNightVisionPower(); }
     const auto PassivePower = [&](int32 Slot)
     {
         const int32 Type = CarriedItems.IsValidIndex(Slot) ? CarriedItems[Slot] : 0;
@@ -181,6 +199,8 @@ bool ANativeWadPlayer::RemoveInventorySlot(int32 Slot)
     {
         return false;
     }
+    EnsureBagLayout();
+    BagLayout.RemoveAt(Slot);
     CarriedItems.RemoveAt(Slot);
     if (ReadySlot == Slot)
     {
@@ -311,6 +331,8 @@ void ANativeWadPlayer::EquipArmor(int32 Slot, const FWadInventoryDetails& Detail
     {
         Location = RightArmSlot;
     }
+    EnsureBagLayout();
+    BagLayout.Detach(Slot);
     WornSlots[Location] = Slot;
     if (ReadySlot == Slot)
     {
@@ -352,6 +374,8 @@ bool ANativeWadPlayer::EquipJewelry(int32 Slot, const FWadInventoryDetails& Deta
     }
     if (Location < 0 || Location >= JewelrySlotCount || (Location == NeckSlot) != (Details.JewelrySlot == NeckSlot)) { return false; }
     if (Existing != INDEX_NONE) { JewelrySlots[Existing] = INDEX_NONE; }
+    EnsureBagLayout();
+    BagLayout.Detach(Slot);
     JewelrySlots[Location] = Slot;
     if (ReadySlot == Slot) { ReadySlot = INDEX_NONE; }
     // Equipping is a new READY trigger. Changing a weapon alone does not restart a
@@ -368,6 +392,8 @@ bool ANativeWadPlayer::TakeInventoryItem(int32 Slot)
     if (IsDefeated() || !CarriedItems.IsValidIndex(Slot) || IsRuneItem(CarriedItems[Slot])) { return false; }
     if (SelectedInventorySlot == Slot) { return true; }
     if (CarriedItems.IsValidIndex(SelectedInventorySlot) || Slot == ReadySlot || IsWornInventorySlot(Slot)) { return false; }
+    EnsureBagLayout();
+    BagLayout.Detach(Slot);
     SelectedInventorySlot = Slot;
     return true;
 }
@@ -375,9 +401,10 @@ bool ANativeWadPlayer::TakeInventoryItem(int32 Slot)
 void ANativeWadPlayer::StoreMouseHandInInventory()
 {
     if (IsDefeated()) { return; }
-    // CarriedItems owns every object. A free bag placement only releases its location pointer;
-    // display stacks regroup individual objects without destroying or duplicating one.
-    SelectedInventorySlot = INDEX_NONE;
+    EnsureBagLayout();
+    if(!CarriedItems.IsValidIndex(SelectedInventorySlot)){return;}
+    auto Items=GetBagItems();Items[SelectedInventorySlot].bOffPage=false;
+    if(BagLayout.AutoPlace(SelectedInventorySlot,Items)){SelectedInventorySlot=INDEX_NONE;}
 }
 
 bool ANativeWadPlayer::CreateWadItemInMouseHand(int32 Type)
@@ -396,6 +423,8 @@ bool ANativeWadPlayer::CreateWadItemInMouseHand(int32 Type)
         ShowInteractionMessage(TEXT("The created item is unavailable."));
         return false;
     }
+    EnsureBagLayout();
+    if(!BagLayout.AddSlot()){return false;}
     SelectedInventorySlot = CarriedItems.Add(Type);
     return true;
 }
@@ -410,8 +439,8 @@ bool ANativeWadPlayer::SwapMouseAndReady()
         { ShowInteractionMessage(TEXT("Your class can't use this item.")); return false; }
         if (const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog())
         {
-            if (const UTexture2D* Image = Catalog->Items.FindRef(Type);
-                Image && (Image->GetSizeX() >= 35 || Image->GetSizeY() >= 27))
+            if (const FIntPoint Size=Catalog->GetItemBitmapSize(Type);
+                Size.X >= 35 || Size.Y >= 27)
             { ShowInteractionMessage(TEXT("This item won't fit in your ready hand.")); return false; }
         }
     }
@@ -440,21 +469,13 @@ void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
     if (IsDefeated()) { return; }
     if (Slot == INDEX_NONE) { SwapMouseAndReady(); return; }
     if (!CarriedItems.IsValidIndex(Slot)) { return; }
-    if (CarriedItems.IsValidIndex(SelectedInventorySlot) && Slot != SelectedInventorySlot)
+    if(CarriedItems.IsValidIndex(SelectedInventorySlot)&&Slot!=SelectedInventorySlot)
     {
-        // INVENTOR.C permits placement on an existing stack only for the exact same type with room.
-        const int32 Type = CarriedItems[SelectedInventorySlot];
-        const FWadInventoryDetails* Details = GetItemRules(Type);
-        if (CarriedItems[Slot] == Type && Slot != ReadySlot && !IsWornInventorySlot(Slot) && Details)
+        EnsureBagLayout();const int32 Leader=BagLayout.LeaderOf(Slot);
+        if(Leader!=INDEX_NONE)
         {
-            const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
-            if (Catalog)
-            {
-                const NativeWadInventoryView::FView View(*this, *Catalog, true, SelectedInventorySlot);
-                const int32 Cell = View.CellForSlot(Slot);
-                if (View.Cells.IsValidIndex(Cell) && View.Cells[Cell].Count < Details->StackLimit)
-                { StoreMouseHandInInventory(); }
-            }
+            const auto& P=BagLayout.GetPlacements()[Leader];const auto Items=GetBagItems();const auto Size=Items[SelectedInventorySlot].Bitmap;
+            TryPlaceMouseHandInBag(P.Page,{213.0+P.X*17+Size.X/2+1,16.0+P.Y*14+Size.Y/2+1});
         }
         return;
     }
@@ -638,7 +659,8 @@ void ANativeWadPlayer::FireCrossbow()
         RemoveInventorySlot(QuiverSlot);
         for (int32 Index = 1; Index < NormalQuiverBolts; ++Index)
         {
-            CarriedItems.Add(Ammo.Bolt);
+            if(!AppendBagItem(Ammo.Bolt))
+            { ++AmmoReserve[SelectedAmmo]; } // Preserve legacy quiver ammunition if physical bag storage is full.
         }
     }
     else
@@ -697,10 +719,10 @@ void ANativeWadPlayer::RetrieveAmmo(int32 Index)
         return;
     }
     const bool bQuiver = AmmoReserve[Index] >= NormalQuiverBolts;
-    if (CollectItem(bQuiver ? CrossbowAmmo[Index].Quiver : CrossbowAmmo[Index].Bolt))
+    if (CreateWadItemInMouseHand(bQuiver ? CrossbowAmmo[Index].Quiver : CrossbowAmmo[Index].Bolt))
     {
         AmmoReserve[Index] -= bQuiver ? NormalQuiverBolts : 1;
-        SelectedInventorySlot = CarriedItems.Num() - 1;
+        // CreateWadItemInMouseHand already owns the exact detached entry.
     }
 }
 
@@ -715,8 +737,10 @@ void ANativeWadPlayer::RetrieveCoin(int32 Type)
     const int32 Count = Type % 2 == 0 ? 1 : 5;
     if (CoinDenominationCount(Wallet, Type & ~1) >= Count)
     {
-        Travel->Quest.SetWalletCopper(Wallet - CoinValueCopper(Type));
+        EnsureBagLayout();
+        if(!BagLayout.AddSlot()){return;}
         SelectedInventorySlot = CarriedItems.Add(Type);
+        Travel->Quest.SetWalletCopper(Wallet - CoinValueCopper(Type));
     }
 }
 

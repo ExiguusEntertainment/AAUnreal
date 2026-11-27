@@ -17,6 +17,7 @@
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
+#include "NativeWadNightVision.h"
 #include "NativeWadLevel.h"
 #include "NativeWadMovement.h"
 #include "NativeWadScenery.h"
@@ -51,6 +52,7 @@ ANativeWadPlayer::ANativeWadPlayer(const FObjectInitializer& ObjectInitializer)
 
 void ANativeWadPlayer::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
 {
+    UpdateNightVisionRendering();
     Super::CalcCamera(DeltaTime, OutResult);
     OutResult.PerspectiveNearClipPlane = 1.0f;
 }
@@ -59,6 +61,8 @@ void ANativeWadPlayer::BeginPlay()
 {
     Super::BeginPlay();
     ReviveTransform = GetActorTransform();
+    if (const auto* Catalog=UNativeWadHudData::LoadCatalog();Catalog&&Catalog->NightVisionPostProcess)
+    { NativeWadNightVision::PrimeRendering(*Catalog->NightVisionPostProcess); }
     if (auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
     {
         Travel->UpdateBackgroundMusic(*GetWorld());
@@ -276,6 +280,10 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
         { SelectedInventorySlot = Slot; }
     }
     RestoreFlightEquipmentOwners(URL);
+    const TCHAR* BagPayload=URL.GetOption(TEXT("WadBagLayout="),nullptr);
+    if(!BagPayload&&URL.HasOption(TEXT("WadBagLayout"))){BagPayload=TEXT("");}
+    RestoreBagLayout(BagPayload);
+    ReadStat(TEXT("WadBagPage="),BagPage,0,BagLayout.PageCount()-1);
     RestoreTimedEffects(URL.GetOption(TEXT("WadOwnedEffects="), nullptr));
     if (const TCHAR* MapState = URL.GetOption(TEXT("WadMagicMap="), nullptr))
     { if (!MagicMap.Decode(MapState)) { UE_LOG(LogTemp, Warning, TEXT("Rejected invalid character magic-map state.")); } }
@@ -535,6 +543,8 @@ FString ANativeWadPlayer::MakeTravelOptions() const
             Options += FString::Printf(TEXT("?WadEffectPower%d=%d"), Index, ItemStatusPower[Index]);
         }
     }
+    Options += TEXT("?WadBagLayout=") + GetBagLayout().Encode(GetBagItems());
+    Options += FString::Printf(TEXT("?WadBagPage=%d"),GetBagPage());
     Options += TEXT("?WadOwnedEffects=") + TimedEffects.Encode();
     Options += TEXT("?WadMagicMap=") + MagicMap.Encode();
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
@@ -1038,7 +1048,8 @@ bool ANativeWadPlayer::CollectItem(int32 Type)
     }
     if (!bCoin)
     {
-        CarriedItems.Add(Type);
+        if(!AppendBagItem(Type))
+        {ShowInteractionMessage(TEXT("There is no room in your inventory."));return false;}
         UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
     }
     const FString Description = GetInventoryItemDescription(Type);

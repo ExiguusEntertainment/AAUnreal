@@ -11,6 +11,7 @@
 #include "NativeWadCheckpoint.h"
 #include "NativeWadHudData.h"
 #include "NativeWadInventoryView.h"
+#include "NativeWadStockLayout.h"
 #include "NativeWadIdentification.h"
 #include "TextureResource.h"
 
@@ -96,18 +97,11 @@ namespace
         return {bWithdraw ? TEXT("RTARROW") : TEXT("LTARROW"), bWithdraw ? 131 : 119, 32 + Row * 11};
     }
 
-    const TCHAR* StockCategory(int32 Item)
+    const TCHAR* StockCategory(int32 Category)
     {
-        const int32 Type = Item & 0xFFF;
-        if (Type >= 900) { return TEXT("Wands"); }
-        if (Type >= 800) { return TEXT("Potions"); }
-        if (Type >= 700) { return TEXT("Armor"); }
-        if (Type >= 600) { return TEXT("Amulets"); }
-        if (Type >= 400 && Type < 500) { return TEXT("Rings"); }
-        if (Type >= 350 && Type < 400) { return TEXT("Scrolls"); }
-        if (Type >= 200 && Type < 300) { return TEXT("Weapons"); }
-        if (Type >= 140 && Type < 150) { return TEXT("Arrows"); }
-        return TEXT("Assorted Items");
+        static const TCHAR* Names[]={TEXT("Weapons"),TEXT("Armor"),TEXT("Amulets"),TEXT("Rings"),TEXT("Potions"),TEXT("Wands"),
+            TEXT("Scrolls"),TEXT("Food Items"),TEXT(""),TEXT("Assorted Items"),TEXT(""),TEXT("Bolts"),TEXT("Arrows")};
+        return Category>=0&&Category<UE_ARRAY_COUNT(Names)?Names[Category]:TEXT("");
     }
 
     int64 CoinCount(int64 Total, int32 Row)
@@ -141,6 +135,22 @@ namespace
         }
         Types.Sort();
         return Types;
+    }
+
+    FWadStockLayout StockLayout(const UNativeWadTownData& Content,int32 Tier,bool bBank)
+    {
+        TArray<FWadStockItem> Items;const auto* Catalog=UNativeWadHudData::LoadCatalog();
+        if(Catalog)
+        {
+            for(int32 Type:AvailableStock(Content,Tier,bBank))
+            {
+                const auto* Rules=Catalog->ItemDetails.Find(Type);
+                Items.Add({Type,Rules?Rules->SourceCategory:13,Catalog->GetItemBitmapSize(Type)});
+            }
+        }
+        FWadStockLayout Layout;
+        if(!Layout.Build(Items,StockRows(bBank))){UE_LOG(LogTemp,Error,TEXT("Original merchant stock does not fit its source grid height."));}
+        return Layout;
     }
 
     FString ShopItemName(const ANativeWadPlayer& Player, int32 Type)
@@ -279,11 +289,11 @@ namespace
 
         void Button(const FTownButton& Button) const { Picture(Button.Picture, Button.X, Button.Y); }
 
-        void Item(const UTexture2D* Image, FVector2D Position, FVector2D Bounds) const
+        void Item(const UTexture2D* Image, FIntPoint SourceSize, FVector2D Position, FVector2D Bounds) const
         {
-            if (Image && Image->GetResource() && Image->GetSizeX() && Image->GetSizeY())
+            if (Image && Image->GetResource() && SourceSize.X>0 && SourceSize.Y>0)
             {
-                const FVector2D NativeSize(Image->GetSizeX(), Image->GetSizeY());
+                const FVector2D NativeSize(SourceSize);
                 const FVector2D Size = NativeSize * FMath::Min3(1.0, Bounds.X / NativeSize.X, Bounds.Y / NativeSize.Y);
                 const FVector2D Corner = Position + (Bounds - Size) * 0.5;
                 Tile(*Image, int32(Corner.X), int32(Corner.Y), Size, FLinearColor::White);
@@ -540,6 +550,7 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
     {
         AmmoReserve[Ammo] = Equipment.Ammo.IsValidIndex(Ammo) ? Equipment.Ammo[Ammo] : 0;
     }
+    InitializeCreationBagLayout();
     for (int32 Slot = 0; Slot < CarriedItems.Num(); ++Slot)
     {
         const FWadInventoryDetails* Item = GetItemRules(CarriedItems[Slot]);
@@ -602,6 +613,8 @@ bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBa
         ShowInteractionMessage(TEXT("You need more coins in your purse."));
         return false;
     }
+    EnsureBagLayout();
+    if(!BagLayout.AddSlot()){return false;}
     SelectedInventorySlot = CarriedItems.Add(Type);
     Progress.SetWalletCopper(Progress.GetWalletCopper() - Rules->ValueCopper);
     // STORE.C identifies the exact purchased type after the transaction succeeds.
@@ -759,9 +772,8 @@ void ANativeWadTownHUD::Scroll(int32 Direction)
     const FWadQuestProgress& Progress = Travel->Quest;
     if (!Service.IsNone())
     {
-        const int32 PageSize = ShopColumns * StockRows(IsBankOpen());
-        const int32 Count = AvailableStock(*Content, Progress.ShopTier, IsBankOpen()).Num();
-        StockPage = FMath::Clamp(StockPage + Direction, 0, FMath::Max(0, (Count - 1) / PageSize));
+        const auto Layout=StockLayout(*Content,Progress.ShopTier,IsBankOpen());
+        StockPage=FMath::Clamp(StockPage+Direction,0,Layout.PageCount()-1);
         return;
     }
     const FWadTownQuest& Quest = Content->Quests[Progress.Selected];
@@ -885,7 +897,22 @@ FVector2D ANativeWadTownHUD::ServiceBagItemCenter(int32 Slot) const
     }
     const FView View(*Player, *Catalog, true, Player->GetMouseHandSlot());
     const int32 Cell = View.CellForSlot(Slot);
-    return Cell >= 0 && Cell / SlotsPerPage == BagPage ? SlotBox(Cell).GetCenter() : FVector2D(-1, -1);
+    return View.Cells.IsValidIndex(Cell)&&View.Cells[Cell].Page==Player->GetBagPage()?View.Box(Cell).GetCenter():FVector2D(-1,-1);
+}
+
+int32 ANativeWadTownHUD::ServiceStockItemPage(int32 Type) const
+{
+    const auto* Content=NativeWadTown::FindContent(*GetWorld());const auto* Travel=TownTravel(*GetWorld());
+    if(!Content||!Travel){return INDEX_NONE;}const auto Layout=StockLayout(*Content,Travel->Quest.ShopTier,IsBankOpen());
+    for(const auto& Cell:Layout.GetCells()){if(Cell.Item.Type==Type){return Cell.Page;}}return INDEX_NONE;
+}
+FVector2D ANativeWadTownHUD::ServiceStockItemCenter(int32 Type) const
+{
+    const auto* Content=NativeWadTown::FindContent(*GetWorld());const auto* Travel=TownTravel(*GetWorld());
+    if(!Content||!Travel){return FVector2D(-1,-1);}const auto Layout=StockLayout(*Content,Travel->Quest.ShopTier,IsBankOpen());
+    for(const auto& Cell:Layout.GetCells())
+    {if(Cell.Item.Type==Type&&Cell.Page==StockPage){return {10+(Cell.X+Cell.Footprint.X*0.5)*17,StockTop(IsBankOpen())+(Cell.Y+Cell.Footprint.Y*0.5)*14};}}
+    return FVector2D(-1,-1);
 }
 
 void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQuestProgress& Progress, const FVector2D& Point)
@@ -894,6 +921,7 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
     auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     if (!Player) { return; }
     int32& HeldSlot = Player->SelectedInventorySlot;
+    BagPage=Player->GetBagPage();
 
     const auto Clicked = [&](const FTownButton& Button) { return ContainsButton(Content, Point, Button); };
     if (Clicked(ServiceClose)) { CancelAction(); return; }
@@ -984,10 +1012,9 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
             Player->TradeWadTownItem(HeldSlot, true, bBank);
             return;
         }
-        const int32 Cell = int32(Point.X - 10) / SlotWidth + int32(Point.Y - Top) / SlotHeight * ShopColumns;
-        const TArray<int32> Types = AvailableStock(Content, Progress.ShopTier, bBank);
-        const int32 Index = StockPage * ShopColumns * Rows + Cell;
-        if (Types.IsValidIndex(Index) && Player->TradeWadTownItem(Types[Index], false, bBank))
+        const auto Layout=StockLayout(Content,Progress.ShopTier,bBank);
+        const int32 Type=Layout.At(StockPage,{int32(Point.X-10)/17,int32(Point.Y-Top)/14});
+        if(Type>0&&Player->TradeWadTownItem(Type,false,bBank))
         {
             // The successful transaction places its newly owned object in the shared mouse hand.
         }
@@ -999,18 +1026,12 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
     {
         return;
     }
-    const FView View(*Player, *Catalog, true, Player->GetMouseHandSlot());
-    if (Clicked(BagPrevious)) { BagPage = FMath::Max(0, BagPage - 1); return; }
-    if (Clicked(BagNext)) { BagPage = FMath::Min(BagPage + 1, FMath::Max(5, View.PageCount()) - 1); return; }
-    if (Point.X < Bag.Min.X || Point.X >= Bag.Max.X || Point.Y < Bag.Min.Y || Point.Y >= Bag.Max.Y)
-    {
-        return;
-    }
+    if(Clicked(BagPrevious)){Player->SetBagPage(Player->GetBagPage()-1);BagPage=Player->GetBagPage();return;}
+    if(Clicked(BagNext)){Player->SetBagPage(Player->GetBagPage()+1);BagPage=Player->GetBagPage();return;}
+    if(!InBag(Point)){return;}
+    if(Player->GetMouseHandItem()){Player->TryPlaceMouseHandInBag(BagPage,Point);}
+    else if(const int32 Slot=Player->BagItemAt(BagPage,Point);Slot!=INDEX_NONE){Player->ClickInventorySlot(Slot);}
 
-    const int32 Cell = BagPage * SlotsPerPage + int32(Point.Y - Bag.Min.Y) / SlotHeight * Columns
-        + int32(Point.X - Bag.Min.X) / SlotWidth;
-    if (View.Cells.IsValidIndex(Cell)) { Player->ClickInventorySlot(View.Cells[Cell].FirstSlot); }
-    else { Player->StoreMouseHandInInventory(); }
 }
 
 void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWadQuestProgress& Progress, const ANativeWadPlayer& Player)
@@ -1049,35 +1070,25 @@ void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWa
         }
     }
 
-    const int32 PageSize = ShopColumns * StockRows(bBank);
-    const int32 Top = StockTop(bBank);
-    const TArray<int32> Types = AvailableStock(Content, Progress.ShopTier, bBank);
-    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
-    if (!Catalog) { return; }
-    const int32 FirstStock = StockPage * PageSize;
-    Screen.Button(StockPrevious);
-    Screen.Button(StockNext);
-    Screen.FormField(Types.IsValidIndex(FirstStock) ? StockCategory(Types[FirstStock]) : TEXT(""), Content.Tiny, 10, 126, 62, 133);
-    Screen.FormField(FString::Printf(TEXT("pg:%d/%d"), StockPage + 1, FMath::Max(1, FMath::DivideAndRoundUp(Types.Num(), PageSize))),
-        Content.Tiny, 84, 126, 112, 133);
-
-    FVector2D Cursor(-1, -1);
-    if (GetOwningPlayerController()->GetMousePosition(Cursor.X, Cursor.Y))
+    const int32 Top=StockTop(bBank);const auto Stock=StockLayout(Content,Progress.ShopTier,bBank);
+    const UNativeWadHudData* Catalog=UNativeWadHudData::LoadCatalog();if(!Catalog){return;}
+    StockPage=FMath::Clamp(StockPage,0,Stock.PageCount()-1);
+    Screen.Button(StockPrevious);Screen.Button(StockNext);
+    Screen.FormField(StockCategory(Stock.CategoryAt(StockPage)),Content.Tiny,10,126,62,133);
+    Screen.FormField(FString::Printf(TEXT("pg:%d/%d"),StockPage+1,Stock.PageCount()),Content.Tiny,84,126,112,133);
+    FVector2D Cursor(-1,-1);
+    if(GetOwningPlayerController()->GetMousePosition(Cursor.X,Cursor.Y)){Cursor=(Cursor-Screen.Layout.Origin)/Screen.Layout.Scale;}
+    int32 InspectedType=INDEX_NONE;
+    const auto DrawItem=[&](int32 Type,const FBox2D& Box)
+    {Screen.Item(Catalog->Items.FindRef(Type),Catalog->GetItemBitmapSize(Type),Box.Min+FVector2D(1,1),Box.GetSize()-FVector2D(2,2));};
+    NativeWadInventoryView::DrawGrid(*Canvas,*Catalog,Screen.Layout.Origin,Screen.Layout.Scale,{10.0,double(Top)},6,StockRows(bBank));
+    for(const auto& Cell:Stock.GetCells())
     {
-        Cursor = (Cursor - Screen.Layout.Origin) / Screen.Layout.Scale;
-    }
-    int32 InspectedType = INDEX_NONE;
-    const auto DrawItem = [&](int32 Type, const FBox2D& Box)
-    {
-        Screen.Item(Catalog->Items.FindRef(Type), Box.Min + FVector2D(1, 1), Box.GetSize() - FVector2D(2, 2));
-    };
-    for (int32 Index = FirstStock; Index < FMath::Min(FirstStock + PageSize, Types.Num()); ++Index)
-    {
-        const int32 Cell = Index - FirstStock;
-        const FVector2D Corner(10 + Cell % ShopColumns * SlotWidth, Top + Cell / ShopColumns * SlotHeight);
-        const FBox2D Box(Corner, Corner + FVector2D(SlotWidth, SlotHeight));
-        DrawItem(Types[Index], Box);
-        if (Box.IsInside(Cursor)) { InspectedType = Types[Index]; }
+        if(Cell.Page!=StockPage){continue;}
+        const FVector2D Corner(10+Cell.X*17,Top+Cell.Y*14);
+        NativeWadInventoryView::DrawFootprintItem(*Canvas,*Catalog,Screen.Layout.Origin,Screen.Layout.Scale,
+            Cell.Item.Type,Corner,Cell.Footprint,Cell.Item.Bitmap);
+        if(FBox2D(Corner,Corner+FVector2D(Cell.Footprint.X*17,Cell.Footprint.Y*14)).IsInside(Cursor)){InspectedType=Cell.Item.Type;}
     }
 
     const TArray<int32>& Items = Player.GetCarriedItems();
@@ -1091,25 +1102,14 @@ void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWa
         Screen.Button(EquipmentButton);
         Screen.Button(BagPrevious);
         Screen.Button(BagNext);
-        const FView View(Player, *Catalog, true, HeldSlot);
-        const int32 Pages = FMath::Max(5, View.PageCount());
-        const int32 Start = BagPage * SlotsPerPage;
-        for (int32 Cell = Start; Cell < FMath::Min(Start + SlotsPerPage, View.Cells.Num()); ++Cell)
-        {
-            const FCell& Entry = View.Cells[Cell];
-            const FBox2D Box = SlotBox(Cell);
-            const int32 Type = Items[Entry.FirstSlot];
-            DrawItem(Type, Box);
-            if (Entry.Count > 1)
-            {
-                Screen.Text(FString::FromInt(Entry.Count), Content.Tiny, int32(Box.Max.X) - 9, int32(Box.Max.Y) - 7, 9, 1, 0, true);
-            }
-            if (Box.IsInside(Cursor)) { InspectedType = Type; }
-        }
+        const FView View(Player,*Catalog,true,HeldSlot);const int32 Pages=View.PageCount();BagPage=Player.GetBagPage();
+        NativeWadInventoryView::DrawBagPage(*Canvas,Player,*Catalog,Screen.Layout.Origin,Screen.Layout.Scale,BagPage);
+        for(const auto& Cell:View.Cells)
+        {if(Cell.Page==BagPage&&Cell.Box().IsInside(Cursor)){InspectedType=Items[Cell.FirstSlot];}}
         int32 Weight = 0;
         for (int32 Type : Items) { Weight += Catalog->ItemWeights.FindRef(Type); }
-        Screen.FormField(FString::Printf(TEXT("%.1f KG"), Weight / 10.0), Content.Tiny, 213, 129, 265, 136);
-        Screen.FormField(FString::Printf(TEXT("pg:%d/%d"), BagPage + 1, Pages), Content.Tiny, 287, 129, 314, 136);
+        Screen.FormField(FString::Printf(TEXT("LOAD:%3.1f kg"), Weight / 10.0), Content.Tiny, 213, 129, 265, 136);
+        Screen.FormField(FString::Printf(TEXT("PG:%d/%d"), BagPage + 1, Pages), Content.Tiny, 287, 129, 314, 136);
     }
     else if (ServiceBanner == EServiceBanner::Equipment)
     {

@@ -169,22 +169,24 @@ bool FAAOriginalMouseHandBagPage::RunTest(const FString& Parameters)
 {
     auto* Catalog = static_cast<UNativeWadHudData*>(LoadObject<UObject>(nullptr, UNativeWadHudData::ObjectPath));
     if (!TestNotNull(TEXT("Original inventory art/rules"), Catalog)) { return false; }
-    for (int32 FullCells : {48, 96})
+    for(int32 FullCells:{48,96})
     {
-        FMouseHandFixture Fixture;
-        if (!Fixture.Player) { return false; }
-        auto& Player = *Fixture.Player;
-        for (int32 Item = 0; Item <= FullCells; ++Item) { Player.CollectItem(NativeWadRules::IronDagger); }
-        if (!TestTrue(TEXT("Pick up the extra distinct object while the bag pages are full"), Player.TakeInventoryItem(FullCells))) { return false; }
-        const NativeWadInventoryView::FView Bag(Player, *Catalog, true, Player.GetMouseHandSlot());
-        TestEqual(TEXT("Located objects are not counted as phantom bag entries"), Bag.Cells.Num(), FullCells);
-        TestEqual(TEXT("A held object makes an actual extra placement page available"), Bag.PageCount(), FullCells / NativeWadInventoryView::SlotsPerPage + 1);
-        const int32 FirstTarget = (Bag.PageCount() - 1) * NativeWadInventoryView::SlotsPerPage;
-        TestFalse(TEXT("The final page's first cell is a real empty drop target"), Bag.Cells.IsValidIndex(FirstTarget));
-        TestTrue(TEXT("The empty target lies inside the source bag hit rectangle"),
-            NativeWadInventoryView::Bag.IsInside(NativeWadInventoryView::SlotBox(FirstTarget).GetCenter()));
-        TestEqual(TEXT("Making placement space does not return or copy the held object behind the player's back"), Player.GetMouseHandSlot(), FullCells);
-        TestEqual(TEXT("Exactly the original number of owned objects remains"), Player.GetCarriedItems().Num(), FullCells + 1);
+        FMouseHandFixture Fixture;if(!Fixture.Player){return false;}auto& Player=*Fixture.Player;
+        // Original ring435 is a one-cell, non-stackable object. Five source bags
+        // exist from the start, so48/96 filled cells must not invent a new page.
+        for(int32 I=0;I<=FullCells;++I){if(!Player.CollectItem(435)){return false;}}
+        if(!TestTrue(TEXT("Take the extra independent object"),Player.TakeInventoryItem(FullCells))){return false;}
+        const NativeWadInventoryView::FView Bag(Player,*Catalog,true,Player.GetMouseHandSlot());
+        TestEqual(TEXT("Held object is not a phantom bag entry"),Bag.Cells.Num(),FullCells);
+        TestEqual(TEXT("Original five source bags already include all legitimate empty targets"),Bag.PageCount(),5);
+        const int32 TargetPage=FullCells/48;const auto Items=Player.GetBagItems();
+        TestEqual(TEXT("Next existing bag contains an actual empty cell"),Player.GetBagLayout().At(TargetPage,0,0,Items),INDEX_NONE);
+        TestEqual(TEXT("Inspecting layout never stashes the hand"),Player.GetMouseHandSlot(),FullCells);
+        const auto Size=Items[FullCells].Bitmap;
+        TestTrue(TEXT("Normal source pixel-coordinate placement uses that existing bag"),
+            Player.TryPlaceMouseHandInBag(TargetPage,{213.0+Size.X/2+1,16.0+Size.Y/2+1}));
+        TestEqual(TEXT("Transfer creates no extra object"),Player.GetCarriedItems().Num(),FullCells+1);
+        TestEqual(TEXT("Transfer creates no extra page"),Player.GetBagLayout().PageCount(),5);
     }
     return true;
 }

@@ -46,8 +46,9 @@ bool FWadBagLayout::Place(int32 Slot,int32 Page,FIntPoint A,TConstArrayView<FWad
 {
     if(Items.Num()!=Entries.Num()||!Entries.IsValidIndex(Slot)||Items[Slot].bOffPage||Entries[Slot].Leader!=INDEX_NONE
         ||Page<0||Page>=Pages){return false;}
-    const FIntPoint F=Footprint(Items[Slot].Bitmap),B=A+F;
-    if(A.X<0||A.Y<0||B.X>Columns||B.Y>Rows){return false;}
+    const FIntPoint F=Footprint(Items[Slot].Bitmap);
+    if(A.X<0||A.Y<0||F.X>Columns||F.Y>Rows||A.X>Columns-F.X||A.Y>Rows-F.Y){return false;}
+    const FIntPoint B=A+F;
     int32 Overlap=INDEX_NONE;
     for(int32 I=0;I<Entries.Num();++I)
     {
@@ -173,7 +174,7 @@ bool FWadBagLayout::Validate(TConstArrayView<FWadBagItem> Items) const
         if(Items[I].bOffPage||!Entries.IsValidIndex(P.Leader)||Entries[P.Leader].Leader!=P.Leader||Items[I].Type!=Items[P.Leader].Type){return false;}
         if(P.Leader!=I){if(P.Page!=INDEX_NONE||P.X!=INDEX_NONE||P.Y!=INDEX_NONE){return false;}continue;}
         const FIntPoint F=Footprint(Items[I].Bitmap);
-        if(P.Page<0||P.Page>=Pages||P.X<0||P.Y<0||P.X+F.X>Columns||P.Y+F.Y>Rows||Counts[I]>FMath::Max(1,Items[I].StackLimit)){return false;}
+        if(P.Page<0||P.Page>=Pages||P.X<0||P.Y<0||F.X>Columns||F.Y>Rows||P.X>Columns-F.X||P.Y>Rows-F.Y||Counts[I]>FMath::Max(1,Items[I].StackLimit)){return false;}
         Highest=FMath::Max(Highest,P.Page+1);
         for(int32 Y=P.Y;Y<P.Y+F.Y;++Y)for(int32 X=P.X;X<P.X+F.X;++X)
         {int32& Cell=Occupied[P.Page*Columns*Rows+Y*Columns+X];if(Cell!=INDEX_NONE){return false;}Cell=I;}

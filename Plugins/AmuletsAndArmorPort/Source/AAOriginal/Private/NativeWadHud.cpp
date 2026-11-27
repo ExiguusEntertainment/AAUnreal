@@ -196,7 +196,7 @@ namespace
         {
             if (const UTexture2D* Image = Data.Items.FindRef(Type))
             {
-                const FVector2D NaturalSize(Image->GetSizeX(), Image->GetSizeY());
+                const FVector2D NaturalSize(Data.GetItemBitmapSize(Type));
                 const FVector2D Room = Box.GetSize() - FVector2D(2, 2);
                 const FVector2D Size = NaturalSize * FMath::Min3(1.0, Room.X / NaturalSize.X, Room.Y / NaturalSize.Y);
                 const FVector2D Start = Box.GetCenter() - Size * 0.5;
@@ -331,10 +331,8 @@ bool ANativeWadHUD::ExamineAt(const FVector2D& ViewportPoint)
     int32 ItemSlot = Ready.IsInside(Point) ? Player->GetReadySlot() : INDEX_NONE;
     if (Player->IsInventoryOpen() && Form == EForm::Inventory)
     {
-        const FInventoryView View(*Player, *ClassicData, true, Player->GetMouseHandSlot());
-        const int32 Start = InventoryPage * SlotsPerPage;
-        for (int32 Cell = Start; Cell < FMath::Min(Start + SlotsPerPage, View.Cells.Num()); ++Cell)
-        { if (SlotBox(Cell).IsInside(Point)) { ItemSlot = View.Cells[Cell].FirstSlot; break; } }
+        InventoryPage=Player->GetBagPage();
+        ItemSlot=Player->BagItemAt(InventoryPage,Point);
     }
     else if (Player->IsInventoryOpen() && Form == EForm::Equipment)
     {
@@ -551,9 +549,10 @@ FVector2D ANativeWadHUD::InventorySlotCenter(int32 Slot) const
     {
         return FallbackInventorySlotCenter(Slot);
     }
-    const int32 Cell = Slot == INDEX_NONE ? INDEX_NONE : FInventoryView(*Player, *ClassicData, true, Player->GetMouseHandSlot()).CellForSlot(Slot);
-    if (Slot != INDEX_NONE && Cell == INDEX_NONE) { return FVector2D(-1, -1); }
-    return InputLayout(GetOwningPlayerController()).At(SlotBox(Cell).GetCenter());
+    if(Slot==INDEX_NONE){return InputLayout(GetOwningPlayerController()).At(Ready.GetCenter());}
+    const FInventoryView View(*Player,*ClassicData,true,Player->GetMouseHandSlot());const int32 Cell=View.CellForSlot(Slot);
+    if(!View.Cells.IsValidIndex(Cell)||View.Cells[Cell].Page!=Player->GetBagPage()){return FVector2D(-1,-1);}
+    return InputLayout(GetOwningPlayerController()).At(View.Box(Cell).GetCenter());
 }
 
 void ANativeWadHUD::ChangeInventoryPage(int32 Offset)
@@ -568,7 +567,8 @@ void ANativeWadHUD::ChangeInventoryPage(int32 Offset)
     const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     if (ClassicData && Player && Player->IsInventoryOpen() && Form == EForm::Inventory)
     {
-        InventoryPage = FMath::Clamp(InventoryPage + Offset, 0, FInventoryView(*Player, *ClassicData, true, Player->GetMouseHandSlot()).PageCount() - 1);
+        const_cast<ANativeWadPlayer*>(Player)->SetBagPage(Player->GetBagPage()+Offset);
+        InventoryPage=Player->GetBagPage();
     }
 }
 
@@ -767,24 +767,17 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
         }
         return;
     }
-    const FInventoryView View(*Player, *ClassicData, true, Player->GetMouseHandSlot());
-    InventoryPage = FMath::Min(InventoryPage, View.PageCount() - 1);
+    InventoryPage=Player->GetBagPage();
     if (PreviousPage.IsInside(Point) || NextPage.IsInside(Point))
     {
         ChangeInventoryPage(PreviousPage.IsInside(Point) ? -1 : 1);
         return;
     }
-    const int32 Start = InventoryPage * SlotsPerPage;
-    const int32 End = FMath::Min(Start + SlotsPerPage, View.Cells.Num());
-    for (int32 Cell = Start; Cell < End; ++Cell)
+    if(NativeWadInventoryView::InBag(Point))
     {
-        if (SlotBox(Cell).IsInside(Point))
-        {
-            Player->ClickInventorySlot(View.Cells[Cell].FirstSlot);
-            return;
-        }
+        if(Player->GetMouseHandItem()){Player->TryPlaceMouseHandInBag(InventoryPage,Point);}
+        else if(const int32 Slot=Player->BagItemAt(InventoryPage,Point);Slot!=INDEX_NONE){Player->ClickInventorySlot(Slot);}
     }
-    if (NativeWadInventoryView::Bag.IsInside(Point)) { Player->StoreMouseHandInInventory(); }
 }
 
 void ANativeWadHUD::DrawHUD()
@@ -1158,11 +1151,8 @@ void ANativeWadHUD::DrawHUD()
     Screen.Picture(TEXT("2EQBUTN"), BagEquipmentButton.Min);
     const FInventoryView View(*Player, *ClassicData, true, Player->GetMouseHandSlot());
     const int32 Pages = View.PageCount();
-    InventoryPage = FMath::Min(InventoryPage, Pages - 1);
-    const int32 Start = InventoryPage * SlotsPerPage;
-    const int32 End = FMath::Min(Start + SlotsPerPage, View.Cells.Num());
-    const int32 Selected = View.CellForSlot(Player->GetSelectedInventorySlot());
-    const int32 ReadyCell = View.CellForSlot(Player->GetReadySlot());
+    InventoryPage=Player->GetBagPage();
+    NativeWadInventoryView::DrawBagPage(*Canvas,*Player,*ClassicData,Screen.Layout.Origin,Screen.Layout.Scale,InventoryPage);
     FVector2D Cursor(-1, -1);
     if (const APlayerController* Controller = GetOwningPlayerController();
         Controller && Controller->GetMousePosition(Cursor.X, Cursor.Y))
@@ -1170,25 +1160,9 @@ void ANativeWadHUD::DrawHUD()
         Cursor = (Cursor - Screen.Layout.Origin) / Screen.Layout.Scale;
     }
     int32 InspectedSlot = Player->GetSelectedInventorySlot();
-    for (int32 Cell = Start; Cell < End; ++Cell)
+    for(const auto& Item:View.Cells)
     {
-        const FInventoryCell& Item = View.Cells[Cell];
-        const FBox2D Box = SlotBox(Cell);
-        if (Cell == Selected || Cell == ReadyCell || Player->IsWornInventorySlot(Item.FirstSlot))
-        {
-            Screen.Rect({Box.Min + FVector2D(1, 1), Box.Max}, Screen.Color(Cell == Selected ? 82 : 78));
-        }
-        Screen.Item(Player->GetCarriedItems()[Item.FirstSlot], Box);
-        if (Item.Count > 1)
-        {
-            const FVector2D Corner = Box.Max - FVector2D(9, 7);
-            Screen.Rect({Corner, Box.Max}, FLinearColor(0, 0, 0, 0.8));
-            Screen.Text(FString::FromInt(Item.Count), int32(Corner.X), int32(Corner.Y), 9, 1, true);
-        }
-        if (Box.IsInside(Cursor))
-        {
-            InspectedSlot = Item.FirstSlot;
-        }
+        if(Item.Page==InventoryPage&&Item.Box().IsInside(Cursor)){InspectedSlot=Item.FirstSlot;}
     }
     if (Ready.IsInside(Cursor))
     {
@@ -1204,13 +1178,9 @@ void ANativeWadHUD::DrawHUD()
         }
         Screen.Text(Description, 9, 132, 193, 2);
     }
-    if (View.Cells.IsEmpty())
-    {
-        Screen.Text(TEXT("EMPTY"), 214, 69, 101, 1, true);
-    }
     Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
     Screen.Picture(TEXT("LTARROW"), PreviousPage.Min);
     Screen.Picture(TEXT("RTARROW"), NextPage.Min);
-    Screen.Text(Load, 213, 129, 52, 1, true);
+    Screen.Text(bKnownWeight?FString::Printf(TEXT("LOAD:%3.1f kg"),Weight/10.0):FString(TEXT("LOAD: --")), 213, 129, 52, 1, true);
     Screen.Text(FString::Printf(TEXT("PG:%d/%d"), InventoryPage + 1, Pages), 287, 129, 27, 1, true);
 }

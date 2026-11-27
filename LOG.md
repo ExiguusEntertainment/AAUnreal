@@ -250,3 +250,42 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All100 tests pass. Targeted content refresh and independent reopen pass for L34/L74 Skeletons, all20 L151 Barbarians and L75 acid. Existing identities/visible mesh bytes remain intact.
 - Both real L30 regressions pass after collision refactoring: door147 holds/recloses3.5seconds and player walks original spawn through it with84->160->84 lighting.
 - PLAN245-247 checked, explicitly separating the tested bag model from pending visible UI wiring. Preparing commit/push, then NightVision/ambient/inventory integration.
+
+## 2026-11-27 16:49 CST - next integration under final linking
+
+- fa1a4222 is pushed. Integrated original five-bag UI/player/Town grids, neutral private-camera Night Vision and all334 source ambient markers. Candidate source catalog now contains all108 definitions, but final five shader/use proofs are not yet claimed.
+- Resolved missing MaterialDomain include, test fixture Cast name shadowing and extreme-coordinate bag codec overflow. Added the RHI dependency required for material feature-level inspection; final link is running.
+- Pending validation: saved PP material/rules import, expanded111-test suite, real GPU swatch/two-view/HUD comparisons, rendered inventory/Bank/Store/restart, all30 ambient import/reopen and explicitly muted live audio transport. Modern bag save corruption hardening and its rendered fixture are being finalized separately.
+- Agents also have frozen L41 script missile restoration/migration, and near-complete original scenery coverage3377 placements across99 types;5 translucent ELMARK placements remain explicit. L30 outside-polygon TreeThing17 was resolved using original BLOCKMAP to sector120, without moving its authored XY.
+
+## 2026-11-27 17:02 CST - save/cold-resource defects caught before shipping
+
+- First111 suite passed108: two bag tests exposed real footprint changes from asynchronous texture placeholders; now uses saved original icon dimensions everywhere. Modern bag save preflight/atomicity and full-catalog source-size regression are compiled;114-suite rerun starts now. Night CPU reference assertions used Equals(...,0), whose strict tolerance check rejects even exact equality; corrected to exact equality without changing shader math.
+- Night GPU proof failed: even bright diagnostic cards were black; source shader-permutation readiness/fallback is the current hypothesis. Added diagnostic/readiness candidate retains all image thresholds; no visual success claimed.
+- Ambient import verified all334 in memory, but independent reopen caught L72 disk data still old. Source log proves one temporary-package-hash write failed;29 maps persisted, L72 did not. Strengthening explicit save-success proof and retrying that map before full readonly reopen. This is not being counted as complete from memory-only checks.
+
+## 2026-11-27 17:13 CST -114 tests, inventory process reviews and persisted ambience
+
+- All114 regressions pass. InventoryGrid andInventoryGridReload both pass actual normal clicks, manual2+1 potion stacks,64x64 source footprint, five pages, Equipment/F1/Notes retention, L30->L301 travel and separate-process exact positions/order restoration. Profile Saved/InventoryGridProcessProfile-20261127-170819; PNGs saved. Original type712 bitmap is mostly padded; separate source-frame selection audit is ongoing, not presumed from pixels alone.
+- Explicit public-save L72 repair passed. Independent fresh full30 reopen now verifies334 original ambient bindings,203additional,zero missing samples, unchanged geometry/meshbytes. Full persisted result is Saved/ReviewArtifacts/AmbientAudioReopen.json. Muted live-device playback still needs its separate check.
+- Night shader resources are confirmed incomplete, explaining fallback captures; ordered DDC cache completion then shader job submission/finish is now under build, preserving all completeness and GPU thresholds. No NightVision visual success yet.
+
+## 2026-11-27 17:20 CST - inventory/Town and live ambient checks verified
+
+- Both rendered TownServices processes passed: original Bank deposits/withdrawals, Store affordability/buy/sell, footprint grids, page/equipment/close controls, purse/bank/item persistence. Screenshots reviewed. Profile Saved/InventoryTownProcessProfile-20261127-171758; earlier two inventory processes also passed. PLAN248 records this verified goal.
+- Separate audio-enabled AmbientMutedPlayback passed on the actual XAudio2 device, with fixture master gain0 throughout. This exercised real procedural loop play, radius stop/restart and EndPlay release, not the no-device skip. Together with fresh all30 persisted census, PLAN249 is verified. Exact original panning/mixer behavior remains open.
+- The Night shader diagnostic was too strict for UE5.6's default on-demand shader job cache: engine source intentionally leaves legacy compilation-finalized false for complete ordinary maps. Replacing that diagnostic with actual rendering-thread fallback identity proof; all image thresholds remain unchanged. GPU success is still not claimed.
+- Three agents are active on shader/runtime readiness, source world palette/mip provenance, and the11-variant shield initial-frame fix. Frozen scenery/L41/packed-Druid packages await integration after this checkpoint.
+
+## 2026-11-27 17:28 CST - Night Vision GPU proof passed
+
+- Saved RHI import now proves the actual rendering resource is complete with no fallback. UE5.6 on-demand job-cache mode deliberately leaves the legacy finalized-valid flag false; no engine completion flag was changed.
+- Controlled normal rune cast + two-view GPU review passes: dark grey69.757->116.337, bright242.588->243.588, neutral sky109.132 unchanged, original sky159.198 unchanged, independent viewerB max channel difference0, and45180 static original HUD pixels unchanged.
+- Fixture corrections retained every threshold: raised sub-code-value test greys into a measurable range; scoped/restored r.Test.FreezeTemporalSequences to compare identical sampling; copied the actual player camera aspect constraints instead of ACameraActor's default letterbox. No gameplay shader/exposure was altered for those fixture repairs.
+- Native vision is neutral SDR shadow gain with constant sky classification and private per-camera power, not exact indexed palette shading. Runtime cold-parent pending guard is the last change before the verified checkpoint commit.
+
+## 2026-11-27 17:32 CST - verified checkpoint250 ready for Git
+
+- Night cold/pending guard compiles. All115 WAD tests pass (final stdout has the complete last test; the abslog omitted its final flush). Separate real-RHI PendingLifecycle passes cold proof, genuine PostEditChange invalidation and fresh renderer proof. Final normal-cast GPU review passes again with the guard active and all45180 static HUD pixels unchanged.
+- PLAN248–250 now records original bag/Town grids, all334 persisted campaign ambient markers and private-camera Night Vision. Native behavior covers all108 source spell definitions; exact original indexed shading, original feedback and full current campaign remain open.
+- Committing source, required shared effects/catalog and all30 map assets; user Editor settings and unrelated local review files are excluded. Next source packages are ordinary scenery, L41 missiles, packed Druid variants and source-art corrections.

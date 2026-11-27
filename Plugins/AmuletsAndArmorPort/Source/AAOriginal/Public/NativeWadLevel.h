@@ -35,6 +35,16 @@ struct FWadAmbientEmitter
 
     UPROPERTY()
     int32 Group = 0;
+    UPROPERTY()
+    int32 SourceThingId = INDEX_NONE;
+    UPROPERTY()
+    int32 MarkerType = 0;
+    UPROPERTY()
+    int32 Radius = 500;
+    UPROPERTY()
+    int32 MaxVolume = 255;
+    UPROPERTY()
+    bool bLoop = true;
 };
 
 USTRUCT()
@@ -242,6 +252,7 @@ class AAORIGINAL_API ANativeWadLevel : public AActor
 public:
     ANativeWadLevel();
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     virtual void Tick(float DeltaSeconds) override;
 
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
@@ -300,6 +311,10 @@ public:
     bool AttachActorToWadFloor(AActor& Actor, int32 Sector) const;
     FVector2D GetCurrentInput(const FVector& Feet, bool bWaterWalking = false) const;
     int32 CountPlayingAmbientEmitters(int32 Sound) const;
+    // Read-only audio inspection for saved-content verification and runtime diagnostics.
+    UFUNCTION(BlueprintPure, Category="WAD|Audio")
+    FString DescribeWadAmbientAudio() const;
+    const TArray<FWadAmbientEmitter>& GetWadAmbientEmitters() const { return AmbientEmitters; }
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
     int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
     int32 GetScriptMissileCount() const { return ScriptMissileCount; }
@@ -409,6 +424,8 @@ private:
     UPROPERTY(Transient)
     TMap<int32, TObjectPtr<UAudioComponent>> PlayingEmitters;
 
+    UPROPERTY(Transient)
+    TSet<int32> CompletedAmbientOneShots;
     float AmbientUpdateTime = 0.0f;
 
     UPROPERTY()

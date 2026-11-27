@@ -1,4 +1,10 @@
 #include "NativeWadLevel.h"
+#include "Components/AudioComponent.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "Serialization/JsonSerializer.h"
+#include "Misc/SecureHash.h"
+#include "Sound/SoundWave.h"
 #include "NativeWadRules.h"
 
 #include "Components/BoxComponent.h"
@@ -882,4 +888,37 @@ void ANativeWadLevel::UpdateLineCollision(int32 Index, FWadWallLine& Wall)
     {
         Line.Collision[SpanIndex]->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
+}
+
+FString ANativeWadLevel::DescribeWadAmbientAudio() const
+{
+    auto Root=MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> Emitters;
+    for(int32 Index=0;Index<AmbientEmitters.Num();++Index)
+    {
+        const auto& E=AmbientEmitters[Index];auto Entry=MakeShared<FJsonObject>();
+        Entry->SetNumberField(TEXT("source_thing"),E.SourceThingId);Entry->SetNumberField(TEXT("marker_type"),E.MarkerType);
+        Entry->SetNumberField(TEXT("sound"),E.Sound);Entry->SetNumberField(TEXT("group"),E.Group);
+        Entry->SetNumberField(TEXT("radius"),E.Radius);Entry->SetNumberField(TEXT("max_volume"),E.MaxVolume);Entry->SetBoolField(TEXT("loop"),E.bLoop);
+        TArray<TSharedPtr<FJsonValue>> Position;
+        Position.Add(MakeShared<FJsonValueNumber>(E.Position.X));Position.Add(MakeShared<FJsonValueNumber>(E.Position.Y));Position.Add(MakeShared<FJsonValueNumber>(E.Position.Z));
+        Entry->SetArrayField(TEXT("position"),Position);
+        if(const UAudioComponent* Component=PlayingEmitters.FindRef(Index);IsValid(Component))
+        {
+            Entry->SetBoolField(TEXT("playing"),Component->IsPlaying());Entry->SetNumberField(TEXT("gain"),Component->VolumeMultiplier);
+            if(const USoundWave* Wave=Cast<USoundWave>(Component->Sound))
+            {Entry->SetBoolField(TEXT("infinite_duration"),Wave->Duration==INDEFINITELY_LOOPING_DURATION);Entry->SetBoolField(TEXT("looping_flag"),Wave->bLooping!=0);}
+        }
+        Emitters.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    TArray<TSharedPtr<FJsonValue>> Samples;TArray<int32> Ids;AmbientSamples.GetKeys(Ids);Ids.Sort();
+    for(int32 Id:Ids)
+    {
+        const auto& Sample=AmbientSamples.FindChecked(Id);uint8 Hash[FSHA1::DigestSize];
+        FSHA1::HashBuffer(Sample.UnsignedSamples.GetData(),Sample.UnsignedSamples.Num(),Hash);
+        auto Entry=MakeShared<FJsonObject>();Entry->SetNumberField(TEXT("id"),Id);Entry->SetNumberField(TEXT("bytes"),Sample.UnsignedSamples.Num());
+        Entry->SetStringField(TEXT("sha1"),BytesToHex(Hash,UE_ARRAY_COUNT(Hash)));Samples.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    Root->SetArrayField(TEXT("emitters"),Emitters);Root->SetArrayField(TEXT("samples"),Samples);
+    FString Text;FJsonSerializer::Serialize(Root,TJsonWriterFactory<>::Create(&Text));return Text;
 }

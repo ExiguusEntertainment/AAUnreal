@@ -4,6 +4,7 @@
 #include "Engine/World.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "NativeWadEncounter.h"
+#include "NativeWadNightVision.h"
 
 namespace
 {
@@ -69,6 +70,7 @@ void ANativeWadLevel::BeginPlay()
     }
     if (DaySky)
     {
+        NativeWadNightVision::MarkSky(*DaySky);
         DaySkyMaterial = DaySky->CreateDynamicMaterialInstance(0);
         double ArrivalHour = TimeOfDayHours;
         const TCHAR* TravelHour = GetWorld()->URL.GetOption(TEXT("WadHour="), nullptr);

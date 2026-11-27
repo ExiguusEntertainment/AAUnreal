@@ -12,7 +12,7 @@ public class AAOriginal : ModuleRules
         bUseRTTI = false;
 
         PublicDependencyModuleNames.AddRange(new[] { "Core", "CoreUObject", "Engine", "ProceduralMeshComponent" });
-        PrivateDependencyModuleNames.AddRange(new[] { "ApplicationCore", "Projects", "GeometryCore", "ImageWrapper", "InputCore", "Json", "RenderCore", "Slate", "SlateCore" });
+        PrivateDependencyModuleNames.AddRange(new[] { "ApplicationCore", "Projects", "GeometryCore", "ImageCore", "ImageWrapper", "InputCore", "Json", "RenderCore", "RHI", "Slate", "SlateCore" });
 
         // Editor-only helpers for map building UI/actions
         if (Target.bBuildEditor)

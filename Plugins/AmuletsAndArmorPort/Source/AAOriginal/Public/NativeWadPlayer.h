@@ -6,10 +6,12 @@
 #include "NativeWadRules.h"
 #include "NativeWadPlayerEffects.h"
 #include "NativeWadMagicMap.h"
+#include "NativeWadBagLayout.h"
 #include "NativeWadPlayer.generated.h"
 
 class UPrimitiveComponent;
 class UCameraComponent;
+class UMaterialInstanceDynamic;
 class ANativeWadLevel;
 class UNativeWadHudData;
 class FNativeWadNotesEditor;
@@ -75,6 +77,12 @@ public:
     bool CollectAmmo(int32 Index, int32 Quantity);
     void RetrieveAmmo(int32 Index);
     const TArray<int32>& GetCarriedItems() const { return CarriedItems; }
+    TArray<FWadBagItem> GetBagItems() const;
+    const FWadBagLayout& GetBagLayout() const;
+    int32 GetBagPage() const;
+    void SetBagPage(int32 Page);
+    int32 BagItemAt(int32 Page,FVector2D Point) const;
+    bool TryPlaceMouseHandInBag(int32 Page,FVector2D Point);
     int32 GetReadySlot() const { return ReadySlot; }
     int32 GetReadyItem() const;
     FString GetInventoryItemDescription(int32 Type, bool bMerchantPreview = false) const;
@@ -112,6 +120,7 @@ public:
     void ReceiveTrapParalysis();
     void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
+    int32 GetNightVisionPower() const;
     bool CanFly() const { return FlightSeconds > 0.0 || HasActiveFlightEquipment(); }
     bool HasFeatherfall() const { return FeatherfallSeconds > 0.0 || HasEquippedItem(NativeWadRules::FeatherfallAmulet); }
     bool IsWaterWalking() const { return bOnWaterSurface; }
@@ -164,11 +173,20 @@ private:
     void ResolveMeleeHit(int32 Damage);
     const FWadInventoryDetails* GetItemRules(int32 Type) const;
     bool RemoveInventorySlot(int32 Slot);
+    void EnsureBagLayout();
+    void RestoreBagLayout(const TCHAR* Payload);
+    void InitializeCreationBagLayout();
+    bool AppendBagItem(int32 Type);
+    FWadBagLayout BagLayout;
+    bool bBagLayoutInitialized=false;
+    bool bModernBagLayout=false;
+    int32 BagPage=0;
     void EquipArmor(int32 Slot, const FWadInventoryDetails& Details);
     bool EquipJewelry(int32 Slot, const FWadInventoryDetails& Details, int32 Location = INDEX_NONE);
     void UseConsumable(const FWadInventoryDetails& Details);
     void ApplyTimedEffect(const FString& EffectOwner, EWadTimedEffectKind Kind, int32 Status, int32 Power, double Seconds);
     void RefreshTimedEffectCache();
+    void UpdateNightVisionRendering();
     void SynchronizeMagicMapOwners();
     void ReadyMagicMapRing();
     void TickMagicMap(float DeltaSeconds);
@@ -300,6 +318,9 @@ private:
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UCameraComponent> ViewCamera;
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> NightVisionMaterial;
+    bool bNightVisionAssetWarning = false;
 };
 
 UCLASS()
@@ -313,8 +334,8 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     virtual void DrawHUD() override;
-    void ClickHUD(const FVector2D& Position);
-    FVector2D InventorySlotCenter(int32 Slot) const;
+    AAORIGINAL_API void ClickHUD(const FVector2D& Position);
+    AAORIGINAL_API FVector2D InventorySlotCenter(int32 Slot) const;
     bool HasClassicHud() const { return ClassicData != nullptr; }
     bool IsNotesOpen() const;
     void HandleNotesCharacter(TCHAR Character);

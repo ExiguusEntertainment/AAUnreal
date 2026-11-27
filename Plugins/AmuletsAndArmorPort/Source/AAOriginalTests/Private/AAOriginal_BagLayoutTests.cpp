@@ -80,7 +80,8 @@ bool FAAOriginalBagCapacityAndCodec::RunTest(const FString& Parameters)
     TArray<FWadBagItem> One={{435,{7,6},1,false}};FWadBagLayout Tiny;Tiny.Initialize(One,false);
     const FString Before=Tiny.Encode(One);
     for(const TCHAR* Invalid:{TEXT("1,5,0,1~435,0,6,0,0,0"),TEXT("1,5,0,1~435,0,0,8,0,0"),TEXT("1,5,0,1~435,0,0,0,1,0"),
-        TEXT("1,5,0,1~4531,0,0,0,0,0"),TEXT("1,5,0,1~435,0,0,0,0junk,0"),TEXT("1,6,0,1~435,0,0,0,0,0"),TEXT("1,6,1,1~435,0,0,0,0,0")})
+        TEXT("1,5,0,1~4531,0,0,0,0,0"),TEXT("1,5,0,1~435,0,0,0,0junk,0"),TEXT("1,6,0,1~435,0,0,0,0,0"),TEXT("1,6,1,1~435,0,0,0,0,0"),TEXT("1,5,0,1~435,0,2147483647,0,0,0"),
+        TEXT("1,5,0,1~435,0,0,2147483647,0,0")})
     {
         TestFalse(TEXT("Malformed/type-mismatched/capacity-inventing saved placement refuses"),Tiny.Decode(Invalid,One));
         TestEqual(TEXT("Codec failure is atomic and loses no owned placement"),Tiny.Encode(One),Before);
@@ -104,6 +105,8 @@ bool FAAOriginalBagEdgesAndTraversal::RunTest(const FString& Parameters)
     Single[0].bOffPage=false;
     TestFalse(TEXT("Negative grid anchors refuse without unsigned placement wrap"),Edge.Place(0,0,Negative,Single));
     TestEqual(TEXT("Refused placement retains detached object"),Edge.LeaderOf(0),INDEX_NONE);
+    TestFalse(TEXT("Extreme positive grid anchors cannot wrap into source bounds"),Edge.Place(0,0,{MAX_int32,MAX_int32},Single));
+    TestEqual(TEXT("Extreme-anchor refusal retains detached ownership"),Edge.LeaderOf(0),INDEX_NONE);
     B L;TArray<FWadBagItem> Items;
     for(int32 I=0;I<5;++I){Items.Add({123,{19,16},5,true});L.AddSlot();}
     const auto Place=[&](int32 Slot,FIntPoint P){Items[Slot].bOffPage=false;return L.Place(Slot,0,P,Items);};

@@ -45,7 +45,7 @@ namespace NativeWadRules
         FireAttackStatus, ElectricityAttackStatus, AcidAttackStatus, PoisonAttackStatus, PiercingAttackStatus, ManaDrainAttackStatus,
         FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus,
         AccuracyStatus, StealthStatus, MagicStatus, HealthRegenStatus, ManaRegenStatus,
-        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, StickyFeetStatus, MagicMapStatus, ItemStatusCount };
+        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, StickyFeetStatus, MagicMapStatus, NightVisionStatus, ItemStatusCount };
     inline constexpr int32 SourceNormalFriction = 12;
     inline constexpr int32 SourceAcidDamage = 200;
     inline constexpr int32 SourceSectorDamageTicks = 35;
@@ -137,6 +137,11 @@ namespace NativeWadRules
     };
     // Original SPELDESC metadata; projectile records name their individual source files.
     inline constexpr FWadSpell SupportedSpells[] = {
+        {TEXT("57"), TEXT("Glow"), ESpellSchool::Mage, ESpellEffect::Status, 1500, 0, 21000, 40, INDEX_NONE, 20, NightVisionStatus},
+        {TEXT("957"), TEXT("Owl Sight"), ESpellSchool::Mage, ESpellEffect::Status, 3000, -30, 21000, 80, INDEX_NONE, 36, NightVisionStatus},
+        {TEXT("462"), TEXT("Glow"), ESpellSchool::Arcane, ESpellEffect::Status, 1500, 0, 21000, 40, INDEX_NONE, 57, NightVisionStatus},
+        {TEXT("37"), TEXT("Glow"), ESpellSchool::Cleric, ESpellEffect::Status, 1500, 0, 11000, 40, INDEX_NONE, 85, NightVisionStatus},
+        {TEXT("4397"), TEXT("Holy Light"), ESpellSchool::Cleric, ESpellEffect::Status, 3000, -35, 21000, 70, INDEX_NONE, 99, NightVisionStatus},
         {TEXT("43"), TEXT("Magic Map"), ESpellSchool::Mage, ESpellEffect::Status, 1500, 10, 27999, 1, INDEX_NONE, 13, MagicMapStatus}, // SPL00013
         {TEXT("436"), TEXT("Magic Map"), ESpellSchool::Mage, ESpellEffect::Status, 4000, -25, 27999, 2, INDEX_NONE, 34, MagicMapStatus}, // SPL00034
         {TEXT("4367"), TEXT("Magic Map"), ESpellSchool::Mage, ESpellEffect::Status, 9000, -40, 27999, 3, INDEX_NONE, 43, MagicMapStatus}, // SPL00043

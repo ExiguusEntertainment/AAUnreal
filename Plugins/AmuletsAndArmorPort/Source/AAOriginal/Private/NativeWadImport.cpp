@@ -1,4 +1,6 @@
 #include "NativeWadImport.h"
+#include "NativeWadAmbient.h"
+#include "MaterialDomain.h"
 
 #include "Engine/Scene.h"
 
@@ -41,6 +43,9 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionSceneTexture.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "MaterialShared.h"
 #include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "MeshDescription.h"
@@ -53,6 +58,8 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "NativeWadItemSource.h"
 #include "NativeWadLevel.h"
 #include "NativeWadLook.h"
+#include "NativeWadNightVision.h"
+#include "NativeWadShaderReadiness.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadPickupMetadata.h"
 #include "NativeWadScenery.h"
@@ -754,37 +761,35 @@ struct FAAWadNativeImport
     static bool InstallAmbientEmitters(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
         FOutputDevice& Output)
     {
-        constexpr int32 StreamMarker = 1513;
-        constexpr int32 WaterfallMarker = 1514;
-        constexpr int32 StreamSound = 3003;
-        constexpr int32 WaterfallSound = 3007;
-        TSet<int32> Sounds;
-        Actor.AmbientEmitters.Reset();
-        for (const FWadThing& Thing : Map.Things)
+        Actor.InitializeTopology(); // Saved editor worlds have no BeginPlay footprint cache.
+        TArray<FWadAmbientEmitter> Expected;
+        for(int32 Id=0;Id<Map.Things.Num();++Id)
         {
-            if (Thing.Type == StreamMarker || Thing.Type == WaterfallMarker)
-            {
-                const int32 Sound = Thing.Type == StreamMarker ? StreamSound : WaterfallSound;
-                const int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
-                FVector2D Heights;
-                const double Z = Actor.GetSectorSurfaceHeights(Sector, Heights) ? Heights.X : 0.0;
-                Actor.AmbientEmitters.Add({FVector(Thing.X, Thing.Y, Z), Sound, Thing.Flags});
-                Sounds.Add(Sound);
-            }
+            const FWadThing& Thing=Map.Things[Id];const auto Definition=ResolveWadAmbientMarker(Thing.Type);
+            if(Definition.Sound==0){continue;}
+            const int32 Sector=Actor.FindWadSector(FVector2D(Actor.GetActorTransform().TransformPosition(FVector(Thing.X,Thing.Y,0))));
+            FVector2D Heights;const double Z=Actor.GetSectorSurfaceHeights(Sector,Heights)?Heights.X:0.0;
+            FWadAmbientEmitter E;E.Position=FVector(Thing.X,Thing.Y,Z);E.Sound=Definition.Sound;E.Group=uint16(Thing.Flags);
+            E.SourceThingId=Id;E.MarkerType=Thing.Type;E.Radius=Definition.Radius;E.MaxVolume=Definition.MaxVolume;E.bLoop=Definition.bLoop;
+            Expected.Add(E);
         }
-        FString Archive = FPaths::GetPath(WadPath) / TEXT("SOUNDS.RES");
-        if (!FPaths::FileExists(Archive))
+        TArray<FWadAmbientEmitter> Updated;
+        if(!MergeWadAmbientEmitters(Actor.AmbientEmitters,Expected,Updated,Output)){return false;}
+        TSet<int32> Required;
+        for(const auto& E:Updated){if(!Actor.AmbientSamples.Contains(E.Sound)){Required.Add(E.Sound);}}
+        FString Archive=FPaths::GetPath(WadPath)/TEXT("SOUNDS.RES");
+        if(!FPaths::FileExists(Archive)){Archive=FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe/SOUNDS.RES");}
+        TMap<int32,FWadSoundSample> Imported;TArray<int32> AllowedMissing=Required.Array();
+        if(!ImportWadSoundSamples(Archive,Required,Imported,Output,AllowedMissing)){return false;}
+        int32 Missing=0;
+        for(int32 Id:Required)
         {
-            Archive = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe/SOUNDS.RES");
+            if(!Imported.Contains(Id)){++Missing;Output.Logf(TEXT("Missing original ambient sample%d: retaining an explicit silent emitter; no substitution."),Id);}
         }
-        if (!ImportWadSoundSamples(Archive, MoveTemp(Sounds), Actor.AmbientSamples, Output))
-        {
-            return false;
-        }
-        if (!Actor.AmbientEmitters.IsEmpty())
-        {
-            Output.Logf(TEXT("Installed %d stream and waterfall emitters."), Actor.AmbientEmitters.Num());
-        }
+        Actor.Modify();Actor.AmbientEmitters=MoveTemp(Updated);
+        for(auto& Pair:Imported){Actor.AmbientSamples.Add(Pair.Key,MoveTemp(Pair.Value));}
+        Output.Logf(TEXT("Registered %d original ambient markers; retained %d custom emitters and existing sample overrides; %d newly requested samples are unavailable."),
+            Expected.Num(),Actor.AmbientEmitters.Num()-Expected.Num(),Missing);
         return true;
     }
 
@@ -2851,6 +2856,7 @@ struct FAAWadNativeImport
         {
             Actor.DaySky->SetMaterial(0, Material);
         }
+        NativeWadNightVision::MarkSky(*Actor.DaySky);
         Output.Logf(TEXT("Imported WAD backdrop %s (%d x %d)."), *PictureName, Size.X, Size.Y);
         return true;
     }
@@ -3406,7 +3412,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     const TSet<int32> OrdinaryTreasureTypes{100, 101, 102, 104, 105, 106, 144, 145, 147, 202, 204, 362, 373,
         416, 417, 708, 709, 710, 711, 818, 822, 12492, 12996, 12997, 12998, 12999, 37067};
     for (const int32 Type : OrdinaryTreasureTypes) { Types.Add(Type); }
-    for (const int32 Type : {350, 351, 373}) { Types.Add(Type); } // Source identification scrolls and the accessory-data journal object.
+    for (const int32 Type : {244, 350, 351, 373, 823}) { Types.Add(Type); } // Source identification scrolls and the accessory-data journal object.
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
     const TSet<int32> CreatedItemTypes{833, 298, 822}; // SPL00086/87/90 ordinary created inventory objects.
     Types.Append(CreatedItemTypes);
@@ -4318,6 +4324,90 @@ bool RefreshNativeWadL151Encounters(const FString& MapPackage, FOutputDevice& Ou
     return true;
 }
 
+bool SaveNativeWadNightVision(FOutputDevice& Output)
+{
+    FAAWadNativeImport Import;
+    Import.AssetRoot = TEXT("/Game/WadInterface");
+    auto* Catalog = LoadObject<UNativeWadHudData>(nullptr, UNativeWadHudData::ObjectPath);
+    auto* Material = Import.FindOrCreateAsset<UMaterial>(TEXT("Effects"), TEXT("M_WadNightVision"));
+    auto* Swatch = Import.FindOrCreateAsset<UMaterial>(TEXT("Effects"), TEXT("M_WadNightVisionSwatch"));
+    if (!Catalog || !Material || !Swatch) { return false; }
+    Material->MaterialDomain = MD_PostProcess;
+    Material->BlendableLocation = BL_SceneColorAfterTonemapping;
+    Material->BlendablePriority = 0;
+    Material->bIsBlendable = true;
+    auto& Expressions = Material->GetExpressionCollection();
+    Expressions.Empty();
+    const auto Texture = [&](ESceneTextureId Id)
+    {
+        auto* Node = NewObject<UMaterialExpressionSceneTexture>(Material);
+        Node->SceneTextureId = Id;
+        Node->bFiltered = false;
+        Expressions.AddExpression(Node);
+        return Node;
+    };
+    auto* Scene = Texture(PPI_PostProcessInput0);
+    auto* Depth = Texture(PPI_SceneDepth);
+    auto* SkyDepth = Texture(PPI_CustomDepth);
+    auto* Stencil = Texture(PPI_CustomStencil);
+    auto* Power = NewObject<UMaterialExpressionScalarParameter>(Material);
+    Power->ParameterName = NativeWadNightVision::PowerParameter;
+    Power->DefaultValue = 0.0f;
+    Expressions.AddExpression(Power);
+    auto* Lift = NewObject<UMaterialExpressionCustom>(Material);
+    Lift->Description = TEXT("Per-view neutral NightVision; visible sky depth/stencil exclusion; SDR approximation");
+    Lift->OutputType = CMOT_Float3;
+    Lift->Inputs.SetNum(5);
+    const FName Names[] = {TEXT("InputColor"), TEXT("OpaqueDepth"), TEXT("SkyDepth"), TEXT("SkyStencil"), TEXT("VisionPower")};
+    UMaterialExpression* Nodes[] = {Scene, Depth, SkyDepth, Stencil, Power};
+    for (int32 Index = 0; Index < 5; ++Index)
+    { Lift->Inputs[Index].InputName = Names[Index]; Lift->Inputs[Index].Input.Connect(0, Nodes[Index]); }
+    Lift->Code = TEXT("float3 Color = InputColor.rgb;\n")
+        TEXT("float Tolerance = max(1.0, SkyDepth.r * 0.0001);\n")
+        TEXT("bool VisibleSky = abs(SkyStencil.r - 254.0) < 0.5 && SkyDepth.r > 0.0 && OpaqueDepth.r > 0.0 && OpaqueDepth.r >= SkyDepth.r - Tolerance;\n")
+        TEXT("if (VisibleSky || VisionPower <= 0.0) return Color;\n")
+        TEXT("float Luminance = saturate(dot(Color, float3(0.2126, 0.7152, 0.0722)));\n")
+        TEXT("float Shadow = 1.0 - Luminance;\n")
+        TEXT("float Gain = 1.0 + 2.0 * clamp(VisionPower, 0.0, 127.0) / 127.0 * Shadow * Shadow;\n")
+        TEXT("return saturate(Color * Gain);\n");
+    Expressions.AddExpression(Lift);
+    Material->GetEditorOnlyData()->EmissiveColor.Connect(0, Lift);
+    Material->PostEditChange();
+    Swatch->SetShadingModel(MSM_Unlit);
+    Swatch->TwoSided = true;
+    auto& SwatchExpressions = Swatch->GetExpressionCollection();
+    SwatchExpressions.Empty();
+    auto* Color = NewObject<UMaterialExpressionVectorParameter>(Swatch);
+    Color->ParameterName = TEXT("SwatchColor");
+    Color->DefaultValue = FLinearColor::White;
+    SwatchExpressions.AddExpression(Color);
+    Swatch->GetEditorOnlyData()->EmissiveColor.Connect(0, Color);
+    Swatch->PostEditChange();
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    const bool VisionReady=NativeWadShaderReadiness::Prepare(*Material);
+    const bool SwatchReady=NativeWadShaderReadiness::Prepare(*Swatch);
+    if (!VisionReady||!SwatchReady)
+    { Output.Log(TEXT("NightVision import needs complete actual rendered shader maps for both owned materials; no success claim or catalog update.")); return false; }
+    const FMaterialResource* Resource = Material->GetMaterialResource(GMaxRHIFeatureLevel);
+    if (!Resource || !Resource->GetCompileErrors().IsEmpty())
+    { Output.Log(TEXT("NightVision postprocess material did not compile; no success claim or catalog update.")); return false; }
+    const FMaterialResource* SwatchResource = Swatch->GetMaterialResource(GMaxRHIFeatureLevel);
+    FLinearColor SwatchDefault;float VisionDefault=-1;
+    if (!SwatchResource || !SwatchResource->GetCompileErrors().IsEmpty()
+        || !Swatch->GetVectorParameterValue(FMaterialParameterInfo(TEXT("SwatchColor")),SwatchDefault)
+        || !SwatchDefault.Equals(FLinearColor::White,UE_SMALL_NUMBER)
+        || !Material->GetScalarParameterValue(FMaterialParameterInfo(NativeWadNightVision::PowerParameter),VisionDefault)
+        || VisionDefault!=0)
+    { Output.Log(TEXT("NightVision saved graph/swatch compilation/parameter defaults are invalid; no catalog update.")); return false; }
+
+    Catalog->Modify();
+    Catalog->NightVisionPostProcess = Material; // Hard catalog reference keeps the shared parent in cooked content.
+    for (UObject* Asset : {static_cast<UObject*>(Material), static_cast<UObject*>(Swatch), static_cast<UObject*>(Catalog)})
+    { if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension())) { return false; } }
+    Output.Log(TEXT("Saved per-camera NightVision postprocess parent and controlled review swatch material. Source palette-shade parity remains open; r.CustomDepth=3 and visible-sky classification are required."));
+    return SaveNativeWadItemRules(Output);
+}
+
 bool RefreshNativeWadTerrainFriction(const FString& MapPackage, FOutputDevice& Output)
 {
     const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
@@ -4372,6 +4462,17 @@ bool RefreshNativeWadAcidEnvironment(const FString& MapPackage, FOutputDevice& O
     if (!Import.InstallL75AcidEnvironment(*Level, *Map, Output)) { return false; }
     if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     return true;
+}
+
+bool RefreshNativeWadAmbientAudio(const FString& MapPackage,const FString& WadPath,FOutputDevice& Output)
+{
+    const auto* Map=UDoomWadLoader::GetLastWadMapData();
+    if(!Map||!MapPackage.StartsWith(TEXT("/Game/"))||!FPackageName::IsValidLongPackageName(MapPackage)||!FPackageName::DoesPackageExist(MapPackage)){return false;}
+    UWorld* World=LoadObject<UWorld>(nullptr,*(MapPackage+TEXT(".")+FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level=World?FAAWadNativeImport::FindMatchingLevel(*World,*Map):nullptr;
+    if(!Level||(World->WorldType!=EWorldType::Editor&&World->WorldType!=EWorldType::Inactive)){return false;}
+    if(!FAAWadNativeImport::InstallAmbientEmitters(*Level,*Map,WadPath,Output)){return false;}
+    return SaveAsset(*World,*FPackageName::GetMapPackageExtension());
 }
 
 #endif

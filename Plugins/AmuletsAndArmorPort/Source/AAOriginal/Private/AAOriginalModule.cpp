@@ -1034,6 +1034,12 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD gameplay import finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.IMPORTWADNIGHTVISION")))
+        {
+            if (!SaveNativeWadNightVision(Ar)) { UE_LOG(LogTemp, Error, TEXT("AA.ImportWadNightVision failed.")); }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD NightVision material import finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADSURFACES")))
         {
             const FString Package = FParse::Token(Cmd, false);
@@ -1068,6 +1074,19 @@ public:
                 UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadL151Encounters failed. Usage: AA.RefreshNativeWadL151Encounters <L151.MAP> <MapName> </Game/Maps/L151>"));
             }
             UE_LOG(LogTemp, Display, TEXT("Native WAD L151 encounter refresh finished"));
+            return true;
+        }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADAMBIENTAUDIO")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadAmbientAudio(Package, WadPath, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadAmbientAudio failed. Usage: AA.RefreshNativeWadAmbientAudio <WadPath> <MapName> <MapPackage>"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD ambient audio refresh finished"));
             return true;
         }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADACIDENVIRONMENT")))
@@ -1199,6 +1218,10 @@ public:
                 {
                     bStarted = StartNativeWadRiverReview(InWorld, Output, ImageSize, Review == TEXT("riverreload"));
                 }
+                else if (Review == TEXT("nightvision"))
+                {
+                    bStarted = StartNativeWadNightVisionReview(InWorld, Output, ImageSize);
+                }
                 else if (Review == TEXT("magicmap") || Review == TEXT("magicmapreload"))
                 {
                     bStarted = StartNativeWadMagicMapReview(InWorld, Output, Review == TEXT("magicmapreload"));
@@ -1220,6 +1243,7 @@ public:
                     || Review == TEXT("poisoncures") || Review == TEXT("poisoncuresreload") || Review == TEXT("poisoncurescompletereload")
                     || Review == TEXT("notes") || Review == TEXT("notesreload")
                     || Review == TEXT("options") || Review == TEXT("optionsreload")
+                    || Review == TEXT("inventorygrid") || Review == TEXT("inventorygridreload")
                     || Review == TEXT("retainedhand") || Review == TEXT("retainedhandreload")
                     || Review == TEXT("journalpickup") || Review == TEXT("journalpickupreload")
                     || Review == TEXT("wardzero") || Review == TEXT("wardzeroreload") || Review == TEXT("wardexpiredzeroreload")

@@ -130,7 +130,10 @@ public:
     void OpenService(FName Name);
     bool RentRoom(int32 Room);
     void ClickAction(const FVector2D& Position);
-    FVector2D ServiceBagItemCenter(int32 Slot) const;
+    AAORIGINAL_API FVector2D ServiceBagItemCenter(int32 Slot) const;
+    AAORIGINAL_API FVector2D ServiceStockItemCenter(int32 Type) const;
+    AAORIGINAL_API int32 ServiceStockItemPage(int32 Type) const;
+    int32 GetServiceStockPage() const{return StockPage;}
 
 private:
     void StartQuest();

@@ -10,6 +10,7 @@
 #include "Misc/PackageName.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
+#include "NativeWadBagState.h"
 #include "NativeWadLevel.h"
 #include "NativeWadOptions.h"
 #include "NativeWadPlayer.h"
@@ -46,6 +47,7 @@ namespace
             FWadPlayerEffects Effects;
             if (!Effects.Decode(Payload)) { return nullptr; }
         }
+        if(!NativeWadBagState::ValidateOptions(URL,NativeWadBagState::CatalogRule)){return nullptr;}
         return Save;
     }
 }
@@ -469,6 +471,8 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
 
 bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
 {
+    const auto& CheckedBag=GetBagLayout();const auto CheckedItems=GetBagItems();
+    if(!CheckedBag.Validate(CheckedItems)||CheckedBag.Encode(CheckedItems).IsEmpty()){return false;}
     UNativeWadCheckpoint* Save = NewObject<UNativeWadCheckpoint>();
     Save->bTown = IsInWadTown();
     const ANativeWadLevel* Level = NativeLevel.Get();
@@ -482,6 +486,8 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
     Save->View = GetControlRotation();
     Save->NeedsTime = NeedsTime;
     Save->PlayerOptions = MakeTravelOptions();
+    const FURL SavedOptions(nullptr,*(Save->LevelPackage+TEXT("?")+Save->PlayerOptions),TRAVEL_Absolute);
+    if(!NativeWadBagState::ValidateOptions(SavedOptions,NativeWadBagState::CatalogRule)){return false;}
     Save->bItemIdentificationRecorded = bItemIdentificationInitialized;
     Save->IdentifiedItemTypes = IdentifiedItemTypes;
     if (const UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())

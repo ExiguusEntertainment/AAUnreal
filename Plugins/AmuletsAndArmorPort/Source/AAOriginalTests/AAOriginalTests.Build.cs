@@ -20,6 +20,8 @@ public class AAOriginalTests : ModuleRules
         {
             "Projects",
             "InputCore",
+            "RHI",
+            "RenderCore",
             "ProceduralMeshComponent"
         });
 

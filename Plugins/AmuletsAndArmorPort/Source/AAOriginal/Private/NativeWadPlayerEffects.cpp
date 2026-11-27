@@ -192,6 +192,7 @@ void ANativeWadPlayer::RefreshTimedEffectCache()
         ItemStatusPower[Index] = TimedEffects.Power(EWadTimedEffectKind::Status, Index);
     }
     SynchronizeMagicMapOwners();
+    UpdateNightVisionRendering();
 }
 
 void ANativeWadPlayer::ApplyTimedEffect(const FString& EffectOwner, EWadTimedEffectKind Kind, int32 Status, int32 Power, double Seconds)
