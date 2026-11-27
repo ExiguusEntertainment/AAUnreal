@@ -1981,6 +1981,7 @@ namespace
         bool bAmmoReview = false;
         bool bAmmoBannerReview = false;
         bool bScriptDoorLockReload = false;
+        bool bFinalCampaignReload = false;
         bool bDoorMagicReview = false;
         bool bDoorMagicReload = false;
         bool bDoorMagicCompleteReload = false;
@@ -2030,6 +2031,7 @@ namespace
         TOptional<FVector2D> CampaignObstacleAfter;
         TWeakObjectPtr<ANativeWadGuardian> WalkBlockingEnemy;
         bool bCampaignConcealmentVerified = false;
+        bool bL61ArrivalConcealmentUsed = false;
         bool bFightingForeground = false;
         int32 CombatStrafe = 0;
         bool bFireballWandReview = false;
@@ -6674,7 +6676,7 @@ namespace
                 const bool bAtTarget = WalkTo(Player, Target);
                 // Keep the running speed and jump when the remaining distance reaches the takeoff range.
                 const double Now = Level.GetWorld()->GetTimeSeconds();
-                const bool bRetryJump = CampaignRoute->Map == 71 || CampaignRoute->Map == 153;
+                const bool bRetryJump = CampaignRoute->Map == 61 || CampaignRoute->Map == 71 || CampaignRoute->Map == 153;
                 if ((!bCampaignActionStarted || (bRetryJump && !bAtTarget && Now - LastCampaignJumpTime > 1.0))
                     && bOnGround
                     && FVector2D::DistSquared(Target, FVector2D(Player.GetActorLocation())) <= FMath::Square(Step.Index))
@@ -7113,7 +7115,7 @@ namespace
                 CampaignStepTime = -1.0;
                 return true;
             }
-            if (CampaignRoute->Map == 71 || CampaignRoute->Map == 70)
+            if (CampaignRoute->Map == 71 || CampaignRoute->Map == 70 || CampaignRoute->Map == 61)
             {
                 if (Player.GetStatusPower(NativeWadRules::LavaWalkStatus) == 0 && Player.GetItemCount(813) > (CampaignRoute->Map == 71 ? 2 : 0)
                     && Level->FindLavaSurfaceZ(Player.GetActorLocation()).IsSet())
@@ -7124,11 +7126,13 @@ namespace
                     CampaignStepTime = -1.0;
                     return true;
                 }
-                if (Player.GetStatusPower(NativeWadRules::InvisibleStatus) == 0 && Player.GetItemCount(361) > (CampaignRoute->Map == 71 ? 3 : 0))
+                const bool bRefreshL61Arrival = CampaignRoute->Map == 61 && NextPoint == 0 && !bL61ArrivalConcealmentUsed;
+                if ((Player.GetStatusPower(NativeWadRules::InvisibleStatus) == 0 || bRefreshL61Arrival)
+                    && Player.GetItemCount(361) > (CampaignRoute->Map == 71 ? 3 : 0))
                 {
                     Stop(Player);
                     if (Player.GetReadyItem() != 361 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 361); }
-                    else { Press(Player, EKeys::LeftControl); }
+                    else { Press(Player, EKeys::LeftControl); bL61ArrivalConcealmentUsed |= CampaignRoute->Map == 61; }
                     CampaignStepTime = -1.0;
                     return true;
                 }
@@ -7137,14 +7141,14 @@ namespace
                     int32 HiddenFrom = 0;
                     for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
                     {
-                        if (Enemy->GetSourceType() == 1014 && !Enemy->IsHidden() && !Enemy->IsDefeated())
+                        if (Enemy->GetSourceType() == (CampaignRoute->Map == 61 ? 1023 : 1014) && !Enemy->IsHidden() && !Enemy->IsDefeated())
                         {
-                            if (Enemy->CanSeePlayer(Player)) { return Finish(&Player, TEXT("an archer could see the concealed campaign character")); }
+                            if (Enemy->CanSeePlayer(Player)) { return Finish(&Player, TEXT("an encounter could see the concealed campaign character")); }
                             ++HiddenFrom;
                         }
                     }
                     bCampaignConcealmentVerified = true;
-                    UE_LOG(LogTemp, Display, TEXT("Verified the original invisibility effect conceals the moving campaign character from %d live L%d archers."), HiddenFrom, CampaignRoute->Map);
+                    UE_LOG(LogTemp, Display, TEXT("Verified the original invisibility effect conceals the moving campaign character from %d live L%d creatures."), HiddenFrom, CampaignRoute->Map);
                 }
             }
             if (CampaignRoute->Map == 72 && NextPoint > 2 && !Player.CanFly() && Player.GetItemCount(NativeWadRules::FlyingPotion) > 0)
@@ -7276,7 +7280,7 @@ namespace
             const int32 ThreatType = CampaignRoute->Map == 72 || CampaignRoute->Map == 73 ? 1011 : CampaignRoute->Map == 70 ? 1014
                 : CampaignRoute->Map == 61 ? 1023 : CampaignRoute->Map == 153 ? 1007 : INDEX_NONE;
             if (ThreatType != INDEX_NONE && !((CampaignRoute->Map == 72 || CampaignRoute->Map == 73) && Player.CanFly())
-                && !(CampaignRoute->Map == 70 && Player.GetStatusPower(NativeWadRules::InvisibleStatus) > 0)
+                && !((CampaignRoute->Map == 70 || CampaignRoute->Map == 61) && Player.GetStatusPower(NativeWadRules::InvisibleStatus) > 0)
                 && (Step.Action == ECampaignAction::Walk || Step.Action == ECampaignAction::Use
                     || (CampaignRoute->Map == 70 && Step.Action == ECampaignAction::TouchSector)
                     || (CampaignRoute->Map == 61 && Step.Action == ECampaignAction::Jump)))
@@ -12330,6 +12334,41 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bFinalCampaignReload)
+            {
+                if (!Player->HasRestoredWadCheckpoint()) { return true; }
+                auto* Travel = Current->GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+                if (!Travel) { return Finish(Player, TEXT("the final campaign save has no travel state")); }
+                auto& Quest = Travel->Quest;
+                if (NextPoint == 0)
+                {
+                    if (Player->GetCharacterClass() != 4 || Player->GetCharacterLevel() != 8
+                        || Player->GetExperience() != 825122 || Quest.Active != INDEX_NONE
+                        || Quest.ResultQuest != 6 || !Quest.bSucceeded || !Quest.bShowResult
+                        || Quest.GetWalletCopper() != 10100 || Player->GetItemCount(NativeWadRules::OrbOfDestruction) != 0)
+                    { return Finish(Player, TEXT("the original Priest's final reward, progression, or consumed orb did not restore")); }
+                    for (const int32 Map : {22, 60, 153, 12, 44, 72, 40})
+                    {
+                        if (!Player->HasCompletedWadLevel(FString::Printf(TEXT("L%d"), Map)))
+                        { return Finish(Player, *FString::Printf(TEXT("the final save lost the completed L%d return"), Map)); }
+                    }
+                    CampaignGoldBeforeExit = Quest.Gold;
+                    ExperienceBeforeTravel = Player->GetExperience();
+                    ++NextPoint;
+                }
+                if (NextPoint == 1)
+                {
+                    if (Quest.bShowResult) { Press(*Player, EKeys::Enter); return true; }
+                    StageTime = Current->GetTimeSeconds();
+                    ++NextPoint;
+                }
+                if (Current->GetTimeSeconds() - StageTime < 1.0) { return true; }
+                if (Quest.Gold != CampaignGoldBeforeExit || Player->GetExperience() != ExperienceBeforeTravel
+                    || Quest.Active != INDEX_NONE || !Player->SaveWadCheckpoint(TEXT("NativeWadOriginalClassCampaignCompleteReview")))
+                { return Finish(Player, TEXT("dismissing the final result repeated a reward or could not save")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified original-class campaign restart: Priest level 8, XP 825122, seven completed returns, consumed final orb, and no duplicate reward after normal result dismissal."));
+                return Finish(Player);
+            }
             if (bScriptDoorLockReload)
             {
                 if (!Player->HasRestoredWadCheckpoint()) { return true; }
@@ -12789,7 +12828,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         || TownReview == ETownReview::Inn || TownReview == ETownReview::InnReload
         || L25Review == EL25Review::ElmoreLaunch
         || UndeadReview == EUndeadReview::Launch || TempleReview == ETempleReview::Launch || CampaignLaunch
-        || Mode == TEXT("characterpath") || Mode == TEXT("pendingcharacter") || (Mode == TEXT("classequipment") && World && !World->URL.HasOption(TEXT("WadLoad")));
+        || Mode == TEXT("finalcampaignreload") || Mode == TEXT("characterpath") || Mode == TEXT("pendingcharacter") || (Mode == TEXT("classequipment") && World && !World->URL.HasOption(TEXT("WadLoad")));
     const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
         : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
     const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
@@ -12870,6 +12909,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bAmmoReview = bAmmo;
     Review->bAmmoBannerReview = bAmmoBanner;
     Review->bScriptDoorLockReload = bScriptDoorLockReload;
+    Review->bFinalCampaignReload = Mode == TEXT("finalcampaignreload");
     Review->bDoorMagicReview = bDoorMagic;
     Review->bDoorMagicReload = Mode == TEXT("doormagicreload");
     Review->bDoorMagicCompleteReload = Mode == TEXT("doormagiccompletereload");
