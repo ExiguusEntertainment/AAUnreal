@@ -25,3 +25,7 @@ bool RefreshNativeWadAcidEnvironment(const FString& MapPackage, FOutputDevice& O
 bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadMissingMaterials(const FString& MapPackage, FOutputDevice& Output);
 #endif
+
+#if WITH_EDITOR
+bool RefreshNativeWadOrdinaryScenery(const FString& MapPackage, const FString& SourceWadPath, FOutputDevice& Output);
+#endif

@@ -289,3 +289,17 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Night cold/pending guard compiles. All115 WAD tests pass (final stdout has the complete last test; the abslog omitted its final flush). Separate real-RHI PendingLifecycle passes cold proof, genuine PostEditChange invalidation and fresh renderer proof. Final normal-cast GPU review passes again with the guard active and all45180 static HUD pixels unchanged.
 - PLAN248–250 now records original bag/Town grids, all334 persisted campaign ambient markers and private-camera Night Vision. Native behavior covers all108 source spell definitions; exact original indexed shading, original feedback and full current campaign remain open.
 - Committing source, required shared effects/catalog and all30 map assets; user Editor settings and unrelated local review files are excluded. Next source packages are ordinary scenery, L41 missiles, packed Druid variants and source-art corrections.
+
+## 2026-11-27 17:34 CST - checkpoint pushed; ordinary scenery integration
+
+- Pushed1212f6fb to origin/main, including33 LFS objects/127MB. All verified inventory, ambience and Night Vision source/content are on GitHub; unrelated local Editor settings remain uncommitted.
+- Integrated the frozen ordinary-scenery package and started compilation. Expected supported source census is3377 placements/99 exact types, with five translucent ELMARK placements explicit. Actual saved omissions are measured by the editor script rather than assumed from the earlier1537 registration gap.
+- Strengthened the new scenery proof with a positive public save result on every refresh pass, using the lesson from the caught ambient L72 failure. Import, fresh reopening and runtime collision/mounting checks are pending.
+
+## 2026-11-27 17:45 CST - ordinary scenery verified across all30 maps
+
+- Source/saved census:3377 supported placements/99 exact types;1532 actual missing actors restored. Five ELMARK834 placements remain explicit (L151x3,L152x2). Existing identities, edits/material overrides, pickup links, components/geometry and pre-existing sprite asset bytes survive two refresh passes and independent read-only reopening.
+- L73's first native map-save temp hash failed; immediate positive public save and second native/public saves recovered it. Fresh all30 reopening independently passed. Initial strict command wrapper correctly stopped on the logged error; the final persisted proof is the separate clean reopen log, not that initial process.
+- All119 WAD regressions pass; actual L30 door147 cycle/walking/light regression passes with new obstacles. L151 day/dusk PNGs reviewed at Saved/PlayableLoops-OrdinaryScenery-L151-{day,dusk}.png. Existing fixed unlit sprite shading and source palette/minification remain explicit presentation gaps.
+- Multiplayer note: existing CPU billboards still face the first view. Future multiplayer needs per-view orientation/directional frames without moving shared collision/actor transforms. Private Night Vision already has a separate two-view proof.
+- PLAN251 complete; committing/pushing matching source, scripts and required map/art assets before L41/packed-variant integration.

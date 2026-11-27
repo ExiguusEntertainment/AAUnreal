@@ -76,12 +76,27 @@ public:
     ANativeWadScenery();
     virtual void Tick(float DeltaSeconds) override;
     void Configure(ANativeWadLevel& Level, UStaticMesh* Plane, const FWadSceneryDefinition& InDefinition,
-        int32 InSector, int32 InThingId);
+        int32 InSector, int32 InThingId, bool bPreserveOverrides = false, int32 InSourceType = 0);
     uint16 GetSourceAngle() const;
     void SetSourceAngle(uint16 Angle);
     void SetPickup(ANativeWadPickup* Item);
+    UFUNCTION(BlueprintPure, Category = "WAD|Scenery")
     ANativeWadPickup* GetPickup() const;
+    UFUNCTION(BlueprintPure, Category = "WAD|Scenery")
     int32 GetSourceThingId() const { return ThingId; }
+    UFUNCTION(BlueprintPure, Category = "WAD|Scenery")
+    int32 GetSourceType() const { return SourceType; }
+    UFUNCTION(BlueprintPure, Category = "WAD|Scenery")
+    int32 GetSourceMountSector() const { return Sector; }
+    UFUNCTION(BlueprintPure, Category = "WAD|Scenery")
+    TArray<int32> GetSourceSceneryInfo() const
+    {
+        return {SourceType, ThingId, Definition.Radius, Definition.SourceAttributes, Definition.FrameTicks,
+            Definition.AnimationType, Definition.Frames.Num(), int32(Definition.bPassable), int32(Definition.bHanging),
+            int32(Definition.bRaised), int32(Definition.bStaysAboveLiquid)};
+    }
+    const FWadSceneryDefinition& GetSceneryDefinition() const { return Definition; }
+    int32 GetAnimationFrame() const { return CurrentFrame; }
     int32 GetMagicMapRadius() const { return Definition.Radius; }
     bool IsMagicMapInvisible() const { return (Definition.SourceAttributes & 0x0004) != 0; }
 
@@ -111,6 +126,21 @@ private:
 
     UPROPERTY()
     int32 ThingId = INDEX_NONE;
+
+    UPROPERTY()
+    int32 SourceType = 0;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> SpriteMaterialOverride;
+
+    UPROPERTY()
+    double MountOffset = 0.0;
+
+    UPROPERTY()
+    double LastMountedZ = 0.0;
+
+    UPROPERTY()
+    bool bHasMountedZ = false;
 
     double FrameTime = 0.0;
     int32 AnimationStep = 0;

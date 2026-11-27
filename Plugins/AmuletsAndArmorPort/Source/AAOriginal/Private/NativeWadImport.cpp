@@ -63,6 +63,7 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "NativeWadPlayer.h"
 #include "NativeWadPickupMetadata.h"
 #include "NativeWadScenery.h"
+#include "NativeWadScenerySource.h"
 #include "NativeWadTown.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/ConvexElem.h"
@@ -830,6 +831,7 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L25") && !InstallL25Script(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L20") && !InstallL20Script(Actor, Map, WadPath, Output))
             || ((bChurchQuestMap || bExtendedScenery) && !InstallScenery(World, Actor, Map, bExtendedScenery, Output))
+            || !InstallOrdinaryScenery(World, Actor, Map, Output, WadPath)
             || (bChurchQuestMap && !InstallChurchEncounters(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
             || (bRetreatMap && (!InstallRetreatScript(Actor, Map, WadPath, MapName, Output)
@@ -2022,6 +2024,117 @@ struct FAAWadNativeImport
         return Sector;
     }
 
+    bool InstallOrdinaryScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output, const FString& SourceWadPath)
+    {
+        Actor.InitializeTopology();
+        TMap<int32, FString> Resources;
+        FString Error;
+        if (!NativeWadScenerySource::LoadOrdinaryCatalog(Resources, Error)) { Output.Log(*Error); return false; }
+        struct FPlacement { int32 Id, Sector; ANativeWadScenery* Existing; };
+        TArray<FPlacement> Placements;
+        TMap<int32, FWadScenerySource> Sources;
+        TSet<int32> Unsupported;
+        // Preflight every source definition/sector/identity before creating an asset or actor.
+        for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+        {
+            const auto& Thing = Map.Things[Id];
+            const FString* Resource = Resources.Find(Thing.Type);
+            if (!Resource) { continue; }
+            if (!Sources.Contains(Thing.Type) && !Unsupported.Contains(Thing.Type))
+            {
+                FWadScenerySource Source;
+                if (!NativeWadScenerySource::Load(*Resource, Source, Error))
+                {
+                    Output.Logf(TEXT("Unsupported ordinary scenery exact type%d (%s): %s; left untouched."), Thing.Type, **Resource, *Error);
+                    Unsupported.Add(Thing.Type);
+                }
+                else { Sources.Add(Thing.Type, MoveTemp(Source)); }
+            }
+            if (Unsupported.Contains(Thing.Type)) { continue; }
+            int32 Sector = Actor.FindWadSector(FVector2D(Thing.X, Thing.Y));
+            if (Sector == INDEX_NONE) { Sector = FindSceneryWallSector(Map, FVector2D(Thing.X, Thing.Y)); }
+            if (!Map.Sectors.IsValidIndex(Sector))
+            {
+                bool bFallback = false;
+                if (!NativeWadScenerySource::ResolveMountSector(SourceWadPath, FIntPoint(Thing.X, Thing.Y), Sector, bFallback, Error)
+                    || !Map.Sectors.IsValidIndex(Sector))
+                { Output.Logf(TEXT("Ordinary scenery Thing%d type%d has no safe source mount: %s"), Id, Thing.Type, *Error); return false; }
+                Output.Logf(TEXT("Ordinary scenery Thing%d retains authored XY(%d,%d) outside native footprints using original %s sector%d."),
+                    Id, Thing.X, Thing.Y, bFallback ? TEXT("invalid-lookup setup fallback") : TEXT("BLOCKMAP lookup"), Sector);
+            }
+            const FName Tag(*FString::Printf(TEXT("WAD Scenery Thing %d"), Id));
+            ANativeWadScenery* Existing = nullptr;
+            for (TActorIterator<AActor> Other(&World); Other; ++Other)
+            {
+                auto* Prop = Cast<ANativeWadScenery>(*Other);
+                if (!Other->ActorHasTag(Tag) && !(Prop && Prop->GetSourceThingId() == Id)) { continue; }
+                if (!Prop || Existing || !Prop->ActorHasTag(Tag) || Prop->GetSourceThingId() != Id
+                    || (Prop->GetSourceType() != 0 && Prop->GetSourceType() != Thing.Type))
+                { Output.Logf(TEXT("Ambiguous existing ordinary scenery identity for Thing%d; no writes performed."), Id); return false; }
+                Existing = Prop;
+            }
+            Placements.Add({Id, Sector, Existing});
+        }
+        UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        if (!Plane) { return false; }
+        TMap<int32, FWadSceneryDefinition> Definitions;
+        for (const auto& [Type, Source] : Sources)
+        {
+            const FString& Resource = Resources.FindChecked(Type);
+            auto& Definition = Definitions.Add(Type);
+            Definition.Radius = Source.Radius; Definition.SourceAttributes = Source.Attributes;
+            Definition.bPassable = (Source.Attributes & (0x0001 | 0x2000)) != 0 || Source.Radius == 0;
+            Definition.bStaysAboveLiquid = (Source.MoveAttributes & 0x0100) != 0;
+            Definition.bHanging = (Source.MoveAttributes & 0x0200) != 0;
+            Definition.bRaised = (Source.MoveAttributes & 0x0400) != 0;
+            Definition.FrameTicks = Source.FrameTicks; Definition.AnimationType = Source.AnimationType;
+            TMap<int32, FWadSceneryView> Pictures;
+            for (const auto& Frame : Source.Frames)
+            {
+                auto& Imported = Definition.Frames.AddDefaulted_GetRef();
+                for (const int32 SignedId : Frame.Pictures)
+                {
+                    const int32 Id = FMath::Abs(SignedId);
+                    if (!Pictures.Contains(Id))
+                    {
+                        FWadSceneryView View;
+                        const FString Name = FString::Printf(TEXT("Scenery_%s_%d"), *Resource, Id);
+                        const FString ExistingPath = AssetRoot / TEXT("Things") / (TEXT("M_") + Name);
+                        // A scenery refresh must not rewrite an existing valid material/texture asset.
+                        if (FPackageName::DoesPackageExist(ExistingPath))
+                        { View.Material = LoadObject<UMaterialInterface>(nullptr, *(ExistingPath + TEXT(".M_") + Name)); }
+                        if (View.Material)
+                        {
+                            TArray<FColor> Pixels;
+                            if (!LoadWadSprite(Resource / Source.PictureFiles.FindChecked(Id), View.Size, Pixels)) { return false; }
+                        }
+                        else { View.Material = SpriteMaterial(Name, Resource / Source.PictureFiles.FindChecked(Id), &View.Size); }
+                        if (!View.Material || View.Size.X <= 0 || View.Size.Y <= 0) { return false; }
+                        Pictures.Add(Id, View);
+                    }
+                    auto& View = Imported.Views.Add_GetRef(Pictures.FindChecked(Id));
+                    View.bMirrored = SignedId < 0;
+                }
+            }
+        }
+        int32 Created = 0;
+        for (const auto& Placement : Placements)
+        {
+            const auto& Thing = Map.Things[Placement.Id];
+            const FString Tag = FString::Printf(TEXT("WAD Scenery Thing %d"), Placement.Id);
+            auto* Scenery = Placement.Existing ? Placement.Existing
+                : ImportSliceThing<ANativeWadScenery>(World, Map, Placement.Id, 0.0, *Tag);
+            if (!Scenery) { return false; }
+            Scenery->Modify();
+            Scenery->Configure(Actor, Plane, Definitions.FindChecked(Thing.Type), Placement.Sector, Placement.Id,
+                Placement.Existing != nullptr, Thing.Type);
+            Created += Placement.Existing == nullptr;
+        }
+        Output.Logf(TEXT("Ordinary scenery: %d exact source placements (%d created, %d retained); %d unsupported full types explicitly left untouched."),
+            Placements.Num(), Created, Placements.Num() - Created, Unsupported.Num());
+        return !bAssetError;
+    }
+
     bool InstallScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, bool bRetreat, FOutputDevice& Output)
     {
         // These are fixed scenery types from OBJS.FL. Pickup, encounter and script types have their own importers.
@@ -2056,8 +2169,11 @@ struct FAAWadNativeImport
             {
                 Resource = RetreatResources.Find(Thing.Type);
             }
-            if (!Resource)
+            if (!Resource || !FPaths::FileExists(FPaths::ProjectDir() /
+                FString::Printf(TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/INVDESC/DES%05d.TXT"), uint16(Thing.Type))))
             {
+                // Ordinary OBJS scenery is handled by the general source pass below.
+                // Preserve this legacy path only for its attached inventory-decoration actors.
                 continue;
             }
             const FVector2D Position(Thing.X, Thing.Y);
@@ -4258,6 +4374,27 @@ bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Ou
     if (!Updates.IsEmpty() && !SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     Output.Logf(TEXT("Refreshed source auxiliary metadata on %d/%d authored pickups in %s; retained %d non-map actors and all geometry."),
         Updates.Num(), Matched, *MapPackage, Unbound);
+    return true;
+}
+
+bool RefreshNativeWadOrdinaryScenery(const FString& MapPackage, const FString& SourceWadPath, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage))
+    { Output.Log(TEXT("Ordinary scenery refresh needs its loaded original MAP and an existing native map.")); return false; }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    { Output.Log(TEXT("No matching saved native editor topology for ordinary scenery refresh.")); return false; }
+    FAAWadNativeImport Import;
+    Import.AssetRoot = MapPackage + TEXT("_Assets");
+    if (!Import.InstallOrdinaryScenery(*World, *Level, *Map, Output, SourceWadPath)) { return false; }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    { if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension())) { return false; } }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Ordinary scenery-only refresh saved %s; all existing identities, edited actor transforms/materials and attached pickups retained. No level geometry or encounters rebuilt."), *MapPackage);
     return true;
 }
 

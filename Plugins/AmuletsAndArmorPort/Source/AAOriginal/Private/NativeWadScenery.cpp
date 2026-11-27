@@ -34,16 +34,37 @@ ANativeWadScenery::ANativeWadScenery()
 }
 
 void ANativeWadScenery::Configure(ANativeWadLevel& Level, UStaticMesh* Plane, const FWadSceneryDefinition& InDefinition,
-    int32 InSector, int32 InThingId)
+    int32 InSector, int32 InThingId, bool bPreserveOverrides, int32 InSourceType)
 {
+    const FTransform PreviousTransform = GetActorTransform();
+    const int32 OldFrame = FMath::Max(0, CurrentFrame);
+    const int32 OldAngle = FMath::Max(0, CurrentAngle);
+    if (bPreserveOverrides && Definition.Frames.IsValidIndex(OldFrame)
+        && Definition.Frames[OldFrame].Views.IsValidIndex(OldAngle))
+    {
+        UMaterialInterface* Material = Sprite->GetMaterial(0);
+        if (Material && Material != Definition.Frames[OldFrame].Views[OldAngle].Material)
+        { SpriteMaterialOverride = Material; }
+    }
+    else if (!bPreserveOverrides) { SpriteMaterialOverride = nullptr; }
     WadLevel = &Level;
     Definition = InDefinition;
     Sector = InSector;
     ThingId = InThingId;
+    SourceType = InSourceType;
+    MountOffset = 0.0;
+    bHasMountedZ = false;
 
     Sprite->SetStaticMesh(Plane);
     Sprite->SetWorldRotation(FRotator(0, 90, 90));
     InitializeMount();
+    if (bPreserveOverrides)
+    {
+        MountOffset = PreviousTransform.GetLocation().Z - GetActorLocation().Z;
+        SetActorTransform(PreviousTransform);
+        LastMountedZ = PreviousTransform.GetLocation().Z;
+        bHasMountedZ = true;
+    }
 }
 
 void ANativeWadScenery::BeginPlay()
@@ -78,6 +99,8 @@ ANativeWadPickup* ANativeWadScenery::GetPickup() const
 
 void ANativeWadScenery::InitializeMount()
 {
+    if (Definition.Frames.IsEmpty() || Definition.Frames[0].Views.IsEmpty()) { return; }
+    Sprite->SetVisibility((Definition.SourceAttributes & 0x0004) == 0, true);
     const double HalfHeight = Definition.Frames[0].Views[0].Size.Y * 0.5;
     Obstacle->SetBoxExtent(FVector(Definition.Radius, Definition.Radius, HalfHeight));
     Obstacle->SetRelativeLocation(FVector(0, 0, Definition.bHanging ? -HalfHeight : HalfHeight));
@@ -99,7 +122,12 @@ void ANativeWadScenery::UpdateElevation()
     const double Floor = Definition.bStaysAboveLiquid ? Heights.X : WadLevel->GetWalkingHeight(Sector);
     const double Mount = Definition.bHanging ? Heights.Y
         : FMath::Max(Floor, FMath::Min(Floor + (Definition.bRaised ? 32.0 : 0.0), Heights.Y - Height));
-    const double WorldZ = WadLevel->GetActorLocation().Z + Mount;
+    // Retain explicit actor Z edits while continuing to track the moving source surface.
+    if (bHasMountedZ && !FMath::IsNearlyEqual(GetActorLocation().Z, LastMountedZ))
+    { MountOffset += GetActorLocation().Z - LastMountedZ; }
+    const double WorldZ = WadLevel->GetActorLocation().Z + Mount + MountOffset;
+    LastMountedZ = WorldZ;
+    bHasMountedZ = true;
     if (!FMath::IsNearlyEqual(GetActorLocation().Z, WorldZ))
     {
         FVector Location = GetActorLocation();
@@ -112,7 +140,7 @@ void ANativeWadScenery::SetView(int32 Frame, int32 Angle)
 {
     const FWadSceneryView& View = Definition.Frames[Frame].Views[Angle];
     const double Width = View.bMirrored ? -View.Size.X : View.Size.X;
-    Sprite->SetMaterial(0, View.Material);
+    Sprite->SetMaterial(0, SpriteMaterialOverride ? SpriteMaterialOverride.Get() : View.Material.Get());
     Sprite->SetRelativeScale3D(FVector(Width * 0.01, View.Size.Y * 0.01, 1.0));
     const double HalfHeight = View.Size.Y * 0.5;
     Sprite->SetRelativeLocation(FVector(0, 0, Definition.bHanging ? -HalfHeight : HalfHeight));
