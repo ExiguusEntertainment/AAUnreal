@@ -33,6 +33,7 @@
 #include "NativeWadOptions.h"
 #include "WadSurfaceTextures.h"
 #include "Engine/Texture2D.h"
+#include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
@@ -1995,6 +1996,19 @@ namespace
         int32 NotesScrollBefore = 0;
         bool bOptionsReview = false;
         bool bOptionsReload = false;
+        bool bJournalPickupReview = false;
+        bool bJournalPickupReload = false;
+        TWeakObjectPtr<ANativeWadPickup> JournalFixturePickup;
+        TArray<int32> JournalItemsBefore;
+        int32 JournalHandBefore = 0;
+        bool bJournalGetValidated = false;
+        bool bWardZeroReview = false;
+        bool bWardZeroReload = false;
+        bool bWardExpiredZeroReload = false;
+        bool bWardFixtureQueued = false;
+        FVector WardWalkStart = FVector::ZeroVector;
+        int32 WardManaBefore = 0;
+        TArray<int32> WardItemsBefore;
         bool bItemOwnersReview = false;
         bool bItemOwnersReload = false;
         bool bItemOwnersCompleteReload = false;
@@ -2349,7 +2363,7 @@ namespace
         {
             const TActorIterator<ANativeWadLevel> Level(&Current);
             const FVector2D Position(Player.GetActorLocation());
-            if (!Level || Player.GetHealth() <= 0 || NextPoint >= UE_ARRAY_COUNT(L22TownRoute))
+            if (!Level || Player.IsDefeated() || NextPoint >= UE_ARRAY_COUNT(L22TownRoute))
             {
                 return Finish(&Player, TEXT("L22 lost its native level or living player"));
             }
@@ -4821,7 +4835,7 @@ namespace
                     Enemy = *Candidate;
                 }
             }
-            if (!Enemy || Count != (bRanged ? 31 : 28) || Player.GetHealth() <= 0)
+            if (!Enemy || Count != (bRanged ? 31 : 28) || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the authored barbarian encounter placements are incomplete"));
             }
@@ -6006,7 +6020,7 @@ namespace
         bool TickUndead(UWorld& Current, ANativeWadPlayer& Player)
         {
             const auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
-            if (!Travel || Player.GetHealth() <= 0)
+            if (!Travel || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the Exiguus review lost the player or campaign"));
             }
@@ -7066,7 +7080,7 @@ namespace
                 HeldKey.Reset();
             }
             const auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
-            if (!Travel || Player.GetHealth() <= 0)
+            if (!Travel || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the campaign replay lost the player or travel state"));
             }
@@ -7615,7 +7629,7 @@ namespace
         bool TickTemple(UWorld& Current, ANativeWadPlayer& Player)
         {
             const auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
-            if (!Travel || Player.GetHealth() <= 0)
+            if (!Travel || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the Temple of Astarte review lost the player or campaign"));
             }
@@ -7714,7 +7728,7 @@ namespace
                 return TickElmoreOrbTown(Player, Travel);
             }
             const TActorIterator<ANativeWadLevel> Level(&Current);
-            if (!Level || Player.GetHealth() <= 0 || Travel.Quest.Active != 2
+            if (!Level || Player.IsDefeated() || Travel.Quest.Active != 2
                 || !Travel.JournalPages.Contains(423) || !Travel.JournalPages.Contains(424))
             {
                 return Finish(&Player, TEXT("the Elmore finale lost the player, quest or journal"));
@@ -7833,7 +7847,7 @@ namespace
                 return TickAndrewTown(Player);
             }
             const TActorIterator<ANativeWadLevel> Level(&Current);
-            if (!Level || Player.GetHealth() <= 0
+            if (!Level || Player.IsDefeated()
                 || (RiverProgressTime > 0.0 && FPlatformTime::Seconds() - RiverProgressTime > 25.0))
             {
                 return Finish(&Player, TEXT("the L25 review lost its level or stopped making progress"));
@@ -8752,7 +8766,7 @@ namespace
         bool TickL301(UWorld& Current, ANativeWadPlayer& Player)
         {
             const TActorIterator<ANativeWadGuardian> Guardian(&Current);
-            if (!Guardian || Player.GetHealth() <= 0)
+            if (!Guardian || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the L301 encounter is missing or the player was defeated"));
             }
@@ -8850,7 +8864,7 @@ namespace
             constexpr double RiverSurface = 32.0;
             constexpr const TCHAR* RiverSlot = TEXT("NativeWadRiverReview");
             const TActorIterator<ANativeWadLevel> Level(&Current);
-            if (!Level || Player.GetHealth() <= 0)
+            if (!Level || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the river review lost its native level or player"));
             }
@@ -9131,7 +9145,7 @@ namespace
         bool TickRavine(UWorld& Current, ANativeWadPlayer& Player)
         {
             const TActorIterator<ANativeWadLevel> Level(&Current);
-            if (!Level || Player.GetHealth() <= 0)
+            if (!Level || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the ravine review lost its native level or player"));
             }
@@ -9668,7 +9682,7 @@ namespace
             auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
             const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
             const FWadInventoryDetails* Ring = Catalog ? Catalog->ItemDetails.Find(WaterWalkRing) : nullptr;
-            if (!Travel || !Ring || Ring->ValueCopper < CoinValueCopper(Silver) || Player.GetHealth() <= 0)
+            if (!Travel || !Ring || Ring->ValueCopper < CoinValueCopper(Silver) || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the economy review needs the authored ring and a living character"));
             }
@@ -10616,7 +10630,7 @@ namespace
             const TActorIterator<ANativeWadLevel> Level(&Current);
             APlayerController* Controller = Player.GetController<APlayerController>();
             ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
-            if (!Level || !Hud || !Hud->HasClassicHud() || Player.GetHealth() <= 0)
+            if (!Level || !Hud || !Hud->HasClassicHud() || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the authored quiver review needs L20 and its classic HUD"));
             }
@@ -11592,6 +11606,376 @@ namespace
             return true;
         }
 
+        bool TickJournalPickup(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            auto* Controller = Player.GetController<APlayerController>();
+            auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            const auto* Catalog = UNativeWadHudData::LoadCatalog();
+            UTexture2D* Picture = Catalog ? Catalog->JournalPageCatalog.FindRef(407).Get() : nullptr;
+            if (!Travel || !Hud || !Hud->HasClassicHud() || !Picture || FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            { return Finish(&Player, TEXT("journal GET review needs saved source page407, the classic HUD and a rendered viewport")); }
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            // Controlled metadata fixture only: the acquired page is still the normal E/GET path.
+            for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+            {
+                Enemy->SetActorTickEnabled(false);
+                Enemy->GetCharacterMovement()->StopMovementImmediately();
+                Enemy->GetCharacterMovement()->DisableMovement();
+            }
+            if (bJournalPickupReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (Player.IsDefeated()) { return Finish(&Player, TEXT("the controlled journal fixture was defeated")); }
+            const auto Click = [&](FVector2D Point)
+            {
+                int32 Width, Height;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale);
+            };
+            const auto PageMatches = [&]()
+            {
+                const auto* Saved = Travel->JournalPages.Find(407);
+                return Travel->JournalPages.Num() == 1 && Saved
+                    && Saved->ToSoftObjectPath() == FSoftObjectPath(Picture)
+                    && Saved->ToSoftObjectPath().ToString().StartsWith(TEXT("/Game/WadInterface/Journal/"))
+                    && Saved->LoadSynchronous() == Picture && !Player.GetItemCount(373);
+            };
+            const auto Capture = [&](const TCHAR* Name)
+            {
+                bool bSaved = false;
+                if (!CaptureTownFrame(Name, bSaved)) { return 0; }
+                return bSaved ? 1 : -1;
+            };
+            const auto SpawnAndUse = [&]()
+            {
+                const FWadInventoryDetails* Rules = Catalog->ItemDetails.Find(373);
+                UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+                UMaterialInterface* Material = Rules ? Rules->WorldMaterial.LoadSynchronous() : nullptr;
+                if (!Rules || !Plane || !Material || Rules->SpriteSize.X <= 0 || Rules->SpriteSize.Y <= 0) { return false; }
+                const FVector Start = Player.GetPawnViewLocation();
+                const FVector Position = Start + Controller->GetControlRotation().Vector() * 30.0;
+                FHitResult Obstruction;
+                if (Current.LineTraceSingleByChannel(Obstruction, Start, Position, ECC_Visibility,
+                    FCollisionQueryParams(SCENE_QUERY_STAT(JournalPickupReview), true, &Player))) { return false; }
+                FActorSpawnParameters Params;
+                Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+                auto* Pickup = Current.SpawnActor<ANativeWadPickup>(Position, FRotator::ZeroRotator, Params);
+                if (!Pickup) { return false; }
+                Pickup->ConfigureAuthored(Plane, Material, 373, 0, Rules->SpriteSize, 0, true, nullptr);
+                if (!Pickup->SetAccessoryData(407)) { Pickup->Destroy(); return false; }
+                JournalFixturePickup = Pickup;
+                StageTime = Current.GetTimeSeconds();
+                bJournalGetValidated = false;
+                Press(Player, EKeys::E);
+                return true;
+            };
+            if (NextPoint == 0)
+            {
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (Player.IsInventoryOpen()) { Click({310, 9}); return true; }
+                if (bJournalPickupReload)
+                {
+                    if (!PageMatches()) { return Finish(&Player, TEXT("page407, its shared saved picture path, or its GET-only identity did not survive restart")); }
+                    Click({47, 189});
+                    NextPoint = 20;
+                    return true;
+                }
+                if (!Travel->JournalPages.IsEmpty() || Player.GetItemCount(373))
+                { return Finish(&Player, TEXT("the journal pickup review requires a fresh controlled L30 profile without known pages")); }
+                JournalItemsBefore = Player.GetCarriedItems();
+                JournalHandBefore = Player.GetMouseHandItem();
+                UE_LOG(LogTemp, Display, TEXT("Starting controlled source373/AccData407 world-GET fixture; no campaign acquisition claim."));
+                if (!SpawnAndUse()) { return Finish(&Player, TEXT("could not place the controlled source373/407 pickup with original world art in a clear normal-E reach")); }
+                NextPoint = 1;
+                return true;
+            }
+            if (NextPoint == 1 || NextPoint == 4)
+            {
+                if (Hud->GetJournalPageId() != 407)
+                {
+                    if (Current.GetTimeSeconds() - StageTime < 2.0) { return true; }
+                    return Finish(&Player, TEXT("normal E did not acquire and automatically open source journal page407"));
+                }
+                const FString Expected = NextPoint == 1 ? TEXT("You found a journal entry") : TEXT("You already had a copy of this note.");
+                if (!PageMatches() || JournalFixturePickup.IsValid()
+                    || Player.GetCarriedItems() != JournalItemsBefore || Player.GetMouseHandItem() != JournalHandBefore
+                    || (!bJournalGetValidated && Player.GetInteractionMessage() != Expected))
+                { return Finish(&Player, TEXT("journal GET failed consumed-actor, exact source page, duplicate feedback, or unchanged hand/bag assertions")); }
+                bJournalGetValidated = true;
+                if (NextPoint == 1)
+                {
+                    const int32 Result = Capture(TEXT("source407-get"));
+                    if (!Result) { return true; }
+                    if (Result < 0) { return Finish(&Player, TEXT("could not capture the acquired source407 bitmap")); }
+                }
+                Click({310, 9});
+                NextPoint = NextPoint == 1 ? 2 : 5;
+                return true;
+            }
+            if (NextPoint == 2)
+            {
+                if (Player.IsInventoryOpen()) { return Finish(&Player, TEXT("normal journal close did not return to play before the duplicate GET")); }
+                if (!SpawnAndUse()) { return Finish(&Player, TEXT("could not place the duplicate407 GET fixture")); }
+                NextPoint = 4;
+                return true;
+            }
+            if (NextPoint == 5)
+            {
+                if (Player.IsInventoryOpen() || !PageMatches())
+                { return Finish(&Player, TEXT("closing the duplicate page did not preserve exactly one source407 page")); }
+                NextPoint = 6;
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                return true;
+            }
+            if (NextPoint == 6 && Current.GetMapName().EndsWith(TEXT("L301")))
+            {
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!PageMatches() || Player.GetCarriedItems() != JournalItemsBefore || Player.GetMouseHandItem() != JournalHandBefore
+                    || !Player.SaveWadCheckpoint(TEXT("NativeWadJournalPickupReview")))
+                { return Finish(&Player, TEXT("the acquired source407 picture, unchanged bag/hand, or journal checkpoint failed after normal travel")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified controlled normal-E source373/407 GET, exact bitmap auto-open, consumed duplicate without duplicate page, and L301 save for a fresh-process review."));
+                return Finish(&Player);
+            }
+            if (NextPoint == 20)
+            {
+                if (!PageMatches() || Hud->GetJournalPageId() != 407 || !Player.IsInventoryOpen())
+                { return Finish(&Player, TEXT("the normal Journal button did not reopen the restored original page407")); }
+                const int32 Result = Capture(TEXT("source407-reload"));
+                if (!Result) { return true; }
+                if (Result < 0) { return Finish(&Player, TEXT("could not capture the restored source407 bitmap")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified controlled source407 identity and shared soft picture path after actual process restart; the normal Journal button renders its original bitmap."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickWardZero(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            auto* Controller = Player.GetController<APlayerController>();
+            auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Controller || !Hud || !Hud->HasClassicHud() || FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            { return Finish(&Player, TEXT("the controlled Death Ward process checks require the rendered classic HUD")); }
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            // This mode is an explicit isolated fixture, not campaign completion.
+            // Suppress NPC combat only while its controlled review is active.
+            for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+            {
+                Enemy->SetActorTickEnabled(false);
+                Enemy->GetCharacterMovement()->StopMovementImmediately();
+                Enemy->GetCharacterMovement()->DisableMovement();
+            }
+            if ((bWardZeroReload || bWardExpiredZeroReload) && !Player.HasRestoredWadCheckpoint()) { return true; }
+            const auto ProfileMatches = [&]
+            {
+                if (Player.GetCharacterClass() != MageClass || Player.GetCharacterLevel() != 100
+                    || Player.GetMaxHealth() != 1700 || Player.GetMaxMana() != 30000
+                    || Player.GetFood() != 0 || Player.GetWater() != 0 || Player.GetPoisonLevel() != 0
+                    || Player.GetCarriedItems().Num() != 9 || Player.GetReadyItem() || Player.GetMouseHandItem()) { return false; }
+                for (int32 Rune = 1; Rune <= 9; ++Rune) { if (!Player.HasRune(Rune)) { return false; } }
+                for (const int32 Attribute : Player.GetAttributes()) { if (Attribute != 100) { return false; } }
+                return true;
+            };
+            const auto AliveZeroMatches = [&]
+            {
+                return ProfileMatches() && Player.GetHealth() == 0 && !Player.IsDefeated()
+                    && Player.GetMana() == 29000 && Player.GetSuccessfulCasts() == 1;
+            };
+            const auto Capture = [&](const TCHAR* Name)
+            {
+                bool bSaved = false;
+                if (!CaptureTownFrame(Name, bSaved)) { return 0; }
+                return bSaved ? 1 : -1;
+            };
+            if (NextPoint == 0)
+            {
+                if (!bWardZeroReload && !bWardExpiredZeroReload && !Current.URL.HasOption(TEXT("WadWardFixture")))
+                {
+                    if (!bWardFixtureQueued)
+                    {
+                        bWardFixtureQueued = true;
+                        UE_LOG(LogTemp, Display, TEXT("Starting CONTROLLED Death Ward fixture (not campaign progress): created Mage, nine owned runes, HP400, native validated MaxHP1700, food/water0, mana30000."));
+                        UGameplayStatics::OpenLevel(&Player, FName(TEXT("/Game/Maps/L30")), true,
+                            TEXT("WadWardFixture=1?WadClass=2?WadCreated=1?WadRuneRules=1?WadLevel=100")
+                            TEXT("?WadAttributes=100,100,100,100,100,100?WadMaxHealth=1700?WadHealth=400?WadDefeated=0")
+                            TEXT("?WadMaxMana=30000?WadMana=30000?WadFood=0?WadWater=0?WadPoison=0?WadReady=-1")
+                            TEXT("?WadItems=300,301,302,303,304,305,306,307,308?WadOwnedEffects=1"));
+                    }
+                    return true;
+                }
+                if (bWardZeroReload || bWardExpiredZeroReload)
+                {
+                    if (!AliveZeroMatches()) { return Finish(&Player, TEXT("fresh process lost the actual zero-health alive fixture or original mana/runes")); }
+                    NextPoint = bWardExpiredZeroReload ? 40 : 20;
+                    return true;
+                }
+                if (!ProfileMatches() || Player.GetHealth() != 400 || Player.IsDefeated()
+                    || Player.GetMana() != 30000 || Player.GetSuccessfulCasts() || Player.GetOwnedEffectCount())
+                { return Finish(&Player, TEXT("the controlled fresh Mage fixture was not created exactly as declared")); }
+                NextPoint = 1;
+                return true;
+            }
+            switch (NextPoint)
+            {
+            case 1:
+                // Queue one ordinary key at a time; assertions run on later ticks.
+                if (Player.GetRunes().IsEmpty()) { Press(Player, EKeys::NumPadNine); }
+                else if (Player.GetRunes() == TEXT("9")) { Press(Player, EKeys::NumPadTwo); }
+                else if (Player.GetRunes() == TEXT("92")) { Press(Player, EKeys::NumPadFour); }
+                else if (Player.GetRunes() == TEXT("924"))
+                { Press(Player, EKeys::RightMouseButton); StageTime = Current.GetTimeSeconds(); NextPoint = 2; }
+                else { return Finish(&Player, TEXT("ordinary keypad input produced the wrong Death Ward rune sequence")); }
+                return true;
+            case 2:
+                if (Player.GetSuccessfulCasts() == 0 && Current.GetTimeSeconds() - StageTime < 2.0) { return true; }
+                if (!ProfileMatches() || Player.IsDefeated() || Player.GetHealth() != 400 || Player.GetMana() != 29000
+                    || Player.GetSuccessfulCasts() != 1 || Player.GetStatusPower(DeathWardStatus) != 1
+                    || Player.GetOwnedEffectCount() != 1 || Player.GetOwnedEffectRemaining(TEXT("spell:12")) <= 0.0)
+                { return Finish(&Player, TEXT("normal924/RightMouse did not cast source12 with its exact owner/cost")); }
+                WardManaBefore = Player.GetMana();
+                Player.ReceiveEncounterHit(400); // Explicit exact-lethal fixture hit, not campaign combat evidence.
+                NextPoint = 3;
+                return true;
+            case 3:
+                if (!AliveZeroMatches() || Player.GetMana() != WardManaBefore || Player.GetStatusPower(DeathWardStatus) != 1)
+                { return Finish(&Player, TEXT("the exact-lethal fixture hit failed to leave HP0 alive without an extra mana charge")); }
+                if (const int32 Result = Capture(TEXT("l30-alive-zero")); Result != 0)
+                {
+                    if (Result < 0) { return Finish(&Player, TEXT("could not capture true zero-health alive state in L30")); }
+                    NextPoint = 4;
+                }
+                return true;
+            case 4:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!AliveZeroMatches() || Player.GetOwnedEffectRemaining(TEXT("spell:12")) <= 5.0
+                    || !Player.SaveWadCheckpoint(TEXT("NativeWadWardL30ZeroReview")))
+                { return Finish(&Player, TEXT("could not save active living-zero state in L30 before normal travel")); }
+                NextPoint = 5;
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                return true;
+            case 5:
+                if (!Current.GetMapName().EndsWith(TEXT("L301")) || !Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!AliveZeroMatches() || Player.GetOwnedEffectCount() != 1 || Player.GetStatusPower(DeathWardStatus) != 1
+                    || Player.GetOwnedEffectRemaining(TEXT("spell:12")) <= 5.0
+                    || !Player.SaveWadCheckpoint(TEXT("NativeWadWardActiveZeroReview")))
+                { return Finish(&Player, TEXT("normal L30 to L301 travel lost zero-health liveness, source owner, or save eligibility")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified CONTROLLED WardZero: normal source12 rune cast, exact-lethal 400 to 0 with no mana surcharge, L30 save and normal L301 travel/save while genuinely alive at 0 HP. Ready for separate-process WardZeroReload."));
+                return Finish(&Player);
+            case 20:
+                if (Player.GetOwnedEffectCount() != 1 || Player.GetStatusPower(DeathWardStatus) != 1
+                    || Player.GetOwnedEffectRemaining(TEXT("spell:12")) <= 0.0)
+                { return Finish(&Player, TEXT("fresh process failed to restore active source Ward at actual zero health")); }
+                NextPoint = 21;
+                return true;
+            case 21:
+                if (!AliveZeroMatches()) { return Finish(&Player, TEXT("restored active zero-health state changed during rendering")); }
+                if (const int32 Result = Capture(TEXT("active-zero-reload")); Result != 0)
+                {
+                    if (Result < 0) { return Finish(&Player, TEXT("could not capture fresh-process zero-health alive state")); }
+                    NextPoint = 22;
+                }
+                return true;
+            case 22:
+                {
+                    const TActorIterator<ANativeWadLevel> Level(&Current);
+                    if (!Level || !Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                    bool bClear = false;
+                    for (const FVector Direction : {FVector(1, 0, 0), FVector(-1, 0, 0), FVector(0, 1, 0), FVector(0, -1, 0)})
+                    {
+                        const FVector Candidate = Player.GetActorLocation() + Direction * 12.0;
+                        const FCollisionQueryParams Query(SCENE_QUERY_STAT(WardZeroWalkReview), false, &Player);
+                        if (!SafeCombatGround(**Level, Player, Candidate)
+                            || Current.SweepTestByChannel(Player.GetActorLocation(), Candidate, Player.GetActorQuat(), ECC_Pawn,
+                                FCollisionShape::MakeCapsule(Player.CapsuleRadius, Player.CapsuleHalfHeight), Query)) { continue; }
+                        Controller->SetControlRotation(Direction.Rotation());
+                        bClear = true;
+                        break;
+                    }
+                    if (!bClear) { return Finish(&Player, TEXT("the controlled zero-health walk could not find a clear twelve-unit route")); }
+                    WardWalkStart = Player.GetActorLocation();
+                    StageTime = Current.GetTimeSeconds();
+                    Walk(Player);
+                    NextPoint = 23;
+                }
+                return true;
+            case 23:
+                if (!AliveZeroMatches()) { return Finish(&Player, TEXT("zero-health normal movement changed liveness or stats")); }
+                if (FVector::DistSquared2D(Player.GetActorLocation(), WardWalkStart) >= 16.0)
+                {
+                    Stop(Player);
+                    NextPoint = 24;
+                    return true;
+                }
+                if (Current.GetTimeSeconds() - StageTime > 2.0)
+                { return Finish(&Player, TEXT("normal held W input could not move the genuinely alive zero-health player")); }
+                return true;
+            case 24:
+                if (!AliveZeroMatches()) { return Finish(&Player, TEXT("the natural Ward wait changed zero-health liveness, food/water or mana")); }
+                if (Player.GetOwnedEffectRemaining(TEXT("spell:12")) > 0.0) { return true; }
+                if (Player.GetOwnedEffectCount() != 0 || Player.GetStatusPower(DeathWardStatus) != 0)
+                { return Finish(&Player, TEXT("natural source Ward expiry left an owner or protection behind")); }
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadWardExpiredZeroReview")))
+                { return Finish(&Player, TEXT("the expired but still living zero-health state could not be saved")); }
+                NextPoint = 25;
+                return true;
+            case 25:
+                if (!AliveZeroMatches() || Player.GetOwnedEffectCount())
+                { return Finish(&Player, TEXT("expired living-zero state changed before its rendered proof")); }
+                if (const int32 Result = Capture(TEXT("expired-alive-zero")); Result != 0)
+                {
+                    if (Result < 0) { return Finish(&Player, TEXT("could not capture expired-but-living zero-health state")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified CONTROLLED WardZeroReload in a separate process: restored actual 0 HP/alive/source12, rendered alive 0 HP, moved with ordinary W input, waited real game time for natural expiry with food/water0, stayed alive at 0 HP without Ward, and saved for another restart."));
+                    return Finish(&Player);
+                }
+                return true;
+            case 40:
+                if (!AliveZeroMatches() || Player.GetOwnedEffectCount() || Player.GetStatusPower(DeathWardStatus))
+                { return Finish(&Player, TEXT("another process failed to restore expired living-zero state without resurrecting Ward")); }
+                WardManaBefore = Player.GetMana();
+                WardItemsBefore = Player.GetCarriedItems();
+                Player.ReceiveEncounterHit(1);
+                NextPoint = 41;
+                return true;
+            case 41:
+                if (!Player.IsDefeated() || Player.GetHealth() != 0 || Player.GetMana() != WardManaBefore
+                    || Player.GetCharacterMovement()->MovementMode != MOVE_None)
+                { return Finish(&Player, TEXT("the later unwarded raw hit did not cause true defeat")); }
+                Player.ReceiveEncounterHit(1);
+                NextPoint = 42;
+                return true;
+            case 42:
+                if (!Player.IsDefeated() || Player.GetHealth() || Player.GetMana() != WardManaBefore
+                    || Player.GetCarriedItems() != WardItemsBefore || Player.GetOwnedEffectCount())
+                { return Finish(&Player, TEXT("a second hit repeated the defeat/drop state or changed protected rune ownership")); }
+                if (const int32 Result = Capture(TEXT("defeated")); Result != 0)
+                {
+                    if (Result < 0) { return Finish(&Player, TEXT("could not capture true defeat after later damage")); }
+                    Press(Player, EKeys::SpaceBar);
+                    StageTime = Current.GetTimeSeconds();
+                    NextPoint = 43;
+                }
+                return true;
+            case 43:
+                if (Player.IsDefeated() && Current.GetTimeSeconds() - StageTime < 2.0) { return true; }
+                if (Player.IsDefeated() || Player.GetHealth() != Player.GetMaxHealth() || Player.GetMana() != Player.GetMaxMana() / 2
+                    || Player.GetPoisonLevel() || Player.GetOwnedEffectCount() || Player.GetCarriedItems() != WardItemsBefore)
+                { return Finish(&Player, TEXT("normal queued Space failed to revive true defeat with established full-health/half-mana stats")); }
+                NextPoint = 44;
+                return true;
+            case 44:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (const int32 Result = Capture(TEXT("revived")); Result != 0)
+                {
+                    if (Result < 0) { return Finish(&Player, TEXT("could not capture normal Space revival")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified CONTROLLED WardExpiredZeroReload in another process: true0HP remains alive after expiry/restart, next raw 1 causes one defeat, repeated hit cannot repeat drop state, ordinary Space revives with native full HP/half mana. This fixture is not campaign completion evidence."));
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            return true;
+        }
+
         bool TickItemOwners(UWorld& Current, ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
@@ -12524,7 +12908,7 @@ namespace
             {
                 if (Enemy->GetEncounterName() == TEXT("Elymas")) { Boss = *Enemy; break; }
             }
-            if (!Level || !Boss || Player.GetHealth() <= 0) { return Finish(&Player, TEXT("the Elymas presentation fixture lost its encounter")); }
+            if (!Level || !Boss || Player.IsDefeated()) { return Finish(&Player, TEXT("the Elymas presentation fixture lost its encounter")); }
             switch (NextPoint)
             {
             case 0:
@@ -12756,7 +13140,7 @@ namespace
                 }
                 if (bUndeadWizardGeneratorReview && NextPoint == 2)
                 {
-                    if (Player.GetHealth() <= 0) { return Finish(&Player, TEXT("the occupied-spawn fixture lost its player")); }
+                    if (Player.IsDefeated()) { return Finish(&Player, TEXT("the occupied-spawn fixture lost its player")); }
                     if (State.CreatureGenerators.FindChecked(0).Released == 0) { return true; }
                     if (State.CreatureGenerators.FindChecked(0).Released != 1) { return Finish(&Player, TEXT("the cleared spawn released more than one wizard")); }
                     bool bReleased = false;
@@ -13072,7 +13456,7 @@ namespace
             const int32 Cost = bFireballWandReview ? 800 : DisintegrationManaCost;
             const TActorIterator<ANativeWadLevel> Level(&Current);
             const TActorIterator<ANativeWadGuardian> Guardian(&Current);
-            if (!Level || !Guardian || Player.GetHealth() <= 0)
+            if (!Level || !Guardian || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the wand review lost its player or target"));
             }
@@ -13165,7 +13549,7 @@ namespace
             constexpr const TCHAR* TimedSlot = TEXT("NativeWadTimedItemsReview");
             const TActorIterator<ANativeWadLevel> Level(&Current);
             const TActorIterator<ANativeWadGuardian> Guardian(&Current);
-            if (!Level || !Guardian || Player.GetHealth() <= 0)
+            if (!Level || !Guardian || Player.IsDefeated())
             {
                 return Finish(&Player, TEXT("the combat review lost its player or target"));
             }
@@ -13298,6 +13682,8 @@ namespace
             {
                 return true;
             }
+            if (bJournalPickupReview) { return TickJournalPickup(*Current, *Player); }
+            if (bWardZeroReview) { return TickWardZero(*Current, *Player); }
             if (bEconomyReview)
             {
                 return TickEconomy(*Current, *Player);
@@ -13499,7 +13885,7 @@ namespace
                         || AttributesBeforeTravel.Num() != Player->GetAttributes().Num()
                         || FMemory::Memcmp(AttributesBeforeTravel.GetData(), Player->GetAttributes().GetData(),
                             AttributesBeforeTravel.Num() * sizeof(int32)) != 0
-                        || Player->GetHealth() <= 0))
+                        || Player->IsDefeated()))
                     {
                         return Finish(Player, TEXT("the gameplay state did not carry into L301"));
                     }
@@ -13846,6 +14232,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bPoisonCure = Mode == TEXT("poisoncures") || Mode == TEXT("poisoncuresreload") || Mode == TEXT("poisoncurescompletereload");
     const bool bNotes = Mode == TEXT("notes") || Mode == TEXT("notesreload");
     const bool bOptions = Mode == TEXT("options") || Mode == TEXT("optionsreload");
+    const bool bJournalPickup = Mode == TEXT("journalpickup") || Mode == TEXT("journalpickupreload");
+    const bool bWardZero = Mode == TEXT("wardzero") || Mode == TEXT("wardzeroreload") || Mode == TEXT("wardexpiredzeroreload");
     const bool bItemOwners = Mode == TEXT("itemowners") || Mode == TEXT("itemownersreload") || Mode == TEXT("itemownerscompletereload");
     const bool bRetainedHand = Mode == TEXT("retainedhand") || Mode == TEXT("retainedhandreload");
     const bool bJewelry = Mode == TEXT("wornjewelry") || Mode == TEXT("wornjewelryreload");
@@ -13886,6 +14274,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : bEconomyReload ? TEXT("L301")
         : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
         : bRetainedHand ? (Mode == TEXT("retainedhand") ? TEXT("L30") : TEXT("L301"))
+        : bJournalPickup ? (Mode == TEXT("journalpickup") ? TEXT("L30") : TEXT("L301"))
+        : bWardZero ? (Mode == TEXT("wardzero") ? TEXT("L30") : TEXT("L301"))
         : bItemOwners ? (Mode == TEXT("itemowners") ? TEXT("L30") : TEXT("L301"))
         : bNotes ? (Mode == TEXT("notesreload") ? TEXT("L301") : TEXT("L30"))
         : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bPoisonCure || bOptions || bJewelry || bLook || bRevive || bMusic || bCharacter
@@ -13928,6 +14318,11 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bOptionsReload = Mode == TEXT("optionsreload");
     Review->bRetainedHandReview = bRetainedHand;
     Review->bRetainedHandReload = Mode == TEXT("retainedhandreload");
+    Review->bJournalPickupReview = bJournalPickup;
+    Review->bJournalPickupReload = Mode == TEXT("journalpickupreload");
+    Review->bWardZeroReview = bWardZero;
+    Review->bWardZeroReload = Mode == TEXT("wardzeroreload");
+    Review->bWardExpiredZeroReload = Mode == TEXT("wardexpiredzeroreload");
     Review->bItemOwnersReview = bItemOwners;
     Review->bItemOwnersReload = Mode == TEXT("itemownersreload");
     Review->bItemOwnersCompleteReload = Mode == TEXT("itemownerscompletereload");

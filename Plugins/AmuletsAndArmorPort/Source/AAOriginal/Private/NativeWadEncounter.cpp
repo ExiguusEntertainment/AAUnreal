@@ -6,6 +6,9 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "Engine/GameInstance.h"
+#include "NativeWadCheckpoint.h"
+#include "NativeWadPickupMetadata.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -377,7 +380,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         Sprite->SetMaterial(0, Pose);
     }
-    const bool bVisible = (Enemy || (Player && Player->GetHealth() > 0)) && CanSeeTarget(*Target);
+    const bool bVisible = (Enemy || (Player && !Player->IsDefeated())) && CanSeeTarget(*Target);
     // INavDipper first sinks while scanning, then fully emerges before guard navigation.
     const bool bDipperReady = !Profile.bDipper || TickDipper(DeltaSeconds, bHasTarget);
     bool bMeleeHeight = FMath::Abs(Offset.Z) <= 26.0;
@@ -402,7 +405,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
             ++MeleeHits;
             if (Enemy) { Enemy->TakeHit(Profile.MeleeDamage, nullptr, Profile.MeleeDamageMask); }
             else { Player->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask); }
-            if (!Enemy && Player->GetHealth() <= 0)
+            if (!Enemy && Player->IsDefeated())
             {
                 UE_LOG(LogTemp, Display, TEXT("%s defeated the player with a melee hit."), *GetActorNameOrLabel());
             }
@@ -465,7 +468,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
             }
             for (TActorIterator<ANativeWadPlayer> Victim(GetWorld()); Victim; ++Victim)
             {
-                if (Victim->GetHealth() > 0 && IsWithinDamageRadius(**Victim, Origin, Profile.MeleeRange))
+                if (!Victim->IsDefeated() && IsWithinDamageRadius(**Victim, Origin, Profile.MeleeRange))
                 {
                     Push(**Victim);
                     Victim->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask);
@@ -596,7 +599,7 @@ void ANativeWadGuardian::TickRailHazard(float DeltaSeconds)
     }
     for (TActorIterator<ANativeWadPlayer> Player(GetWorld()); Player; ++Player)
     {
-        if (Player->GetHealth() > 0 && IsWithinDamageRadius(**Player, GetActorLocation(), Profile.CollisionRadius))
+        if (!Player->IsDefeated() && IsWithinDamageRadius(**Player, GetActorLocation(), Profile.CollisionRadius))
         {
             Player->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask);
         }
@@ -1014,7 +1017,7 @@ void ANativeWadBolt::ApplyBlast(const FVector& Origin)
     }
     for (TActorIterator<ANativeWadPlayer> Player(GetWorld()); Player; ++Player)
     {
-        if (Player->GetHealth() > 0 && IsWithinDamageRadius(**Player, Origin, BlastRadius))
+        if (!Player->IsDefeated() && IsWithinDamageRadius(**Player, Origin, BlastRadius))
         {
             ApplyForce(**Player, Origin);
             DamagePlayer(**Player);
@@ -1024,9 +1027,9 @@ void ANativeWadBolt::ApplyBlast(const FVector& Origin)
 
 void ANativeWadBolt::DamagePlayer(ANativeWadPlayer& Player) const
 {
-    const bool bWasAlive = Player.GetHealth() > 0;
+    const bool bWasAlive = !Player.IsDefeated();
     Player.ReceiveTypedHit(Damage, DamageMask);
-    if (bWasAlive && Player.GetHealth() <= 0)
+    if (bWasAlive && Player.IsDefeated())
     {
         UE_LOG(LogTemp, Display, TEXT("A missile from %s defeated the player for %d raw damage."),
             GetOwner() ? *GetOwner()->GetActorNameOrLabel() : TEXT("an authored script"), Damage);
@@ -1053,6 +1056,11 @@ void ANativeWadPickup::Configure(UStaticMesh* Plane, UMaterialInterface* Image, 
     Sprite->SetRelativeScale3D(Scale);
     ItemType = InType;
     CheckpointRevision = InCheckpointRevision;
+    AmmoIndex = INDEX_NONE;
+    AmmoQuantity = 0;
+    AccessoryData = 0;
+    bAccessoryDataRecorded = false;
+    bCollectionCommitted = false;
 }
 
 void ANativeWadPickup::ConfigureAuthored(UStaticMesh* Plane, UMaterialInterface* Image, int32 InType, int32 InCheckpointRevision,
@@ -1131,15 +1139,62 @@ void ANativeWadPickup::SetAvailable(bool bAvailable)
     SetActorTickEnabled(bAvailable);
 }
 
+bool ANativeWadPickup::SetAccessoryData(int32 Value)
+{
+    if (Value < 0 || Value > MAX_uint16) { return false; }
+    AccessoryData = uint16(Value);
+    bAccessoryDataRecorded = true;
+    return true;
+}
+
+void ANativeWadPickup::RestoreAccessoryData(uint16 Value, bool bRecorded)
+{
+    bAccessoryDataRecorded = bRecorded;
+    AccessoryData = bRecorded ? Value : 0;
+}
+
+int32 ANativeWadPickup::GetAmmoIndex() const
+{
+    return NativeWadPickupMetadata::ResolveAmmo(ItemType, bAccessoryDataRecorded, AccessoryData, AmmoIndex, AmmoQuantity).Index;
+}
+
+int32 ANativeWadPickup::GetAmmoQuantity() const
+{
+    return NativeWadPickupMetadata::ResolveAmmo(ItemType, bAccessoryDataRecorded, AccessoryData, AmmoIndex, AmmoQuantity).Quantity;
+}
+
 bool ANativeWadPickup::Collect(ANativeWadPlayer& Player)
 {
-    if (ItemType <= 0 || IsActorBeingDestroyed() || !IsAvailable())
+    if (ItemType <= 0 || bCollectionCommitted || IsActorBeingDestroyed() || !IsAvailable()) { return false; }
+    if (ItemType == NativeWadPickupMetadata::JournalObjectType)
     {
-        return false;
+        // A journal scroll's GET effect consumes the world object immediately. It never needs
+        // a carried-object identity; withdrawing a physical page is separate inventory work.
+        const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+        UTexture2D* Image = Catalog && bAccessoryDataRecorded
+            && AccessoryData < NativeWadPickupMetadata::MaximumJournalPages
+            ? Catalog->JournalPageCatalog.FindRef(AccessoryData).Get() : nullptr;
+        auto* Instance = Player.GetGameInstance();
+        auto* Travel = Instance ? Instance->GetSubsystem<UNativeWadTravelState>() : nullptr;
+        if (!Image || !Travel)
+        {
+            Player.ShowInteractionMessage(TEXT("You cannot read this journal entry."));
+            UE_LOG(LogTemp, Warning, TEXT("Cannot collect source journal object373: recorded=%d, page=%u, saved picture=%d, travel=%d."),
+                bAccessoryDataRecorded, uint32(AccessoryData), Image != nullptr, Travel != nullptr);
+            return false;
+        }
+        const bool bAlready = Travel->JournalPages.Contains(AccessoryData);
+        bCollectionCommitted = true;
+        Travel->JournalPages.Add(AccessoryData, Image);
+        Player.ShowInteractionMessage(bAlready ? TEXT("You already had a copy of this note.") : TEXT("You found a journal entry"));
+        if (auto* Controller = Player.GetController<APlayerController>())
+        { if (auto* Hud = Controller->GetHUD<ANativeWadHUD>()) { Hud->ShowJournalPage(AccessoryData); } }
     }
-    if (!(AmmoIndex == INDEX_NONE ? Player.CollectItem(ItemType) : Player.CollectAmmo(AmmoIndex, AmmoQuantity)))
+    else
     {
-        return false;
+        const auto Ammo = NativeWadPickupMetadata::ResolveAmmo(ItemType, bAccessoryDataRecorded, AccessoryData, AmmoIndex, AmmoQuantity);
+        if (!(Ammo.Index == INDEX_NONE ? Player.CollectItem(ItemType) : Player.CollectAmmo(Ammo.Index, Ammo.Quantity))) { return false; }
+        bCollectionCommitted = true;
     }
     Destroy();
     return true;

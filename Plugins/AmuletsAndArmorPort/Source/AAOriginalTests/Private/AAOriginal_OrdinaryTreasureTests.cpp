@@ -267,10 +267,16 @@ bool FAAOriginalOrdinaryTreasureCollection::RunTest(const FString& Parameters)
         TestTrue(TEXT("A cached inventory icon cannot conceal missing world art"), Art && Art->GetMaterial(0));
         const int32 InventoryBefore = Player->GetItemCount(Type);
         const int64 PurseBefore = Travel->Quest.GetWalletCopper();
+        const int32 AmmoIndex = Drop->GetAmmoIndex();
+        const int32 AmmoQuantity = Drop->GetAmmoQuantity();
+        const int32 AmmoBefore = AmmoIndex == INDEX_NONE ? 0 : Player->GetAmmoCount(AmmoIndex);
         TestTrue(TEXT("The real pickup uses normal collection"), Drop->Collect(*Player));
         const int32 Coin = NativeWadRules::CoinValueCopper(Type);
         TestEqual(TEXT("Currency goes only to the campaign purse"), Travel->Quest.GetWalletCopper(), PurseBefore + Coin);
-        TestEqual(TEXT("Non-currency retains its exact full inventory identity"), Player->GetItemCount(Type), InventoryBefore + (Coin == 0 ? 1 : 0));
+        TestEqual(TEXT("Ordinary objects retain their exact identity while GET ammunition bypasses the bag"),
+            Player->GetItemCount(Type), InventoryBefore + (Coin == 0 && AmmoIndex == INDEX_NONE ? 1 : 0));
+        if (AmmoIndex != INDEX_NONE)
+        { TestEqual(TEXT("A plain source quiver GET grants its effective ammunition quantity"), Player->GetAmmoCount(AmmoIndex), AmmoBefore + AmmoQuantity); }
     }
     // Explicit source AccData overrides the catalog's ordinary full-quiver size.
     const FWadCreatureTreasure Quivers[] = {{144, 0, 12}, {147, 2, 6}, {145, 3, 6}, {144, 0, 6}};

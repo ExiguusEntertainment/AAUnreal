@@ -153,6 +153,10 @@ public:
     UPROPERTY()
     TMap<int32, FWadCreatureDescription> CreatureDescriptions;
 
+    // Finished original NOTEdddd bitmaps, independent of which map originally granted the page.
+    UPROPERTY()
+    TMap<int32, TObjectPtr<UTexture2D>> JournalPageCatalog;
+
     UPROPERTY()
     TArray<FColor> Palette;
 

@@ -276,4 +276,5 @@ def refresh_missing_materials():
     unreal.log(f"Verified missing-picture fallback on all {len(report)} maps without geometry rebuilds; report: {destination}")
 
 
-refresh_missing_materials()
+if __name__ == "__main__":
+    refresh_missing_materials()

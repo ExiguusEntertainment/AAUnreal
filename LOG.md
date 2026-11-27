@@ -159,3 +159,33 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Verified normal Store sales of two surplus earned807 cures for200copper each, retainingone. Actual source-price mandatorysupplies cost7850copper; oldTown5purse7600could not fundthem. The sales fundnormal twoelectric/seveninvisibility/threeLavaWalking/manarecovery purchases without item/currencygrants.
 - The actual carried Priest enters L32 with restored OrangeWizard/Gargoyle placements. At routepoint17, CreatureThing177's1000rawdamage missile defeats the player. Evidence: Saved/Logs/PlayableLoops-Destruction-RestoredEncounters-EarnedBudgetedSurplusSale.log. This precedesL71/L40; the earlier campaign replays lacked those L32placements. Loop5remainsopen. Futuretactic needs real L32combat/cover or another earnedconcealment allocation; no disabledenemies/freehealth workaround.
 - Core retained-hand/movement/creation/treasure milestone is verified separately by57tests andtwo renderedtravel/restartprocesses. Preparingits checkpoint now; pending invulnerability/fall/journalpatches remain excluded.
+
+
+## 2026-11-27 15:37 CST — protection/fall verified; shared journal import completed
+
+- Invulnerability/OrbDefense954 and physicallandingdamage/Shock buildpasses andall65WADregressions pass (PlayableLoops-InvulnerabilityFall-Automation.log). Sourcecoverage92/108isverified inthatbinary; originaldamage/controlordering, orbactivationcostandDispel, realfalls andsourceShockgatepass.
+- Mergedjournalmetadata buildpasses. Imported259finishedoriginalNOTEddddbitmaps into sharedruntimecatalog andrefreshed375itemrules. Expanded68suitehas66passes: itsisolatedHUDRPC fixturefailedtoinitializeaHUD, andtheoldordinary-loot testexpectedplainquiversinthebagratherthancorrectsourceGETammo. Correctedbothfixtures; rerunpending.
+- Metadataall30refresh isprepared; addingpublicread-only Actorgettersforscriptverification ratherthanreadingprivateproperties. No geometryrebuildispartofthatrefresh.
+- Separateisolatedworknowcovers sourceDeathWard/alive0HP semantics, originalMagicMap, andrealterrainfriction/StickyFeet. Sourceauditfinds nonnormalfrictionmarkers in29of30maps; onlyL34hasnone. Noneofthesenextpatchesisshippedyet.
+
+
+## 2026-11-27 15:42 CST — Death Ward integration pending verification
+
+- Integrated sourceDeathWard12 andseparate alive/defeatedstate. Strict exact/overkill health-hitmana rules, alive0HP afterexpiry, nativeversion3 persistence andlegacydead migration areunderbuild; sourcecoverage93/108isnotyetclaimedverified.
+- The corrected journal fixtures andread-onlymetadata APIsareincluded. A separate three-process Ward0HPsave/travel/expiry/revive reviewisbeing authored. Sourceactive-effect persistenceisadeliberate nativeextension; originalStatsSaveCharacter clears temporaryeffects.
+- Previouslyverified65testbinarycoversInvulnerability/Orb954andShock/falling. Journalsharedcatalog259 imported,66/68suitepassedbeforethetwofixturefixes. All30metadatarefresh remains pendingpublicAPIbuild.
+
+
+## 2026-11-27 15:50 CST - protection and journal verification
+
+- All 72 WAD regressions pass, including source Death Ward, actual falling damage/Shock, Orb954 and journal auxiliary data.
+- All 30 saved maps now carry their exact source pickup auxiliary payloads. The refresh verified every bound pickup while preserving geometry, component state and non-map drops. A fresh-process idempotency check follows the rendered reviews.
+- Five rendered process reviews are starting: active and expired living-zero Death Ward saves, defeat/revival, and normal journal407 pickup/travel/restart.
+- Agents remain active on Magic Map self-review, Night Vision source analysis and remaining authored creature placement coverage. Their isolated patches have not yet been shipped.
+
+
+- All five rendered Ward/journal processes passed. Inspected the expired0HP alive HUD and restored original NOTE0407 bitmap. Evidence: Saved/Logs/PlayableLoops-WardZero-Rendered.log, WardZeroReload, WardExpiredZeroReload, JournalPickup and JournalPickupReload; profile Saved/WardJournalProcessProfile-20261127-155349.
+- Night Vision audit confirms five remaining spells plus carrot244/potion823. Original shading lifts world shade indices while excluding sky; simple global exposure is unsuitable. Source owner start/stop behavior also differs from additive status power. Rendering work remains explicit in PLAN.
+
+
+- Fresh-process all30 reopen passed with zero changed payloads and identical map-file hashes: 1,942 authored pickup bindings and81,588 component states verified. Protection/journal milestone source coverage is93/108, with72 passing WAD tests and five rendered process reviews. Preparing commit/push for PLAN238-240.

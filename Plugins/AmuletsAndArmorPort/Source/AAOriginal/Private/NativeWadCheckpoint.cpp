@@ -13,6 +13,7 @@
 #include "NativeWadLevel.h"
 #include "NativeWadOptions.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadPickupMetadata.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #include "TimerManager.h"
@@ -32,6 +33,8 @@ namespace
             Slot.IsEmpty() ? UNativeWadCheckpoint::Slot : Slot, 0));
         if (!Save || Save->Version < 1 || Save->Version > UNativeWadCheckpoint::CurrentVersion) { return nullptr; }
         const FURL URL(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
+        if (const TCHAR* Defeated = URL.GetOption(TEXT("WadDefeated="), nullptr);
+            Defeated && FCString::Strcmp(Defeated, TEXT("0")) != 0 && FCString::Strcmp(Defeated, TEXT("1")) != 0) { return nullptr; }
         if (const TCHAR* Payload = URL.GetOption(TEXT("WadOwnedEffects="), nullptr))
         {
             FWadPlayerEffects Effects;
@@ -155,7 +158,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     {
         if (Item->IsDropped())
         {
-            Checkpoint.DroppedItems.Add({Item->GetItemType(), Item->GetActorLocation(), Item->GetAmmoIndex(), Item->GetAmmoQuantity()});
+            NativeWadPickupMetadata::WriteSavedDrop(**Item, Checkpoint.DroppedItems.AddDefaulted_GetRef());
         }
         else if (!Item->Tags.IsEmpty())
         {
@@ -418,7 +421,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
             }
             return false;
         }
-        Item->SetAuthoredAmmo(Drop.AmmoIndex, Drop.AmmoQuantity);
+        NativeWadPickupMetadata::RestoreSavedDrop(Drop, *Item);
         RestoredDrops.Add(Item);
     }
     for (ANativeWadPickup* Item : OldDrops)
@@ -463,7 +466,7 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
     UNativeWadCheckpoint* Save = NewObject<UNativeWadCheckpoint>();
     Save->bTown = IsInWadTown();
     const ANativeWadLevel* Level = NativeLevel.Get();
-    if (Health <= 0 || (!Save->bTown && (QuakeTime > 0.0 || !GetCharacterMovement()->IsMovingOnGround()
+    if (IsDefeated() || (!Save->bTown && (QuakeTime > 0.0 || !GetCharacterMovement()->IsMovingOnGround()
         || !Level || !Level->WriteCheckpoint(Save->Level))))
     {
         return false;
@@ -561,7 +564,7 @@ bool ANativeWadPlayer::HasCompletedWadLevel(const FString& Name) const
 bool ANativeWadPlayer::OpenWadTown()
 {
     UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
-    if (!Travel || !FPackageName::DoesPackageExist(NativeWadTown::Package) || !ArchiveDeparture())
+    if (IsDefeated() || !Travel || !FPackageName::DoesPackageExist(NativeWadTown::Package) || !ArchiveDeparture())
     {
         return false;
     }
@@ -575,6 +578,7 @@ bool ANativeWadPlayer::OpenWadTown()
 
 bool ANativeWadPlayer::ArchiveDeparture()
 {
+    if (IsDefeated()) { return false; }
     StoreItemIdentification();
     const ANativeWadLevel* Level = NativeLevel.Get();
     UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();

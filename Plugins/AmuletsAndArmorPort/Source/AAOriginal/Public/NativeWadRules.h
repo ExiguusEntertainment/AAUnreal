@@ -45,13 +45,31 @@ namespace NativeWadRules
         FireAttackStatus, ElectricityAttackStatus, AcidAttackStatus, PoisonAttackStatus, PiercingAttackStatus, ManaDrainAttackStatus,
         FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus,
         AccuracyStatus, StealthStatus, MagicStatus, HealthRegenStatus, ManaRegenStatus,
-        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, ItemStatusCount };
+        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, ItemStatusCount };
     // OBJMOVE.C's main falling step adds ZV<<4 to a 16.16 position at 70 Hz.
     // These continuous units preserve that main scale, not its old per-frame
     // gravity-before-position rounding or the extra ZV*delta/8 position term.
     inline constexpr double SourceNormalGravity = 1024.0;
     constexpr double SourceVerticalSpeed(int32 Power) { return Power * double(TicksPerSecond) / 4096.0; }
     constexpr double SourceGravityAcceleration(double Gravity) { return Gravity * double(TicksPerSecond) * double(TicksPerSecond) / 4096.0; }
+    inline constexpr int32 SourceMaxSafeFallVelocity = 31000; // STATS.C MaxFallV, common to every original class.
+    inline int32 SourceZVelocityFromNative(double Velocity)
+    {
+        if (!FMath::IsFinite(Velocity)) { return 0; }
+        // Continuous collision velocity is rounded to an original ZV unit.
+        const double Source = FMath::Clamp(Velocity * 4096.0 / double(TicksPerSecond), double(MIN_int32), double(MAX_int32));
+        return int32(FMath::RoundToInt64(Source));
+    }
+    inline int32 SourceLandingDamage(int32 ZVelocity)
+    {
+        // OBJMOVE.C's floor-crossing formula, before normal armor damage.
+        // Wider intermediates avoid overflow at extreme native velocities.
+        const int64 Excess = -int64(ZVelocity) - SourceMaxSafeFallVelocity;
+        if (Excess <= 0) { return 0; }
+        const int64 Quotient = Excess >> 6;
+        const int64 Damage = Quotient + Quotient * Quotient / 100;
+        return Damage <= 50 ? 0 : int32(FMath::Min<int64>(Damage, 32000));
+    }
     inline int32 SourceJumpPower(int32 Class, int32 Modifier)
     { return int32(FMath::Clamp(int64(Class == RogueClass ? 28800 : 19200) + Modifier, int64(0), int64(60000))); }
     inline uint16 SourceLeapPower(int32 JumpPower, int32 Extra)
@@ -186,9 +204,12 @@ namespace NativeWadRules
         {TEXT("1245"), TEXT("Blink"), ESpellSchool::Arcane, ESpellEffect::Blink, 2000, -15, 0, 500, INDEX_NONE, 58}, // SPL00058
         {TEXT("167"), TEXT("Resist Gravity"), ESpellSchool::Arcane, ESpellEffect::Status, 1000, -15, 2100, 1, INDEX_NONE, 62, LowGravityStatus}, // SPL00062
         {TEXT("213"), TEXT("Resist Gravity"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, -15, 2100, 1, INDEX_NONE, 91, LowGravityStatus}, // SPL00091
+        {TEXT("81"), TEXT("Resist Impact"), ESpellSchool::Cleric, ESpellEffect::Status, 500, 40, 2100, 1, INDEX_NONE, 73, ShockAbsorbStatus}, // SPL00073
+        {TEXT("924"), TEXT("Death Ward"), ESpellSchool::Mage, ESpellEffect::Status, 1000, 10, 2100, 1, INDEX_NONE, 12, DeathWardStatus}, // SPL00012
         {TEXT("85"), TEXT("Life Water"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 4000, -5, 0, 833, INDEX_NONE, 86}, // SPL00086
         {TEXT("817"), TEXT("Holy Bread"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 1000, -5, 0, 298, INDEX_NONE, 87}, // SPL00087
         {TEXT("837"), TEXT("Holy Water"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 1000, -10, 0, 822, INDEX_NONE, 90}, // SPL00090
+        {TEXT("1547"), TEXT("Invulnerability"), ESpellSchool::Mage, ESpellEffect::Status, 8000, -40, 2100, 1, INDEX_NONE, 42, InvulnerableStatus}, // SPL00042
     };
     // SPELLS.C clamps negative difficulty to zero before comparing rand()%100. A zero roll can still succeed.
     constexpr int32 SpellCastingThreshold(int32 MagicAttributeValue, int32 Hardness, int32 Level)

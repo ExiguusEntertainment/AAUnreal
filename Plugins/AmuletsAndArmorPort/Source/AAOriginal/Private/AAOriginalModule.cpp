@@ -1044,6 +1044,19 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD surface refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADPICKUPMETADATA")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadPickupMetadata(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadPickupMetadata failed. Usage: AA.RefreshNativeWadPickupMetadata <WadPath> <MapName> </Game/MapPackage>"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD pickup metadata refresh finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADMISSINGMATERIALS")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
@@ -1152,6 +1165,8 @@ public:
                     || Review == TEXT("notes") || Review == TEXT("notesreload")
                     || Review == TEXT("options") || Review == TEXT("optionsreload")
                     || Review == TEXT("retainedhand") || Review == TEXT("retainedhandreload")
+                    || Review == TEXT("journalpickup") || Review == TEXT("journalpickupreload")
+                    || Review == TEXT("wardzero") || Review == TEXT("wardzeroreload") || Review == TEXT("wardexpiredzeroreload")
                     || Review == TEXT("itemowners") || Review == TEXT("itemownersreload") || Review == TEXT("itemownerscompletereload")
                     || Review == TEXT("wornjewelry") || Review == TEXT("wornjewelryreload")
                     || Review == TEXT("creaturelook")

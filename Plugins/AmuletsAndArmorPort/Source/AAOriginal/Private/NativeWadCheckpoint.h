@@ -101,6 +101,11 @@ struct FWadSavedDrop
     int32 AmmoIndex = INDEX_NONE;
     UPROPERTY()
     int32 AmmoQuantity = 0;
+    // Additive source payload: absent fields in earlier native saves retain legacy ammo amounts.
+    UPROPERTY()
+    bool bAccessoryDataRecorded = false;
+    UPROPERTY()
+    uint16 AccessoryData = 0;
 };
 
 USTRUCT()
@@ -228,7 +233,7 @@ class UNativeWadCheckpoint : public USaveGame
     GENERATED_BODY()
 
 public:
-    static constexpr int32 CurrentVersion = 2;
+    static constexpr int32 CurrentVersion = 3;
     static constexpr const TCHAR* Slot = TEXT("NativeWadCheckpoint");
 
     UPROPERTY()

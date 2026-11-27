@@ -466,7 +466,7 @@ void ANativeWadPlayer::TownBank() { if (auto* HUD = TownHUD(*this)) { HUD->OpenS
 bool ANativeWadPlayer::RentWadRoom(int32 Room)
 {
     UNativeWadTravelState* Travel = TownTravel(*GetWorld());
-    if (!IsInWadTown() || !Travel || Room < 0 || Room >= UE_ARRAY_COUNT(RoomPrices))
+    if (IsDefeated() || !IsInWadTown() || !Travel || Room < 0 || Room >= UE_ARRAY_COUNT(RoomPrices))
     {
         return false;
     }
@@ -493,7 +493,7 @@ bool ANativeWadPlayer::RentWadRoom(int32 Room)
 bool ANativeWadPlayer::CanChooseWadClass() const
 {
     const UNativeWadTravelState* Travel = TownTravel(*GetWorld());
-    return IsInWadTown() && !bWadCharacterCreated && Experience == 0 && CharacterLevel == 1 && Travel
+    return !IsDefeated() && IsInWadTown() && !bWadCharacterCreated && Experience == 0 && CharacterLevel == 1 && Travel
         && Travel->Quest.Active == INDEX_NONE && Travel->VisitedLevels.IsEmpty();
 }
 
@@ -511,6 +511,7 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
         return false;
     }
     const FWadCharacterClass& Class = CharacterClasses[Index];
+    bDefeated = false;
     CharacterClass = Index;
     FMemory::Memcpy(Attributes, Class.Base, sizeof(Attributes));
     MaxMana = Mana = Class.Base[MagicAttribute] * 100;
@@ -565,7 +566,7 @@ bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBa
 {
     UNativeWadTravelState* Travel = TownTravel(*GetWorld());
     const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
-    if (!IsInWadTown() || !Travel || !Content || Travel->Quest.bShowResult || Selection == INDEX_NONE
+    if (IsDefeated() || !IsInWadTown() || !Travel || !Content || Travel->Quest.bShowResult || Selection == INDEX_NONE
         || (bSelling && !CarriedItems.IsValidIndex(Selection)))
     {
         return false;

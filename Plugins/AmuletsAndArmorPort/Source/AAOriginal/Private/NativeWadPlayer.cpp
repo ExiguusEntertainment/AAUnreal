@@ -108,7 +108,11 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
     ReadStat(TEXT("WadNextXP="), ExperienceNeeded, FirstLevelThreshold, MAX_int32);
     ReadStat(TEXT("WadMaxHealth="), MaxHealth, ClassHealth, 30000);
     ReadStat(TEXT("WadMaxMana="), MaxMana, ClassMana, 30000);
-    ReadStat(TEXT("WadHealth="), Health, 1, MaxHealth);
+    ReadStat(TEXT("WadHealth="), Health, 0, MaxHealth);
+    const TCHAR* DefeatedOption = URL.GetOption(TEXT("WadDefeated="), nullptr);
+    // Older saves could not represent a living zero-health player. Modern state
+    // is authoritative even after a ward expired while the player stayed alive.
+    bDefeated = DefeatedOption ? FCString::Strcmp(DefeatedOption, TEXT("0")) != 0 : Health == 0;
     ReadStat(TEXT("WadMana="), Mana, 0, MaxMana);
     ReadStat(TEXT("WadFood="), Food, 0, MaxFood);
     ReadStat(TEXT("WadWater="), Water, 0, MaxFood);
@@ -269,6 +273,9 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
         { SelectedInventorySlot = Slot; }
     }
     RestoreTimedEffects(URL.GetOption(TEXT("WadOwnedEffects="), nullptr));
+    if (IsDefeated()) { GetCharacterMovement()->DisableMovement(); }
+    else if (!IsInWadTown() && GetCharacterMovement()->MovementMode == MOVE_None)
+    { GetCharacterMovement()->SetMovementMode(MOVE_Falling); }
 }
 
 void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
@@ -367,7 +374,7 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
                 5 * FMath::Cos(0.8 * Phase))), 0.0f);
         }
     }
-    if (const APlayerController* Player = Cast<APlayerController>(GetController()); Player && Player->IsLocalController() && Health > 0)
+    if (const APlayerController* Player = Cast<APlayerController>(GetController()); Player && Player->IsLocalController() && !IsDefeated())
     {
         const float Forward = float(Player->IsInputKeyDown(EKeys::W)) - float(Player->IsInputKeyDown(EKeys::S));
         const float Right = float(Player->IsInputKeyDown(EKeys::D)) - float(Player->IsInputKeyDown(EKeys::A));
@@ -396,7 +403,7 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         {
             UpdateWaterWalking(*Level);
             UpdateLavaWalking(*Level, DeltaSeconds);
-            if (Health <= 0)
+            if (IsDefeated())
             {
                 return;
             }
@@ -408,6 +415,7 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         {
             TickNeeds(DeltaSeconds);
         }
+        if (IsDefeated()) { return; }
         if (ANativeWadLevel* Level = NativeLevel.Get())
         {
             Level->CheckActivitySector(*this, LastActivitySector);
@@ -460,6 +468,7 @@ void ANativeWadPlayer::CheckLevelLink()
 
 void ANativeWadPlayer::TravelToWadLevel(const TSoftObjectPtr<UWorld>& Destination)
 {
+    if (IsDefeated()) { return; }
     if (UNativeWadTravelState* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
         Travel && Travel->Quest.Active != INDEX_NONE)
     {
@@ -479,6 +488,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
         TEXT("?WadLevel=%d?WadNextXP=%d?WadMaxHealth=%d?WadMaxMana=%d?WadPoison=%d?WadParalysis=%.6f?WadAttributes=%s"),
         Health, Mana, Food, Water, Experience, ReadySlot, SuccessfulCasts, CharacterLevel, ExperienceNeeded, MaxHealth, MaxMana,
         PoisonLevel, ParalysisSeconds, *FString::JoinBy(GetAttributes(), TEXT(","), [](int32 Value) { return LexToString(Value); }));
+    Options += FString::Printf(TEXT("?WadDefeated=%d"), int32(bDefeated));
     const auto WriteDuration = [&Options](const TCHAR* Key, double Seconds)
     {
         if (Seconds > 0.0)
@@ -551,7 +561,7 @@ FVector ANativeWadPlayer::GetPawnViewLocation() const
 
 bool ANativeWadPlayer::Use()
 {
-    if (Health == 0 || bInventoryOpen)
+    if (IsDefeated() || bInventoryOpen)
     {
         return false;
     }
@@ -602,7 +612,7 @@ void ANativeWadPlayer::UsePressed()
 void ANativeWadPlayer::AttackPressed()
 {
     const double Now = GetWorld()->GetTimeSeconds();
-    if (Health == 0 || Now < NextMeleeTime)
+    if (IsDefeated() || Now < NextMeleeTime)
     {
         return;
     }
@@ -631,7 +641,7 @@ void ANativeWadPlayer::ResolveMeleeHit(int32 Damage)
 {
     LastMeleeRawDamage = 0;
     bLastMeleeCritical = false;
-    if (Health <= 0)
+    if (IsDefeated())
     {
         return;
     }
@@ -678,29 +688,40 @@ void ANativeWadPlayer::ShowInteractionMessage(FString Message)
 
 void ANativeWadPlayer::ReceiveEncounterHit(int32 Damage)
 {
-    if (Health <= 0 || Damage <= 0)
+    if (IsDefeated() || Damage <= 0) { return; }
+    const bool bWard = GetStatusPower(DeathWardStatus) > 0;
+    if (GetStatusPower(InvulnerableStatus) <= 0)
     {
-        return;
-    }
-    Health = FMath::Max(0, Health - Damage);
-    if (Health == 0)
-    {
-        UE_LOG(LogTemp, Display, TEXT("WAD player defeated at %s by %d damage; poison %d, flight %.2f seconds."),
-            *GetActorLocation().ToCompactString(), Damage, PoisonLevel, FlightSeconds);
-        GetCharacterMovement()->DisableMovement();
-        DropDefeatedItems();
-        Runes.Reset();
-        if (bInventoryOpen)
+        // STATS.C charges the FULL health hit only for strict overkill; an
+        // exact-lethal hit reaches zero without charging ward mana.
+        if (Damage > Health)
         {
-            ToggleInventory();
+            Health = 0;
+            if (bWard) { RestoreWadVital(10, -Damage); }
         }
-        ShowInteractionMessage(TEXT("Defeated. Press Space to revive."));
+        else { Health -= Damage; }
     }
+    // Source raw health loss checks death even when invulnerability blocked
+    // subtraction. Typed damage has its earlier independent invulnerability gate.
+    if (Health == 0 && !bWard) { DefeatWadPlayer(Damage); }
+}
+
+void ANativeWadPlayer::DefeatWadPlayer(int32 Damage)
+{
+    if (IsDefeated()) { return; }
+    bDefeated = true;
+    UE_LOG(LogTemp, Display, TEXT("WAD player defeated at %s by %d damage; poison %d, flight %.2f seconds."),
+        *GetActorLocation().ToCompactString(), Damage, PoisonLevel, FlightSeconds);
+    GetCharacterMovement()->DisableMovement();
+    DropDefeatedItems();
+    Runes.Reset();
+    if (bInventoryOpen) { ToggleInventory(); }
+    ShowInteractionMessage(TEXT("Defeated. Press Space to revive."));
 }
 
 void ANativeWadPlayer::JumpOrRevive()
 {
-    if (Health > 0)
+    if (!IsDefeated())
     {
         Jump();
         return;
@@ -713,6 +734,7 @@ void ANativeWadPlayer::JumpOrRevive()
     GetController()->SetControlRotation(ReviveTransform.Rotator());
     GetCharacterMovement()->StopMovementImmediately();
     GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+    bDefeated = false;
     Health = MaxHealth;
     Mana = MaxMana / 2;
     PoisonLevel = 0;
@@ -730,7 +752,7 @@ void ANativeWadPlayer::ReceivePhysicalHit(int32 Damage)
 
 void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
 {
-    if (Health <= 0 || Damage <= 0) { return; }
+    if (IsDefeated() || Damage <= 0) { return; }
     if (DamageMask & SpecialDamage)
     {
         if (DamageMask == SpecialDamageFlag(ESpecialDamage::Dispel))
@@ -738,6 +760,9 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
             // EFFECT.C removes one random temporary effect after excluding equipped effects.
             if (TimedEffects.Num() > 0) { TimedEffects.Dispel(FMath::RandRange(0, TimedEffects.Num() - 1)); }
             RefreshTimedEffectCache();
+            // EFFECT.C restores equipped READY effects after choosing a
+            // temporary owner; the defense orb's health cost precedes its buff.
+            ApplyReadiedDefenseOrbEffect();
         }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind))
         {
@@ -749,6 +774,10 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
         {
             ApplyTimedEffect(FWadPlayerEffects::IncomingControlOwner, EWadTimedEffectKind::Status, SpeedStatus, -20, 30.0);
         }
+        else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Paralyze))
+        {
+            ReceiveTrapParalysis();
+        }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse) && GetController())
         {
             // EFFECT_REORIENT turns left by rand() in the original 16-bit angle space.
@@ -759,6 +788,9 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
         }
         return;
     }
+    // STATS.C handles special controls before invulnerability, but blocks all
+    // ordinary damage and its poison/mana/inventory side effects afterward.
+    if (GetStatusPower(InvulnerableStatus) > 0) { return; }
     // The source rolls one of the six armor locations for electricity, including the shield hand.
     const int32 ArmorClass = DamageMask & DamageFlag(EProjectileDamage::Electricity)
         ? GetArmorClass(FMath::RandRange(0, EquipmentSlotCount - 1)) : 0;
@@ -779,6 +811,7 @@ void ANativeWadPlayer::ReceiveTrapPoison(int32 Damage)
 
 void ANativeWadPlayer::ReceiveTrapParalysis()
 {
+    if (IsDefeated()) { return; }
     // Share the source incoming owner with Slow, while retaining the established freeze behavior.
     ApplyTimedEffect(FWadPlayerEffects::IncomingControlOwner, EWadTimedEffectKind::Paralysis, INDEX_NONE, 1, 10.0);
     GetCharacterMovement()->StopMovementImmediately();
@@ -799,7 +832,7 @@ int32 ANativeWadPlayer::GetWadJumpPower() const
 bool ANativeWadPlayer::TryWadLeap(int32 ExtraPower)
 {
     UCharacterMovementComponent* Movement = GetCharacterMovement();
-    if (Health <= 0 || bInventoryOpen || IsParalyzed() || ExtraPower < 0 || ExtraPower > 28000
+    if (IsDefeated() || bInventoryOpen || IsParalyzed() || ExtraPower < 0 || ExtraPower > 28000
         || (!Movement->IsMovingOnGround() && !CanFly())) { return false; }
     const uint16 Power = SourceLeapPower(GetWadJumpPower(), ExtraPower);
     Movement->JumpZVelocity = float(SourceVerticalSpeed(Power));
@@ -812,7 +845,7 @@ bool ANativeWadPlayer::TryWadLeap(int32 ExtraPower)
 
 bool ANativeWadPlayer::BlinkWadForward(int32 Distance)
 {
-    if (Health <= 0 || bInventoryOpen || IsParalyzed() || Distance <= 0 || Distance > 28000) { return false; }
+    if (IsDefeated() || bInventoryOpen || IsParalyzed() || Distance <= 0 || Distance > 28000) { return false; }
     UCharacterMovementComponent* Movement = GetCharacterMovement();
     const FVector Before = GetActorLocation();
     const FVector Velocity = Movement->Velocity;
@@ -1041,7 +1074,7 @@ void ANativeWadPlayer::EnterRuneKey(FKey Key)
 
 void ANativeWadPlayer::CastRejuvenate()
 {
-    if (Health <= 0 || bInventoryOpen)
+    if (IsDefeated() || bInventoryOpen)
     {
         return;
     }
@@ -1152,7 +1185,7 @@ void ANativeWadPlayer::CastRejuvenate()
 void ANativeWadPlayer::TickNeeds(float DeltaSeconds)
 {
     NeedsTime += DeltaSeconds;
-    while (NeedsTime >= 6.0)
+    while (NeedsTime >= 6.0 && !IsDefeated())
     {
         NeedsTime -= 6.0;
         const int32 HealthRecovery = GetHealthRegeneration();

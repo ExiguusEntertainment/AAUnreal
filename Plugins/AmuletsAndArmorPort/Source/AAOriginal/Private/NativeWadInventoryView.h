@@ -90,7 +90,7 @@ namespace NativeWadInventoryView
         APlayerController& Controller, const UNativeWadHudData& Data, FVector2D Origin, double Scale)
     {
         const UTexture2D* Image = Data.Items.FindRef(Player.GetMouseHandItem());
-        const bool bShow = Image && !Player.IsMouseLook() && Player.GetHealth() > 0 && Scale > 0.0;
+        const bool bShow = Image && !Player.IsMouseLook() && !Player.IsDefeated() && Scale > 0.0;
         Controller.CurrentMouseCursor = bShow ? EMouseCursor::None : EMouseCursor::Default;
         FVector2D Cursor;
         if (!bShow || !Controller.GetMousePosition(Cursor.X, Cursor.Y)) { return; }

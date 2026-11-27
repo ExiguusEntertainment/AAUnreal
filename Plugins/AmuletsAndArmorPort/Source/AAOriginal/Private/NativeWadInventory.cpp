@@ -104,6 +104,8 @@ int32 ANativeWadPlayer::GetStatusPower(EItemStatus Status) const
     const auto PassivePower = [&](int32 Slot)
     {
         const int32 Type = CarriedItems.IsValidIndex(Slot) ? CarriedItems[Slot] : 0;
+        // DES00954 pays its READY health cost before adding its own protection.
+        if (bApplyingDefenseOrbReady && Slot == ReadySlot && Type == OrbOfDefense) { return 0; }
         const FWadInventoryDetails* Rules = GetItemRules(Type);
         return Rules && CanUseWadItem(Type) && Rules->Status == Status && Rules->StatusTicks == 0 ? Rules->StatusPower : 0;
     };
@@ -353,7 +355,7 @@ bool ANativeWadPlayer::EquipJewelry(int32 Slot, const FWadInventoryDetails& Deta
 
 bool ANativeWadPlayer::TakeInventoryItem(int32 Slot)
 {
-    if (Health <= 0 || !CarriedItems.IsValidIndex(Slot) || IsRuneItem(CarriedItems[Slot])) { return false; }
+    if (IsDefeated() || !CarriedItems.IsValidIndex(Slot) || IsRuneItem(CarriedItems[Slot])) { return false; }
     if (SelectedInventorySlot == Slot) { return true; }
     if (CarriedItems.IsValidIndex(SelectedInventorySlot) || Slot == ReadySlot || IsWornInventorySlot(Slot)) { return false; }
     SelectedInventorySlot = Slot;
@@ -362,7 +364,7 @@ bool ANativeWadPlayer::TakeInventoryItem(int32 Slot)
 
 void ANativeWadPlayer::StoreMouseHandInInventory()
 {
-    if (Health <= 0) { return; }
+    if (IsDefeated()) { return; }
     // CarriedItems owns every object. A free bag placement only releases its location pointer;
     // display stacks regroup individual objects without destroying or duplicating one.
     SelectedInventorySlot = INDEX_NONE;
@@ -378,7 +380,7 @@ bool ANativeWadPlayer::CreateWadItemInMouseHand(int32 Type)
         return false;
     }
     const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
-    if (Health <= 0 || Type <= 0 || Type > MAX_uint16 || !Catalog
+    if (IsDefeated() || Type <= 0 || Type > MAX_uint16 || !Catalog
         || !Catalog->ItemDetails.Contains(Type) || !Catalog->Items.FindRef(Type))
     {
         ShowInteractionMessage(TEXT("The created item is unavailable."));
@@ -390,7 +392,7 @@ bool ANativeWadPlayer::CreateWadItemInMouseHand(int32 Type)
 
 bool ANativeWadPlayer::SwapMouseAndReady()
 {
-    if (Health <= 0) { return false; }
+    if (IsDefeated()) { return false; }
     if (CarriedItems.IsValidIndex(SelectedInventorySlot))
     {
         const int32 Type = CarriedItems[SelectedInventorySlot];
@@ -405,13 +407,25 @@ bool ANativeWadPlayer::SwapMouseAndReady()
     }
     Swap(SelectedInventorySlot, ReadySlot);
     if (GetReadyItem() == FlyingAmulet || !HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+    ApplyReadiedDefenseOrbEffect();
+    if (IsDefeated()) { return true; }
     ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
     return true;
 }
 
+void ANativeWadPlayer::ApplyReadiedDefenseOrbEffect()
+{
+    if (GetReadyItem() != OrbOfDefense) { return; }
+    TGuardValue<bool> Applying(bApplyingDefenseOrbReady, true);
+    ReceiveEncounterHit(300);
+    // Normal in-level death drops the orb. If a drop could not be placed,
+    // leave it owned in the bag rather than activate a postmortem READY effect.
+    if (IsDefeated() && GetReadyItem() == OrbOfDefense) { ReadySlot = INDEX_NONE; }
+}
+
 void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
 {
-    if (Health <= 0) { return; }
+    if (IsDefeated()) { return; }
     if (Slot == INDEX_NONE) { SwapMouseAndReady(); return; }
     if (!CarriedItems.IsValidIndex(Slot)) { return; }
     if (CarriedItems.IsValidIndex(SelectedInventorySlot) && Slot != SelectedInventorySlot)
@@ -437,7 +451,7 @@ void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
 
 void ANativeWadPlayer::ClickArmorSlot(int32 Location)
 {
-    if (Health <= 0 || Location < 0 || Location >= EquipmentSlotCount) { return; }
+    if (IsDefeated() || Location < 0 || Location >= EquipmentSlotCount) { return; }
     const int32 Previous = WornSlots[Location];
     if (!CarriedItems.IsValidIndex(SelectedInventorySlot))
     {
@@ -463,7 +477,7 @@ void ANativeWadPlayer::ClickArmorSlot(int32 Location)
 
 void ANativeWadPlayer::ClickJewelrySlot(int32 Location)
 {
-    if (Health <= 0 || Location < 0 || Location >= JewelrySlotCount) { return; }
+    if (IsDefeated() || Location < 0 || Location >= JewelrySlotCount) { return; }
     const int32 Previous = JewelrySlots[Location];
     const bool bPlacing = CarriedItems.IsValidIndex(SelectedInventorySlot);
     const int32 Slot = bPlacing ? SelectedInventorySlot : Previous;
@@ -477,7 +491,7 @@ void ANativeWadPlayer::ClickJewelrySlot(int32 Location)
 
 void ANativeWadPlayer::UseReadyHand()
 {
-    if (Health <= 0 || bInventoryOpen)
+    if (IsDefeated() || bInventoryOpen)
     {
         return;
     }
@@ -666,7 +680,7 @@ bool ANativeWadPlayer::CollectAmmo(int32 Index, int32 Quantity)
 
 void ANativeWadPlayer::RetrieveAmmo(int32 Index)
 {
-    if (Health <= 0 || GetMouseHandItem() != 0 || Index < 0 || Index >= UE_ARRAY_COUNT(AmmoReserve) || AmmoReserve[Index] <= 0)
+    if (IsDefeated() || GetMouseHandItem() != 0 || Index < 0 || Index >= UE_ARRAY_COUNT(AmmoReserve) || AmmoReserve[Index] <= 0)
     {
         return;
     }
@@ -681,7 +695,7 @@ void ANativeWadPlayer::RetrieveAmmo(int32 Index)
 void ANativeWadPlayer::RetrieveCoin(int32 Type)
 {
     auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
-    if (Health <= 0 || CarriedItems.IsValidIndex(SelectedInventorySlot) || !Travel || CoinValueCopper(Type) == 0)
+    if (IsDefeated() || CarriedItems.IsValidIndex(SelectedInventorySlot) || !Travel || CoinValueCopper(Type) == 0)
     {
         return;
     }
@@ -794,7 +808,7 @@ void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
     {
         Health = FMath::Min(MaxHealth, Health + Details.Health);
     }
-    if (Health > 0)
+    if (!IsDefeated())
     {
         ShowInteractionMessage(BeforePoison > 0 && Details.PoisonDivisor > 1
             ? PoisonLevel == 0 ? FString(TEXT("Your body is cleansed of all poison.")) : FString(TEXT("The poison in your body is less."))
@@ -808,7 +822,7 @@ void ANativeWadPlayer::DropInventoryItem()
 {
     const int32 Slot = GetMouseHandItem() != 0 ? SelectedInventorySlot : ReadySlot;
     ANativeWadLevel* Level = NativeLevel.Get();
-    if (Health <= 0 || IsParalyzed() || !CarriedItems.IsValidIndex(Slot) || !Level || !GetCharacterMovement()->IsMovingOnGround())
+    if (IsDefeated() || IsParalyzed() || !CarriedItems.IsValidIndex(Slot) || !Level || !GetCharacterMovement()->IsMovingOnGround())
     {
         return;
     }
@@ -1036,7 +1050,7 @@ bool ANativeWadPlayer::HasRune(int32 Rune) const
 
 void ANativeWadPlayer::EnterRune(int32 Rune)
 {
-    if (Health > 0 && !bInventoryOpen && Runes.Len() < 4 && HasRune(Rune))
+    if (!IsDefeated() && !bInventoryOpen && Runes.Len() < 4 && HasRune(Rune))
     {
         Runes.AppendChar(TCHAR(TEXT('0') + Rune));
     }

@@ -36,6 +36,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
     bool Use();
     int32 GetHealth() const { return Health; }
+    bool IsDefeated() const { return bDefeated; }
     int32 GetMana() const { return Mana; }
     int32 GetFood() const { return Food; }
     int32 GetWater() const { return Water; }
@@ -138,6 +139,8 @@ private:
     friend class ANativeWadHUD;
     friend class ANativeWadTownHUD;
     bool bWadCharacterCreated = false;
+    bool bDefeated = false;
+    void DefeatWadPlayer(int32 Damage);
     void ToggleFinances();
     void RetrieveCoin(int32 Type);
     void ReturnSelectedCoin();
@@ -158,6 +161,8 @@ private:
     void UseConsumable(const FWadInventoryDetails& Details);
     void ApplyTimedEffect(const FString& EffectOwner, EWadTimedEffectKind Kind, int32 Status, int32 Power, double Seconds);
     void RefreshTimedEffectCache();
+    void ApplyReadiedDefenseOrbEffect();
+    bool bApplyingDefenseOrbReady = false;
     void RestoreTimedEffects(const TCHAR* Payload);
     void DropInventoryItem();
     void UseReadyHand();
@@ -294,6 +299,8 @@ public:
     int32 GetControlsScroll() const { return ControlsScroll; }
     bool ExamineAt(const FVector2D& ViewportPoint);
     bool IsLookOpen() const;
+    void ShowJournalPage(int32 PageId);
+    AAORIGINAL_API int32 GetJournalPageId() const;
     int32 GetLookSourceType() const { return LookSourceType; }
     const FString& GetLookName() const { return LookName; }
     const FString& GetLookDescription() const { return LookDescription; }

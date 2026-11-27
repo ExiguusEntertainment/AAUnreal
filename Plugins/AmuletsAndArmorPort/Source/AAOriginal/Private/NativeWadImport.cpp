@@ -54,6 +54,7 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "NativeWadLevel.h"
 #include "NativeWadLook.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadPickupMetadata.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -877,6 +878,8 @@ struct FAAWadNativeImport
             const FIntVector Placement(Thing.X, Thing.Y, Type);
             if (ANativeWadPickup* const* Found = LegacyByPlacement.Find(Placement))
             {
+                (*Found)->Modify();
+                (*Found)->SetAccessoryData(uint16(Thing.Flags));
                 LegacyByPlacement.RemoveSingle(Placement, *Found);
                 ++Existing;
                 continue;
@@ -919,6 +922,7 @@ struct FAAWadNativeImport
             }
             Pickup->ConfigureAuthored(Plane, ItemMaterials.FindChecked(Item->Picture), Type, FWadLevelCheckpoint::AuthoredItemsRevision,
                 Size, Item->Radius, Item->bPassable, Scenery);
+            Pickup->SetAccessoryData(uint16(Thing.Flags)); // 3D_IO.C initializes source accessory data from raw map attributes.
             for (int32 Index = 0; Index < UE_ARRAY_COUNT(NativeWadRules::CrossbowAmmo); ++Index)
             {
                 const auto& Ammo = NativeWadRules::CrossbowAmmo[Index];
@@ -3285,11 +3289,11 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     const TSet<int32> OrdinaryTreasureTypes{100, 101, 102, 104, 105, 106, 144, 145, 147, 202, 204, 362,
         416, 417, 708, 709, 710, 711, 818, 822, 12492, 12996, 12997, 12998, 12999, 37067};
     for (const int32 Type : OrdinaryTreasureTypes) { Types.Add(Type); }
-    for (const int32 Type : {350, 351}) { Types.Add(Type); } // Both source identification scrolls, including the common starter.
+    for (const int32 Type : {350, 351, 373}) { Types.Add(Type); } // Source identification scrolls and the accessory-data journal object.
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
     const TSet<int32> CreatedItemTypes{833, 298, 822}; // SPL00086/87/90 ordinary created inventory objects.
     Types.Append(CreatedItemTypes);
-    for (const int32 Type : {411, 417, 418, 419, 604, 610, 612, 614, 615, 712, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
+    for (const int32 Type : {411, 417, 418, 419, 604, 610, 612, 614, 615, 712, 954, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
     for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
@@ -3405,7 +3409,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
         FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
         const FString MaterialPackage = Item.WorldMaterialPackage();
         const FString MaterialPath = MaterialPackage + TEXT(".") + FPackageName::GetShortName(MaterialPackage);
-        if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351 || OrdinaryTreasureTypes.Contains(Type) || CreatedItemTypes.Contains(Type))
+        if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351 || Type == 373 || Type == NativeWadRules::OrbOfDefense || OrdinaryTreasureTypes.Contains(Type) || CreatedItemTypes.Contains(Type))
             && !FindObject<UMaterialInterface>(nullptr, *MaterialPath)
             && !FPackageName::DoesPackageExist(MaterialPackage) && !Import.SpriteMaterial(Item.AssetName(), Item.Picture))
         {
@@ -3782,6 +3786,25 @@ bool SaveNativeWadHud(FOutputDevice& Output)
         return false;
     }
     Output.Logf(TEXT("Imported %d source creature descriptions for the classic Look form."), Data->CreatureDescriptions.Num());
+    const FString JournalDirectory = FPaths::ProjectDir() /
+        TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/UI/NOTES");
+    TArray<FString> JournalFiles;
+    IFileManager::Get().FindFiles(JournalFiles, *(JournalDirectory / TEXT("NOTE*")), true, false);
+    JournalFiles.Sort();
+    Data->JournalPageCatalog.Reset();
+    for (const FString& File : JournalFiles)
+    {
+        int32 PageId = INDEX_NONE;
+        if (!NativeWadPickupMetadata::ParseJournalPageName(File, PageId)) { continue; }
+        FIntPoint PageSize;
+        TArray<FColor> PagePixels;
+        UTexture2D* Page = LoadWadInterfacePicture(TEXT("UI/NOTES/") + File, PageSize, PagePixels)
+            ? SaveInterfaceTexture(Import, TEXT("Journal"), File, PageSize, PagePixels) : nullptr;
+        if (!Page) { Output.Logf(TEXT("Could not import finished source journal page %s."), *File); return false; }
+        Data->JournalPageCatalog.Add(PageId, Page);
+    }
+    if (Data->JournalPageCatalog.IsEmpty()) { Output.Log(TEXT("No finished source journal pages were available.")); return false; }
+    Output.Logf(TEXT("Imported %d finished original journal page bitmaps into the shared runtime catalog."), Data->JournalPageCatalog.Num());
     TArray<FString> Pictures = {
         TEXT("UI/3DUI/MAINBACK"), TEXT("UI/3DUI/INVBAR3"), TEXT("UI/3DUI/STABAR"),
         TEXT("UI/3DUI/EQPBAR"), TEXT("UI/3DUI/2EQBUTN"), TEXT("UI/3DUI/2INVBUTN"),
@@ -4041,6 +4064,76 @@ bool RefreshNativeWadMissingMaterials(const FString& MapPackage, FOutputDevice& 
     if (Changed != 0 && !SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     Output.Logf(TEXT("Refreshed %d missing-texture component material bindings in %s; geometry and lighting shells were retained."),
         Changed, *MapPackage);
+    return true;
+}
+
+bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage))
+    { Output.Log(TEXT("Pickup metadata refresh needs a loaded source MAP and an existing native map package.")); return false; }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    { Output.Logf(TEXT("No matching original geometry/topology in %s."), *MapPackage); return false; }
+
+    TMap<ANativeWadPickup*, int32> SceneryIds;
+    for (TActorIterator<ANativeWadScenery> It(World); It; ++It)
+    {
+        if (ANativeWadPickup* Pickup = It->GetPickup(); Pickup && Map->Things.IsValidIndex(It->GetSourceThingId())
+            && uint16(Map->Things[It->GetSourceThingId()].Type) == Pickup->GetItemType())
+        { SceneryIds.Add(Pickup, It->GetSourceThingId()); }
+    }
+    TMap<ANativeWadPickup*, uint16> Updates;
+    int32 Matched = 0, Unbound = 0;
+    for (TActorIterator<ANativeWadPickup> It(World); It; ++It)
+    {
+        if (It->IsDropped()) { continue; }
+        int32 Id = INDEX_NONE;
+        bool bGenerator = false;
+        for (const FName Tag : It->Tags)
+        {
+            const FString Text = Tag.ToString();
+            if (Text.StartsWith(TEXT("WAD Generator "))) { bGenerator = true; }
+            if (!Text.StartsWith(TEXT("WAD Item Thing "))) { continue; }
+            const FString Digits = Text.Mid(15);
+            if (Digits.IsEmpty() || !Digits.IsNumeric() || !LexTryParseString(Id, *Digits))
+            { Output.Logf(TEXT("Invalid source pickup tag %s in %s."), *Text, *MapPackage); return false; }
+        }
+        if (bGenerator) { continue; } // Generated objects have no authored map Thing payload.
+        if (const int32* SceneryId = SceneryIds.Find(*It))
+        {
+            if (Id != INDEX_NONE && Id != *SceneryId)
+            { Output.Logf(TEXT("Pickup/scenery source identity conflict in %s."), *MapPackage); return false; }
+            Id = *SceneryId;
+        }
+        if (Id == INDEX_NONE)
+        {
+            const FVector Local = It->GetActorLocation() - Level->GetActorLocation();
+            for (int32 Candidate = 0; Candidate < Map->Things.Num(); ++Candidate)
+            {
+                const FWadThing& Thing = Map->Things[Candidate];
+                if (uint16(Thing.Type) != It->GetItemType() || Thing.X != FMath::RoundToInt32(Local.X)
+                    || Thing.Y != FMath::RoundToInt32(Local.Y)) { continue; }
+                if (Id != INDEX_NONE)
+                { Output.Logf(TEXT("Ambiguous legacy pickup placement %s in %s; supply a source Thing tag."), *It->GetName(), *MapPackage); return false; }
+                Id = Candidate;
+            }
+        }
+        if (Id == INDEX_NONE) { ++Unbound; continue; } // Scripted defeat drops and other non-map objects keep their own metadata.
+        if (!Map->Things.IsValidIndex(Id) || uint16(Map->Things[Id].Type) != It->GetItemType())
+        { Output.Logf(TEXT("Source Thing identity/type mismatch for pickup %s in %s."), *It->GetName(), *MapPackage); return false; }
+        ++Matched;
+        const uint16 Data = uint16(Map->Things[Id].Flags);
+        if (!It->HasAccessoryData() || It->GetAccessoryData() != Data) { Updates.Add(*It, Data); }
+    }
+    // Every binding is validated before mutation. Only actor payload properties change: no mesh,
+    // materials, attachments, transforms, movement components, or navigation rebuilds are touched.
+    for (const auto& [Pickup, Data] : Updates) { Pickup->Modify(); Pickup->SetAccessoryData(Data); }
+    if (!Updates.IsEmpty() && !SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Refreshed source auxiliary metadata on %d/%d authored pickups in %s; retained %d non-map actors and all geometry."),
+        Updates.Num(), Matched, *MapPackage, Unbound);
     return true;
 }
 

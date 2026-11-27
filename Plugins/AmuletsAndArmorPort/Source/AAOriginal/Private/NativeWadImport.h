@@ -16,5 +16,6 @@ bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice&
 bool SaveNativeWadItems(const FString& MapPackage, FOutputDevice& Output);
 bool SaveNativeWadItemRules(FOutputDevice& Output);
 bool RefreshNativeWadSurfaces(const FString& MapPackage, FOutputDevice& Output);
+bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadMissingMaterials(const FString& MapPackage, FOutputDevice& Output);
 #endif

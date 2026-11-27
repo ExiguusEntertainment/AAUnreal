@@ -78,6 +78,7 @@ public:
     void SetSourceAngle(uint16 Angle);
     void SetPickup(ANativeWadPickup* Item);
     ANativeWadPickup* GetPickup() const;
+    int32 GetSourceThingId() const { return ThingId; }
 
 private:
     virtual void BeginPlay() override;

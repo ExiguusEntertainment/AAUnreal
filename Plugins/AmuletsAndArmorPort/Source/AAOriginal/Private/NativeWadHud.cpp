@@ -384,6 +384,32 @@ bool ANativeWadHUD::ExamineAt(const FVector2D& ViewportPoint)
     return true;
 }
 
+void ANativeWadHUD::ShowJournalPage(int32 PageId)
+{
+    auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    auto* Instance = GetGameInstance();
+    auto* Travel = Instance ? Instance->GetSubsystem<UNativeWadTravelState>() : nullptr;
+    if (!Player || !Travel || !Travel->JournalPages.Contains(PageId)) { return; }
+    if (!Player->IsInventoryOpen() || Form != EForm::Journal) { ToggleForm(EForm::Journal); }
+    TArray<int32> Pages;
+    Travel->JournalPages.GetKeys(Pages);
+    Pages.Sort();
+    JournalPage = Pages.IndexOfByKey(PageId);
+    JournalImage = nullptr;
+}
+
+int32 ANativeWadHUD::GetJournalPageId() const
+{
+    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    auto* Instance = GetGameInstance();
+    const auto* Travel = Instance ? Instance->GetSubsystem<UNativeWadTravelState>() : nullptr;
+    if (!Player || !Player->IsInventoryOpen() || Form != EForm::Journal || !Travel) { return INDEX_NONE; }
+    TArray<int32> Pages;
+    Travel->JournalPages.GetKeys(Pages);
+    Pages.Sort();
+    return Pages.IsValidIndex(JournalPage) ? Pages[JournalPage] : INDEX_NONE;
+}
+
 int32 ANativeWadHUD::GetNotesCursor() const { return NotesEditor ? NotesEditor->GetCursor() : 0; }
 int32 ANativeWadHUD::GetNotesScroll() const { return NotesEditor ? NotesEditor->GetScroll() : 0; }
 

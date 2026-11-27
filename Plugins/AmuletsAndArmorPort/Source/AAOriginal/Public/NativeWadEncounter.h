@@ -296,13 +296,22 @@ public:
     void SetAvailable(bool bAvailable);
     bool IsAvailable() const { return !IsHidden(); }
     bool Collect(ANativeWadPlayer& Player);
+    UFUNCTION(BlueprintPure, Category="WAD|Pickups")
     int32 GetItemType() const { return ItemType; }
     int32 GetCheckpointRevision() const { return CheckpointRevision; }
+    bool SetAccessoryData(int32 Value);
+    uint16 GetAccessoryData() const { return AccessoryData; }
+    UFUNCTION(BlueprintPure, Category="WAD|Pickups")
+    int32 GetSourceAccessoryData() const { return int32(AccessoryData); }
+    UFUNCTION(BlueprintPure, Category="WAD|Pickups")
+    bool HasAccessoryData() const { return bAccessoryDataRecorded; }
+    void RestoreAccessoryData(uint16 Value, bool bRecorded);
     void SetAuthoredAmmo(int32 Index, int32 Quantity) { AmmoIndex = Index; AmmoQuantity = Quantity; }
-    int32 GetAmmoIndex() const { return AmmoIndex; }
-    int32 GetAmmoQuantity() const { return AmmoQuantity; }
+    int32 GetAmmoIndex() const;
+    int32 GetAmmoQuantity() const;
     static constexpr ECollisionChannel InteractionChannel = ECC_GameTraceChannel1;
     static ANativeWadPickup* SpawnDropped(ANativeWadLevel& Level, int32 Type, const FVector& Position);
+    UFUNCTION(BlueprintPure, Category="WAD|Pickups")
     bool IsDropped() const { return bDropped; }
 
 private:
@@ -321,6 +330,11 @@ private:
     int32 AmmoIndex = INDEX_NONE;
     UPROPERTY()
     int32 AmmoQuantity = 0;
+    UPROPERTY()
+    bool bAccessoryDataRecorded = false;
+    UPROPERTY()
+    uint16 AccessoryData = 0;
+    bool bCollectionCommitted = false;
     bool bDropped = false;
 
     UPROPERTY()
