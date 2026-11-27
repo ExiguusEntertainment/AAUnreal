@@ -36,6 +36,10 @@ After completing and verifying each major checkbox, update this plan, commit the
 
 Consider multiplayer while working through these loops. Keep each player's inventory and progression distinct from shared world state such as switches, encounters, and moving sectors. When changing gameplay, record any decision that affects how players share state, receive quest credit, or see changes when they join. Schedule implementation in the [multiplayer milestone](#multiplayer-restoration).
 
+## Pause checkpoint
+
+Paused at the user's request after verified steps 213 and 214. Slow, Earthbind, and both Dispel Magic wands, their saved effects, and 28 projectile rune spells are committed and pushed. All sixteen WAD regressions pass. Resume loop 2 with Berserk (914), then Lock/Unlock (919/920); the other incomplete loops remain open. The unfinished Berserk draft is saved locally under `Saved/PlayableLoopsPause-2026-11-27` and is excluded from the tested source checkpoint.
+
 ## Known Feature Gaps
 
 Use this checklist to flesh out the [playable loops](#remaining-playable-loops). The checklist records known implementation gaps and specific areas that still need a source comparison or a playthrough. Use the loop order above when continuing work. Record map, activity, or item identifiers and the verification result as each item is finished. Add newly confirmed gaps here when they surface.
