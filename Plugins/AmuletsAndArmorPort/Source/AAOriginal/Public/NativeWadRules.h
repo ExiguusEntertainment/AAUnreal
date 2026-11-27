@@ -39,11 +39,37 @@ namespace NativeWadRules
     inline constexpr int32 StartingWaterGourd = 246;
     inline constexpr int32 StartingFoods[] = {19, 243, 244, 245, 247, 248, 249, 251};
     enum EEquipmentSlot : int32 { HeadSlot, RightArmSlot, LeftArmSlot, LegsSlot, ChestSlot, ShieldSlot, EquipmentSlotCount };
+    // Jewelry has its own original locations; do not add these to the six damage/armor locations.
+    enum EJewelrySlot : int32 { NeckSlot, Ring1Slot, Ring2Slot, Ring3Slot, Ring4Slot, JewelrySlotCount };
     enum EItemStatus : int32 { InvisibleStatus, TranslucentStatus, StrengthStatus, LavaWalkStatus, SpellShieldStatus,
         FireAttackStatus, ElectricityAttackStatus, AcidAttackStatus, PoisonAttackStatus, PiercingAttackStatus, ManaDrainAttackStatus,
-        FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus, ItemStatusCount };
+        FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus,
+        AccuracyStatus, StealthStatus, MagicStatus, HealthRegenStatus, ManaRegenStatus,
+        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, ItemStatusCount };
+    // STATS.C keeps permanent attributes separate from these effective values.
+    inline int32 EffectiveAttribute(int32 Base, int32 Modifier) { return FMath::Clamp(Base + Modifier, 10, 120); }
+    inline int32 MeleeBaseDamage(int32 StrengthValue, int32 WeaponDamage, int32 Class)
+    {
+        int32 Damage = FMath::Clamp(StrengthValue, 10, 120) * FMath::Max(0, WeaponDamage) / 2;
+        if (Class == KnightClass) { Damage += Damage / 2; }
+        else if (Class == SailorClass || Class == MercenaryClass) { Damage += Damage / 4; }
+        return Damage;
+    }
+    struct FWadMeleeRoll { int32 Damage = 0; bool bCritical = false; };
+    inline FWadMeleeRoll ResolveMeleeRoll(int32 BaseDamage, int32 Accuracy, int32 DamageRoll, int32 CriticalRoll)
+    {
+        if (BaseDamage <= 0) { return {}; }
+        // STATS.C: base + rand()%base, then the independent rand()%200 critical roll.
+        const bool bCritical = FMath::Clamp(CriticalRoll, 0, 199) < FMath::Clamp(Accuracy, 10, 120);
+        const int32 Damage = BaseDamage + FMath::Max(0, DamageRoll) % BaseDamage;
+        return {Damage * (bCritical ? 2 : 1), bCritical};
+    }
+    inline int32 ConcealmentThreshold(int32 Stealth, bool bInvisible, bool bTranslucent)
+    {
+        return FMath::Max(FMath::Clamp(Stealth, 10, 120) / 2, bInvisible ? 190 : bTranslucent ? 100 : 0);
+    }
     enum class ESpellSchool : uint8 { Arcane, Mage, Cleric };
-    enum class ESpellEffect : uint8 { WaterWalk, FeatherFall, Shield, Projectile };
+    enum class ESpellEffect : uint8 { WaterWalk, FeatherFall, Shield, Projectile, Flight, Heal, PurifyBlood, EternalNourishment };
     struct FWadSpell
     {
         const TCHAR* Runes;
@@ -61,6 +87,12 @@ namespace NativeWadRules
         {TEXT("14"), TEXT("Deflect"), ESpellSchool::Mage, ESpellEffect::Shield, 500, 50, 8400, 25},
         {TEXT("41"), TEXT("Feather Fall"), ESpellSchool::Mage, ESpellEffect::FeatherFall, 250, 50, 2100, 1},
         {TEXT("21"), TEXT("Water Walk"), ESpellSchool::Cleric, ESpellEffect::WaterWalk, 500, 50, 8400, 1},
+        {TEXT("829"), TEXT("Sustenance"), ESpellSchool::Arcane, ESpellEffect::EternalNourishment, 1000, -10, 27999, 1}, // SPL00069
+        {TEXT("653"), TEXT("Purify Blood"), ESpellSchool::Cleric, ESpellEffect::PurifyBlood, 750, 50, 0, 1}, // SPL00072
+        {TEXT("415"), TEXT("Heal"), ESpellSchool::Cleric, ESpellEffect::Heal, 8000, -30, 0, 5000}, // SPL00098
+        {TEXT("87"), TEXT("Feather Fall"), ESpellSchool::Arcane, ESpellEffect::FeatherFall, 250, 50, 2100, 1}, // SPL00045
+        {TEXT("154"), TEXT("Shield"), ESpellSchool::Mage, ESpellEffect::Shield, 2000, 0, 8400, 40}, // SPL00018
+        {TEXT("167"), TEXT("Fly"), ESpellSchool::Mage, ESpellEffect::Flight, 7000, -40, 2100, 1}, // SPL00041
         {TEXT("34"), TEXT("Magic Dart"), ESpellSchool::Mage, ESpellEffect::Projectile, 150, 50, 0, 1, 0 }, // SPL00001
         {TEXT("347"), TEXT("Magic Missile"), ESpellSchool::Mage, ESpellEffect::Projectile, 200, 40, 0, 1, 1 }, // SPL00003
         {TEXT("13"), TEXT("Confuse"), ESpellSchool::Mage, ESpellEffect::Projectile, 100, 40, 0, 1, 17 }, // SPL00004
@@ -97,6 +129,15 @@ namespace NativeWadRules
         {TEXT("17"), TEXT("Earthbind"), ESpellSchool::Arcane, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00103
         {TEXT("637"), TEXT("Earthbind"), ESpellSchool::Cleric, ESpellEffect::Projectile, 500, 0, 0, 1, 15}, // SPL00104
     };
+    // SPELLS.C clamps negative difficulty to zero before comparing rand()%100. A zero roll can still succeed.
+    constexpr int32 SpellCastingThreshold(int32 MagicAttributeValue, int32 Hardness, int32 Level)
+    {
+        return FMath::Max(0, MagicAttributeValue + Hardness + 2 * Level);
+    }
+    constexpr bool SpellRollSucceeds(int32 MagicAttributeValue, int32 Hardness, int32 Level, int32 Roll)
+    {
+        return Roll <= SpellCastingThreshold(MagicAttributeValue, Hardness, Level);
+    }
     constexpr ESpellSchool SchoolForClass(int32 Index)
     {
         return Index == PriestClass || Index == PaladinClass ? ESpellSchool::Cleric
@@ -186,6 +227,7 @@ namespace NativeWadRules
     // INVDESC/DES00360, DES00613 and DES00805.
     inline constexpr int32 FlyingScroll = 360;
     inline constexpr int32 FlyingAmulet = 613;
+    inline constexpr int32 FeatherfallAmulet = 614;
     inline constexpr int32 FlyingPotion = 805;
     inline constexpr double FlyingScrollSeconds = 5000.0 / TicksPerSecond;
     inline constexpr double FlyingPotionSeconds = 4000.0 / TicksPerSecond;
@@ -328,7 +370,7 @@ namespace NativeWadRules
         {
             return ERejuvenateResult::InsufficientMana;
         }
-        if (Roll > MagicAttributeValue + RejuvenateHardness + 2 * Level)
+        if (!SpellRollSucceeds(MagicAttributeValue, RejuvenateHardness, Level, Roll))
         {
             Mana -= RejuvenateCost / 2;
             return ERejuvenateResult::Fizzle;

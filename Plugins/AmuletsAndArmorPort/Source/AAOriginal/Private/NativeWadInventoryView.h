@@ -12,6 +12,11 @@ namespace NativeWadInventoryView
         {{242, 19}, {259, 30}}, {{253, 28}, {272, 54}}, {{230, 28}, {245, 65}},
         {{241, 50}, {259, 83}}, {{244, 29}, {253, 51}}, {{258, 47}, {268, 62}},
     };
+    // INVENTOR.C's neck and four ring rectangles on the original Equipment form.
+    inline const FBox2D JewelryBoxes[] = {
+        {{291, 20}, {307, 33}}, {{294, 36}, {305, 45}}, {{294, 48}, {305, 57}},
+        {{294, 60}, {305, 69}}, {{294, 72}, {305, 81}},
+    };
 
     inline FBox2D SlotBox(int32 Slot)
     {

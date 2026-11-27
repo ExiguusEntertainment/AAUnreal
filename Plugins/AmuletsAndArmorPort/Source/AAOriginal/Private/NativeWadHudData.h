@@ -64,6 +64,9 @@ struct FWadInventoryDetails
 
     UPROPERTY()
     int32 ArmorSlot = INDEX_NONE;
+    // NeckSlot for an amulet, Ring1Slot for any ring, INDEX_NONE for other items.
+    UPROPERTY()
+    int32 JewelrySlot = INDEX_NONE;
     UPROPERTY()
     int32 ArmorValue = 0;
     UPROPERTY()
@@ -88,6 +91,18 @@ struct FWadStartingEquipment
 
     UPROPERTY()
     TArray<int32> Ammo;
+};
+
+USTRUCT()
+struct FWadCreatureDescription
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FString Name;
+
+    UPROPERTY()
+    FString Description;
 };
 
 UCLASS()
@@ -123,6 +138,9 @@ public:
     TMap<int32, TObjectPtr<UMaterialInterface>> WandProjectileMaterials;
     UPROPERTY()
     TMap<FName, TSoftObjectPtr<USoundWave>> MusicByMap;
+
+    UPROPERTY()
+    TMap<int32, FWadCreatureDescription> CreatureDescriptions;
 
     UPROPERTY()
     TArray<FColor> Palette;

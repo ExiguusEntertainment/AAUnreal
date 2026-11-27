@@ -147,7 +147,8 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
     for (int32 Index = 0; Index < ItemStatusCount; ++Index)
     {
         ItemStatusSeconds[Index] = ReadDuration(*FString::Printf(TEXT("WadEffect%d="), Index), 1200.0);
-        ReadStat(*FString::Printf(TEXT("WadEffectPower%d="), Index), ItemStatusPower[Index], -100, 100);
+        const int32 PowerLimit = Index == HealthRegenStatus || Index == ManaRegenStatus ? 28000 : 120;
+        ReadStat(*FString::Printf(TEXT("WadEffectPower%d="), Index), ItemStatusPower[Index], -PowerLimit, PowerLimit);
     }
     if (const TCHAR* Option = URL.GetOption(TEXT("WadParalysis="), nullptr))
     {
@@ -220,6 +221,7 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
     {
         Worn = INDEX_NONE;
     }
+    for (int32& Worn : JewelrySlots) { Worn = INDEX_NONE; }
     if (const TCHAR* Option = URL.GetOption(TEXT("WadWorn="), nullptr))
     {
         TArray<FString> Parsed;
@@ -236,6 +238,23 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
                 {
                     WornSlots[Location] = Slot;
                 }
+            }
+        }
+    }
+    if (const TCHAR* Option = URL.GetOption(TEXT("WadJewelry="), nullptr))
+    {
+        TArray<FString> Parsed;
+        FString(Option).ParseIntoArray(Parsed, TEXT(","));
+        for (int32 Location = 0; Location < FMath::Min(Parsed.Num(), int32(JewelrySlotCount)); ++Location)
+        {
+            int32 Slot;
+            if (!LexTryParseString(Slot, *Parsed[Location]) || !CarriedItems.IsValidIndex(Slot)
+                || Slot == ReadySlot || IsWornInventorySlot(Slot)) { continue; }
+            const FWadInventoryDetails* Details = GetItemRules(CarriedItems[Slot]);
+            const int32 Required = Location == NeckSlot ? NeckSlot : Ring1Slot;
+            if (Details && Details->JewelrySlot == Required && CanUseWadItem(CarriedItems[Slot]))
+            {
+                JewelrySlots[Location] = Slot;
             }
         }
     }
@@ -288,7 +307,18 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
     }
     Input->BindKey(EKeys::BackSpace, IE_Pressed, this, &ANativeWadPlayer::RuneBackspace);
     Input->BindKey(EKeys::Enter, IE_Pressed, this, &ANativeWadPlayer::CastRejuvenate);
-    Input->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &ANativeWadPlayer::CastRejuvenate);
+    FInputKeyBinding RightMouse(FInputChord(EKeys::RightMouseButton), IE_Pressed);
+    RightMouse.KeyDelegate.GetDelegateForManualSet().BindWeakLambda(this, [this]
+    {
+        if (bMouseLook || !Runes.IsEmpty()) { CastRejuvenate(); return; }
+        if (auto* Controller = GetController<APlayerController>())
+        {
+            FVector2D Cursor;
+            if (auto* HUD = Controller->GetHUD<ANativeWadHUD>(); HUD && Controller->GetMousePosition(Cursor.X, Cursor.Y))
+            { HUD->ExamineAt(Cursor); }
+        }
+    });
+    Input->KeyBindings.Add(MoveTemp(RightMouse));
     Input->BindAxisKey(EKeys::MouseX, this, &ANativeWadPlayer::LookYaw);
     Input->BindAxisKey(EKeys::MouseY, this, &ANativeWadPlayer::LookPitch);
     Input->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ANativeWadPlayer::JumpOrRevive);
@@ -455,7 +485,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     };
     Options += FString::Printf(TEXT("?WadClass=%d"), CharacterClass);
     WriteDuration(TEXT("WadFlight"), FlightSeconds);
-    if (bReadiedFlightSuppressed && GetReadyItem() == FlyingAmulet) { Options += TEXT("?WadFlightSuppressed=1"); }
+    if (bReadiedFlightSuppressed && HasEquippedItem(FlyingAmulet)) { Options += TEXT("?WadFlightSuppressed=1"); }
     if (SelectedAmmo != 0)
     {
         Options += FString::Printf(TEXT("?WadAmmo=%d"), SelectedAmmo);
@@ -491,6 +521,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     {
         Options += TEXT("?WadItems=") + FString::JoinBy(CarriedItems, TEXT(","), [](int32 Type) { return LexToString(Type); });
         Options += TEXT("?WadWorn=") + FString::JoinBy(MakeArrayView(WornSlots), TEXT(","), [](int32 Slot) { return LexToString(Slot); });
+        Options += TEXT("?WadJewelry=") + FString::JoinBy(MakeArrayView(JewelrySlots), TEXT(","), [](int32 Slot) { return LexToString(Slot); });
         if (CarriedItems.ContainsByPredicate([](int32 Type) { return CoinValueCopper(Type) > 0; }))
         {
             Options += TEXT("?WadPhysicalCoins");
@@ -578,9 +609,9 @@ void ANativeWadPlayer::AttackPressed()
     const int32 BaseSpeed = bAuthored ? Details->WeaponSpeed : bDagger ? DaggerWeaponSpeed : 0;
     const int32 HitFrame = bAuthored ? Details->HitFrame : bDagger ? 30 : 32;
     const int32 SwingFrames = bAuthored ? Details->SwingFrames : bDagger ? 50 : 46;
-    const int32 Damage = FMath::Max(0, Attributes[StrengthAttribute] + GetStatusPower(StrengthStatus)) * BaseDamage / 2;
+    const int32 Damage = MeleeBaseDamage(GetEffectiveAttribute(StrengthAttribute), BaseDamage, CharacterClass);
     // STATS.C supplies the 16.16 overlay speed, and the weapon's ANI supplies the timing.
-    const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute] + GetStatusPower(SpeedStatus) + BaseSpeed, 0, 100) * 1100;
+    const int32 FrameSpeed = 40000 + FMath::Clamp(GetEffectiveAttribute(SpeedAttribute) + BaseSpeed, 0, 100) * 1100;
     const auto SecondsToFrame = [FrameSpeed](int32 Frame)
     {
         return FMath::DivideAndRoundUp(Frame * 65536, FrameSpeed) / TicksPerSecond;
@@ -593,6 +624,8 @@ void ANativeWadPlayer::AttackPressed()
 
 void ANativeWadPlayer::ResolveMeleeHit(int32 Damage)
 {
+    LastMeleeRawDamage = 0;
+    bLastMeleeCritical = false;
     if (Health <= 0)
     {
         return;
@@ -605,7 +638,13 @@ void ANativeWadPlayer::ResolveMeleeHit(int32 Damage)
     {
         if (ANativeWadGuardian* Guardian = Cast<ANativeWadGuardian>(Hit.GetActor()))
         {
-            Guardian->TakeMeleeHit(*this, Damage);
+            const int32 DamageRoll = FMath::Rand();
+            const int32 CriticalRoll = FMath::Rand() % 200;
+            const FWadMeleeRoll Roll = ResolveMeleeRoll(Damage, GetEffectiveAttribute(AccuracyAttribute), DamageRoll, CriticalRoll);
+            LastMeleeRawDamage = Roll.Damage;
+            bLastMeleeCritical = Roll.bCritical;
+            Guardian->TakeMeleeHit(*this, Roll.Damage);
+            UE_LOG(LogTemp, Display, TEXT("WAD melee hit: raw damage %d, critical=%d."), Roll.Damage, Roll.bCritical);
         }
     }
 }
@@ -704,7 +743,7 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind))
         {
             FlightSeconds = 0.0;
-            bReadiedFlightSuppressed = GetReadyItem() == FlyingAmulet;
+            bReadiedFlightSuppressed = HasEquippedItem(FlyingAmulet);
         }
         else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Slow))
         {
@@ -763,7 +802,7 @@ void ANativeWadPlayer::StartWadEarthquake(double Duration)
 
 void ANativeWadPlayer::UpdateWaterWalking(const ANativeWadLevel& Level)
 {
-    const bool bRequested = GetReadyItem() == WaterWalkRing || WaterWalkSeconds > 0.0;
+    const bool bRequested = HasEquippedItem(WaterWalkRing) || WaterWalkSeconds > 0.0;
     if (bRequested == bOnWaterSurface)
     {
         return;
@@ -798,21 +837,17 @@ void ANativeWadPlayer::TickItemStatuses(float DeltaSeconds)
     {
         Seconds = FMath::Max(0.0, Seconds - DeltaSeconds);
     }
-    if (GetReadyItem() != FlyingAmulet) { bReadiedFlightSuppressed = false; }
-    const int32 EffectiveSpeed = FMath::Clamp(Attributes[SpeedAttribute] + GetStatusPower(SpeedStatus), 0, 100);
+    if (!HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+    const int32 EffectiveSpeed = GetEffectiveAttribute(SpeedAttribute);
     // Keep the existing native baseline while applying the original MaxVWalking=(Speed/5)+10 modifier ratio.
-    const float SpeedRatio = float(EffectiveSpeed / 5 + 10) / float(Attributes[SpeedAttribute] / 5 + 10);
+    const float SpeedRatio = float(EffectiveSpeed / 5 + 10) / float(EffectiveAttribute(Attributes[SpeedAttribute], 0) / 5 + 10);
     GetCharacterMovement()->MaxWalkSpeed = 190.0f * SpeedRatio;
     GetCharacterMovement()->MaxFlySpeed = 600.0f * SpeedRatio;
-    const int32 Concealment = GetStatusPower(InvisibleStatus) ? 190 : GetStatusPower(TranslucentStatus) ? 100 : 0;
-    if (Concealment == 0)
+    const int32 Concealment = ConcealmentThreshold(GetEffectiveAttribute(StealthAttribute),
+        GetStatusPower(InvisibleStatus) != 0, GetStatusPower(TranslucentStatus) != 0);
+    if (const double Now = GetWorld()->GetTimeSeconds(); Now >= NextConcealmentRoll)
     {
-        bConcealed = false;
-        NextConcealmentRoll = 0.0;
-    }
-    else if (const double Now = GetWorld()->GetTimeSeconds(); Now >= NextConcealmentRoll)
-    {
-        bConcealed = FMath::RandRange(0, 199) < FMath::Max(Concealment, Attributes[StealthAttribute] / 2);
+        bConcealed = FMath::RandRange(0, 199) < Concealment;
         NextConcealmentRoll = Now + (GetVelocity().IsNearlyZero() ? 3.0 : 1.0);
     }
 }
@@ -1003,7 +1038,7 @@ void ANativeWadPlayer::CastRejuvenate()
                 ShowInteractionMessage(FString::Printf(TEXT("Insufficient mana for %s."), Spell.Name));
                 return;
             }
-            if (FMath::RandRange(0, 99) > Attributes[MagicAttribute] + Spell.Hardness + 2 * CharacterLevel)
+            if (!SpellRollSucceeds(GetEffectiveAttribute(MagicAttribute), Spell.Hardness, CharacterLevel, FMath::RandRange(0, 99)))
             {
                 Mana -= Spell.Mana / 2;
                 ShowInteractionMessage(FString::Printf(TEXT("%s fizzled."), Spell.Name));
@@ -1016,18 +1051,30 @@ void ANativeWadPlayer::CastRejuvenate()
             }
             Mana -= Spell.Mana;
             const double Duration = Spell.DurationTicks / double(TicksPerSecond);
+            const int32 PoisonBefore = PoisonLevel;
             switch (Spell.Effect)
             {
             case ESpellEffect::Projectile: break;
             case ESpellEffect::WaterWalk: WaterWalkSeconds = FMath::Max(WaterWalkSeconds, Duration); break;
             case ESpellEffect::FeatherFall: FeatherfallSeconds = FMath::Max(FeatherfallSeconds, Duration); break;
+            case ESpellEffect::Flight: FlightSeconds = FMath::Max(FlightSeconds, Duration); break;
+            case ESpellEffect::EternalNourishment:
+                ItemStatusSeconds[EternalNourishmentStatus] = Duration;
+                ItemStatusPower[EternalNourishmentStatus] = Spell.Power;
+                break;
+            case ESpellEffect::Heal: Health = FMath::Min(MaxHealth, Health + Spell.Power); break;
+            case ESpellEffect::PurifyBlood:
+                // EFFECT.C retains the upper half of odd poison, so one point cannot be removed by this spell.
+                PoisonLevel -= PoisonLevel >> 1;
+                break;
             case ESpellEffect::Shield:
                 ItemStatusSeconds[SpellShieldStatus] = Duration;
                 ItemStatusPower[SpellShieldStatus] = Spell.Power;
                 break;
             }
             ++SuccessfulCasts;
-            ShowInteractionMessage(Spell.Name);
+            ShowInteractionMessage(Spell.Effect == ESpellEffect::PurifyBlood && PoisonBefore > 0
+                ? TEXT("The poison in your body is less.") : Spell.Name);
             UE_LOG(LogTemp, Display, TEXT("Cast %s for %d mana."), Spell.Name, Spell.Mana);
             return;
         }
@@ -1038,7 +1085,7 @@ void ANativeWadPlayer::CastRejuvenate()
     Runes.Reset();
     const int32 ManaBefore = Mana;
     const int32 HealthBefore = Health;
-    const ERejuvenateResult Result = ResolveRejuvenate(Health, Mana, MaxHealth, Attributes[MagicAttribute], CharacterLevel,
+    const ERejuvenateResult Result = ResolveRejuvenate(Health, Mana, MaxHealth, GetEffectiveAttribute(MagicAttribute), CharacterLevel,
         FMath::RandRange(0, 99));
     if (Result == ERejuvenateResult::InsufficientMana)
     {
@@ -1062,17 +1109,24 @@ void ANativeWadPlayer::TickNeeds(float DeltaSeconds)
     while (NeedsTime >= 6.0)
     {
         NeedsTime -= 6.0;
-        const int32 HealthRecovery = (Attributes[ConstitutionAttribute] * (CharacterLevel + 5) >> 3) * Food / MaxFood;
-        const int32 ManaBase = Attributes[MagicAttribute] * (CharacterLevel + 5) * CharacterClasses[CharacterClass].ManaRecoveryPercent / 100;
-        const int32 ManaRecovery = (ManaBase >> 2) * Water / MaxFood;
+        const int32 HealthRecovery = GetHealthRegeneration();
+        const int32 ManaRecovery = GetManaRegeneration();
         Health = FMath::Min(MaxHealth, Health + HealthRecovery);
         Mana = FMath::Min(MaxMana, Mana + ManaRecovery);
-        Food = FMath::Max(0, Food - 1);
-        Water = FMath::Max(0, Water - 1);
+        // STATS.C conserves only natural depletion. These effects do not refill
+        // food/water or cancel authored costs from food, drink, potions, or scripts.
+        if (GetStatusPower(EternalNourishmentStatus) <= 0)
+        {
+            if (GetStatusPower(FoodConservationStatus) <= 0) { Food = FMath::Max(0, Food - 1); }
+            if (GetStatusPower(WaterConservationStatus) <= 0) { Water = FMath::Max(0, Water - 1); }
+        }
         if (PoisonLevel > 0)
         {
-            ReceiveEncounterHit(PoisonLevel * 2);
-            PoisonLevel = FMath::Max(0, PoisonLevel - FMath::Max(5, Attributes[ConstitutionAttribute] >> 2));
+            // STATS.C prevents periodic poison injury while protected, but the
+            // remaining poison still decays normally when the needs tick runs.
+            if ((GetResistanceMask() & DamageFlag(EProjectileDamage::Poison)) == 0)
+            { ReceiveEncounterHit(PoisonLevel * 2); }
+            PoisonLevel = FMath::Max(0, PoisonLevel - FMath::Max(5, GetEffectiveAttribute(ConstitutionAttribute) >> 2));
         }
     }
 }

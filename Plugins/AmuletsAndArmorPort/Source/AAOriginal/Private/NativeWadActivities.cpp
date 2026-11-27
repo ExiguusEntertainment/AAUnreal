@@ -10,6 +10,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
+#include "NativeWadOptions.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
 #include "Sound/SoundAttenuation.h"
@@ -653,6 +654,7 @@ void ANativeWadLevel::PlayActivitySound(const FWadScriptCommand& Command)
     }
     USoundWaveProcedural* Wave = MakeWadSound(*Sample, false);
     const float Volume = FMath::Clamp(Command.Value / 255.0f, 0.0f, 1.0f);
+    const float PlaybackVolume = NativeWadOptions::EffectiveVolume(NativeWadOptions::EAudioChannel::Effects, Volume);
     UAudioComponent* Audio = nullptr;
     if (Command.Operation == EWadScriptOperation::PlayAreaSound)
     {
@@ -661,14 +663,15 @@ void ANativeWadLevel::PlayActivitySound(const FWadScriptCommand& Command)
         Attenuation->Attenuation.FalloffDistance = float(Command.Ticks);
         const FVector Position = GetActorTransform().TransformPosition(FVector(Command.Position));
         Audio = UGameplayStatics::SpawnSoundAtLocation(this, Wave, Position, FRotator::ZeroRotator,
-            Volume, 1.0f, 0.0f, Attenuation);
+            PlaybackVolume, 1.0f, 0.0f, Attenuation);
     }
     else
     {
-        Audio = UGameplayStatics::SpawnSound2D(this, Wave, Volume);
+        Audio = UGameplayStatics::SpawnSound2D(this, Wave, PlaybackVolume);
     }
     if (Audio)
     {
+        NativeWadOptions::TrackAudio(Audio, NativeWadOptions::EAudioChannel::Effects, Volume);
         FTimerHandle Handle;
         GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateUObject(Audio, &UAudioComponent::Stop),
             Wave->Duration + 0.05f, false);
@@ -737,7 +740,7 @@ void ANativeWadLevel::TickAmbientEmitters(float DeltaSeconds)
     {
         if (UAudioComponent* Component = PlayingEmitters.FindRef(Index))
         {
-            Component->SetVolumeMultiplier(Volume);
+            NativeWadOptions::TrackAudio(Component, NativeWadOptions::EAudioChannel::Effects, Volume);
             continue;
         }
         const FWadAmbientEmitter& Emitter = AmbientEmitters[Index];
@@ -751,8 +754,10 @@ void ANativeWadLevel::TickAmbientEmitters(float DeltaSeconds)
         Attenuation->Attenuation.bSpatialize = true;
         const FVector Position = GetActorTransform().TransformPosition(Emitter.Position);
         if (UAudioComponent* Component = UGameplayStatics::SpawnSoundAtLocation(this, MakeWadSound(*Sample, true),
-                Position, FRotator::ZeroRotator, Volume, 1.0f, 0.0f, Attenuation))
+                Position, FRotator::ZeroRotator,
+                NativeWadOptions::EffectiveVolume(NativeWadOptions::EAudioChannel::Effects, Volume), 1.0f, 0.0f, Attenuation))
         {
+            NativeWadOptions::TrackAudio(Component, NativeWadOptions::EAudioChannel::Effects, Volume);
             PlayingEmitters.Add(Index, Component);
         }
     }

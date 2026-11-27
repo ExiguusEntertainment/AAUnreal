@@ -286,10 +286,14 @@ bool LoadWadInterfacePalette(TArray<FColor>& Palette)
 
 bool LoadWadInterfacePicture(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels)
 {
+    if (!PicturePath.StartsWith(TEXT("UI/")) || PicturePath.Contains(TEXT(".."))) { return false; }
+    FString Filename = GetArtFinalPath(PicturePath);
+    // Original form resource names omit extensions; some loose source UI art
+    // retains .PIC, including the character/options toggle buttons.
+    if (!FPaths::FileExists(Filename) && FPaths::GetExtension(Filename).IsEmpty()) { Filename += TEXT(".PIC"); }
     TArray<FColor> Palette;
     TArray<uint8> Picture;
-    if (!PicturePath.StartsWith(TEXT("UI/")) || PicturePath.Contains(TEXT(".."))
-        || !LoadGamePalette(Palette) || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(PicturePath))
+    if (!LoadGamePalette(Palette) || !FFileHelper::LoadFileToArray(Picture, *Filename)
         || Picture.Num() < 4)
     {
         return false;

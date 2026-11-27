@@ -43,7 +43,7 @@ def refresh_encounters():
     project = Path(unreal.Paths.project_dir()).resolve()
     source = project / "Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe"
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-    restored_types = (1005, 1006, 1007, 1021, 1022, 1037)
+    restored_types = (1005, 1006, 1007, 1012, 1017, 1018, 1019, 1021, 1022, 1037)
     # The private encounter profile is covered by C++ gameplay regressions.
     # Validate the saved public movement/collision/art here without exposing it.
     profiles = {
@@ -52,7 +52,8 @@ def refresh_encounters():
         1022: (70.0, 70.0, 42.0, "M_HYDRA"),
         1037: (49.0, 175.0, 80.0, "M_DRAGON4"),
     }
-    for name in ("L40", "L71", "L10", "L32", "L51"):
+    maps = ("L40", "L71", "L10", "L32", "L51", "L30", "L301", "L531", "L31", "L22")
+    for name in maps:
         path = project / "Content/Maps" / f"{name}.umap"
         world = unreal.EditorLoadingAndSavingUtils.load_map(str(path))
         levels = [actor for actor in actors.get_all_level_actors() if isinstance(actor, unreal.NativeWadLevel)]
@@ -87,7 +88,7 @@ def refresh_encounters():
                 raise RuntimeError(f"Missing/duplicate placed type {kind} in {name}: {placed[kind]} != {original[kind]}")
         unreal.log(f"Verified restored encounter counts and preserved {len(before)} surfaces: {name}, "
                    + str({kind: placed[kind] for kind in restored_types if placed[kind]}))
-    unreal.log("Verified restored encounters across all five affected maps without geometry changes")
+    unreal.log(f"Verified restored encounters across all {len(maps)} affected maps without geometry changes")
 
 
 refresh_encounters()

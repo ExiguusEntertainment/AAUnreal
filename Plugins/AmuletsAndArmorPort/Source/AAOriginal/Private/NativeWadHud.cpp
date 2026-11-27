@@ -10,9 +10,13 @@
 #include "Framework/Application/SlateApplication.h"
 #include "InputCoreTypes.h"
 #include "NativeWadCheckpoint.h"
+#include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
 #include "NativeWadInventoryView.h"
 #include "NativeWadNotes.h"
+#include "NativeWadOptions.h"
+#include "NativeWadLook.h"
+#include "Materials/MaterialInterface.h"
 #include "TextureResource.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -20,6 +24,7 @@ namespace
 {
     using NativeWadInventoryView::Ready;
     using NativeWadInventoryView::ArmorBoxes;
+    using NativeWadInventoryView::JewelryBoxes;
     using NativeWadInventoryView::SlotBox;
     using NativeWadInventoryView::SlotsPerPage;
     using FInventoryView = NativeWadInventoryView::FView;
@@ -34,6 +39,7 @@ namespace
     const FBox2D InventoryButton({5, 155}, {21, 168});
     const FBox2D EquipmentButton({22, 155}, {38, 168});
     const FBox2D StatisticsButton({39, 155}, {55, 168});
+    const FBox2D OptionsButton({5, 169}, {21, 182});
     const FBox2D FinancesButton({39, 169}, {55, 182});
     const FBox2D AmmoButton({5, 183}, {21, 196});
     const FBox2D NotesButton({22, 183}, {38, 196});
@@ -260,6 +266,8 @@ void ANativeWadHUD::BeginPlay()
         EnableInput(GetOwningPlayerController());
         InputComponent->BindKey(FInputChord(EKeys::NumPadTwo, EModifierKey::Alt), IE_Pressed, this, &ANativeWadHUD::ToggleNotes);
         InputComponent->BindKey(FInputChord(EKeys::NumPadThree, EModifierKey::Alt), IE_Pressed, this, &ANativeWadHUD::ToggleJournal);
+        InputComponent->BindKey(FInputChord(EKeys::NumPadFour, EModifierKey::Alt), IE_Pressed, this, &ANativeWadHUD::ToggleOptions);
+        InputComponent->BindKey(EKeys::F1, IE_Pressed, this, &ANativeWadHUD::ToggleControls);
     }
 }
 
@@ -267,6 +275,17 @@ void ANativeWadHUD::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     SyncNotesInput();
+    if (DraggedOptionSlider != INDEX_NONE)
+    {
+        auto* Controller = GetOwningPlayerController();
+        if (!IsOptionsOpen() || !Controller || !Controller->IsInputKeyDown(EKeys::LeftMouseButton))
+        { DraggedOptionSlider = INDEX_NONE; }
+        else
+        {
+            FVector2D Cursor;
+            if (Controller->GetMousePosition(Cursor.X, Cursor.Y)) { UpdateOptionsSlider(Cursor); }
+        }
+    }
 }
 
 void ANativeWadHUD::EndPlay(const EEndPlayReason::Type Reason)
@@ -279,6 +298,55 @@ bool ANativeWadHUD::IsNotesOpen() const
 {
     const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     return Player && Player->IsInventoryOpen() && Form == EForm::Notes;
+}
+
+bool ANativeWadHUD::IsOptionsOpen() const
+{
+    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    return Player && Player->IsInventoryOpen() && Form == EForm::Options;
+}
+
+bool ANativeWadHUD::IsControlsOpen() const
+{
+    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    return Player && Player->IsInventoryOpen() && Form == EForm::Controls;
+}
+
+bool ANativeWadHUD::IsLookOpen() const
+{
+    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    return Player && Player->IsInventoryOpen() && Form == EForm::Look;
+}
+
+bool ANativeWadHUD::ExamineAt(const FVector2D& ViewportPoint)
+{
+    auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    auto* Controller = GetOwningPlayerController();
+    const auto Layout = InputLayout(Controller);
+    if (!Player || !Controller || !ClassicData || Player->IsMouseLook() || Layout.Scale <= 0.0) { return false; }
+    const FVector2D Point = (ViewportPoint - Layout.Origin) / Layout.Scale;
+    const FBox2D VisibleView(ViewOpening.Min, {Player->IsInventoryOpen() ? 205.0 : ViewOpening.Max.X, ViewOpening.Max.Y});
+    if (!VisibleView.IsInside(Point)) { return false; }
+    FVector Origin, Direction;
+    FHitResult Hit;
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(WadCreatureLook), true, Player);
+    const bool bHit = Controller->DeprojectScreenPositionToWorld(ViewportPoint.X, ViewportPoint.Y, Origin, Direction)
+        && GetWorld()->LineTraceSingleByChannel(Hit, Origin, Origin + Direction * 20000.0, ECC_Visibility, Query);
+    const auto* Creature = bHit ? Cast<ANativeWadGuardian>(Hit.GetActor()) : nullptr;
+    if (!Creature || Creature->IsHidden())
+    {
+        Player->ShowInteractionMessage(TEXT("I don't see anything special there."));
+        return false;
+    }
+    LookSourceType = Creature->GetLookSourceType();
+    const auto* Description = ClassicData->CreatureDescriptions.Find(LookSourceType);
+    LookName = Description ? Description->Name : TEXT("Unknown Creature");
+    LookDescription = Description ? Description->Description : TEXT("No other information available.");
+    LookPortrait = Creature->GetPortraitMaterial();
+    LookPortraitSize = Creature->GetPortraitSize();
+    LookScroll = 0;
+    if (!IsLookOpen()) { ToggleForm(EForm::Look); }
+    return true;
 }
 
 int32 ANativeWadHUD::GetNotesCursor() const { return NotesEditor ? NotesEditor->GetCursor() : 0; }
@@ -372,13 +440,42 @@ void ANativeWadHUD::HandleNotesKey(const FKey& Key, bool bControl, bool bAlt)
 {
     if (!IsNotesOpen() || !NotesEditor) { return; }
     if (Key == EKeys::Escape) { ToggleForm(EForm::Notes); return; }
+    if (Key == EKeys::F1) { ToggleControls(); return; }
     if (bAlt && Key == EKeys::NumPadTwo) { ToggleNotes(); return; }
     if (bAlt && Key == EKeys::NumPadThree) { ToggleJournal(); return; }
+    if (bAlt && Key == EKeys::NumPadFour) { ToggleOptions(); return; }
     if (NotesEditor->Key(Key, bControl)) { StoreNotes(); }
 }
 
 void ANativeWadHUD::ToggleNotes() { ToggleForm(EForm::Notes); }
 void ANativeWadHUD::ToggleJournal() { ToggleForm(EForm::Journal); }
+void ANativeWadHUD::ToggleOptions() { ToggleForm(EForm::Options); }
+void ANativeWadHUD::ToggleControls() { ToggleForm(EForm::Controls); }
+
+void ANativeWadHUD::ScrollClassicText(int32 Delta)
+{
+    if (!ClassicData || (!IsOptionsOpen() && !IsControlsOpen() && !IsLookOpen())) { return; }
+    const bool bOptions = IsOptionsOpen();
+    const bool bLook = IsLookOpen();
+    const FString& Text = bLook ? LookDescription : bOptions ? NativeWadOptions::Credits() : NativeWadOptions::Controls();
+    const int32 Rows = (bLook ? 45 : bOptions ? 75 : 132) / FMath::Max(1, ClassicData->Tiny.Height);
+    int32& Scroll = bLook ? LookScroll : bOptions ? OptionsScroll : ControlsScroll;
+    Scroll = FMath::Clamp(Scroll + Delta, 0, FMath::Max(0, NativeWadOptions::TextLineCount(Text, ClassicData->Tiny, 92) - Rows));
+}
+
+void ANativeWadHUD::UpdateOptionsSlider(FVector2D ViewportPoint)
+{
+    if (!IsOptionsOpen() || DraggedOptionSlider == INDEX_NONE) { return; }
+    const auto Layout = InputLayout(GetOwningPlayerController());
+    if (Layout.Scale <= 0.0) { return; }
+    const double X = ((ViewportPoint - Layout.Origin) / Layout.Scale).X;
+    // SLIDR.C positions the nine-pixel knob from x216 to300, with the mouse at its center.
+    const float Volume = float(FMath::Clamp((X - 220.0) / 84.0, 0.0, 1.0));
+    auto Preferences = NativeWadOptions::GetAudioPreferences();
+    if (DraggedOptionSlider == 0) { Preferences.MusicVolume = Volume; }
+    else { Preferences.EffectsVolume = Volume; }
+    NativeWadOptions::SetAudioPreferences(Preferences);
+}
 
 void ANativeWadHUD::ScrollNotes(int32 Delta)
 {
@@ -399,6 +496,12 @@ FVector2D ANativeWadHUD::InventorySlotCenter(int32 Slot) const
 void ANativeWadHUD::ChangeInventoryPage(int32 Offset)
 {
     if (IsNotesOpen()) { ScrollNotes(Offset * (NotesEditor ? NotesEditor->GetVisibleRows() : 1)); return; }
+    if (IsOptionsOpen() || IsControlsOpen() || IsLookOpen())
+    {
+        const int32 Rows = (IsLookOpen() ? 45 : IsOptionsOpen() ? 75 : 132) / FMath::Max(1, ClassicData->Tiny.Height);
+        ScrollClassicText(Offset * Rows);
+        return;
+    }
     const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     if (ClassicData && Player && Player->IsInventoryOpen() && Form == EForm::Inventory)
     {
@@ -415,6 +518,9 @@ void ANativeWadHUD::ToggleForm(EForm Requested)
             Player->ToggleInventory();
         }
         Form = Player->IsInventoryOpen() ? Requested : EForm::Inventory;
+        DraggedOptionSlider = INDEX_NONE;
+        if (Form == EForm::Options) { OptionsScroll = 0; }
+        if (Form == EForm::Controls) { ControlsScroll = 0; }
         SyncNotesInput();
     }
 }
@@ -436,11 +542,11 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
     const auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
     const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
     if (InventoryButton.IsInside(Point) || EquipmentButton.IsInside(Point) || StatisticsButton.IsInside(Point)
-        || FinancesButton.IsInside(Point) || AmmoButton.IsInside(Point) || NotesButton.IsInside(Point)
+        || OptionsButton.IsInside(Point) || FinancesButton.IsInside(Point) || AmmoButton.IsInside(Point) || NotesButton.IsInside(Point)
         || JournalButton.IsInside(Point))
     {
         const EForm Requested = InventoryButton.IsInside(Point) ? EForm::Inventory : EquipmentButton.IsInside(Point) ? EForm::Equipment
-            : StatisticsButton.IsInside(Point) ? EForm::Statistics : FinancesButton.IsInside(Point) ? EForm::Finances
+            : StatisticsButton.IsInside(Point) ? EForm::Statistics : OptionsButton.IsInside(Point) ? EForm::Options : FinancesButton.IsInside(Point) ? EForm::Finances
             : AmmoButton.IsInside(Point) ? EForm::Ammo : NotesButton.IsInside(Point) ? EForm::Notes : EForm::Journal;
         ToggleForm(Requested);
         return;
@@ -487,6 +593,33 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
         else if (NotesField.IsInside(Point) && NotesEditor) { NotesEditor->PlaceCursor(Point - NotesField.Min); }
         return;
     }
+    if (Form == EForm::Options)
+    {
+        auto Preferences = NativeWadOptions::GetAudioPreferences();
+        if (FBox2D({217, 19}, {227, 27}).IsInside(Point))
+        { Preferences.bMusic = !Preferences.bMusic; NativeWadOptions::SetAudioPreferences(Preferences); }
+        else if (FBox2D({217, 44}, {227, 52}).IsInside(Point))
+        { Preferences.bEffects = !Preferences.bEffects; NativeWadOptions::SetAudioPreferences(Preferences); }
+        else if (FBox2D({216, 31}, {309, 42}).IsInside(Point))
+        { DraggedOptionSlider = 0; UpdateOptionsSlider(Position); }
+        else if (FBox2D({216, 56}, {309, 67}).IsInside(Point))
+        { DraggedOptionSlider = 1; UpdateOptionsSlider(Position); }
+        else if (FBox2D({308, 73}, {315, 82}).IsInside(Point)) { ScrollClassicText(-1); }
+        else if (FBox2D({308, 140}, {315, 149}).IsInside(Point)) { ScrollClassicText(1); }
+        return;
+    }
+    if (Form == EForm::Controls)
+    {
+        if (FBox2D({308, 16}, {315, 25}).IsInside(Point)) { ScrollClassicText(-1); }
+        else if (FBox2D({308, 140}, {315, 149}).IsInside(Point)) { ScrollClassicText(1); }
+        return;
+    }
+    if (Form == EForm::Look)
+    {
+        if (FBox2D({308, 102}, {315, 111}).IsInside(Point)) { ScrollClassicText(-1); }
+        else if (FBox2D({308, 139}, {315, 148}).IsInside(Point)) { ScrollClassicText(1); }
+        return;
+    }
     if ((Form == EForm::Inventory || Form == EForm::Equipment) && BagEquipmentButton.IsInside(Point))
     {
         Form = Form == EForm::Inventory ? EForm::Equipment : EForm::Inventory;
@@ -505,6 +638,12 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
                     break;
                 }
             }
+        }
+        for (int32 Location = 0; Location < UE_ARRAY_COUNT(JewelryBoxes); ++Location)
+        {
+            if (!JewelryBoxes[Location].IsInside(Point)) { continue; }
+            Player->ClickJewelrySlot(Location);
+            break;
         }
         return;
     }
@@ -667,7 +806,7 @@ void ANativeWadHUD::DrawHUD()
     const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
     for (int32 Index = 1; Index < 9; ++Index)
     {
-        if (Index == 1 || Index == 2 || Index == 5 || Index == 6 || Index == 7 || Index == 8)
+        if (Index == 1 || Index == 2 || Index == 3 || Index == 5 || Index == 6 || Index == 7 || Index == 8)
         {
             continue;
         }
@@ -676,6 +815,71 @@ void ANativeWadHUD::DrawHUD()
     }
     if (!Player->IsInventoryOpen())
     {
+        return;
+    }
+    if (Form == EForm::Look)
+    {
+        Screen.Picture(TEXT("VIEWBAR"), {209, 0});
+        Screen.Picture(TEXT("VIEWSB"), {308, 112});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        Screen.Picture(TEXT("UPARROW"), {308, 102});
+        Screen.Picture(TEXT("DNARROW"), {308, 139});
+        if (LookPortrait)
+        {
+            const FBox2D Box = NativeWadLook::PortraitBox(LookPortraitSize);
+            FCanvasTileItem Tile(Screen.Layout.At(Box.Min), LookPortrait->GetRenderProxy(), Box.GetSize() * Screen.Layout.Scale);
+            Tile.BlendMode = SE_BLEND_Translucent;
+            Canvas->DrawItem(Tile);
+        }
+        DrawWadBitmapText(*Canvas, ClassicData->Medium, ClassicData->Palette, LookName,
+            Screen.Layout.At({214, 91}), Screen.Layout.Scale, 100, 1, 0, true, White);
+        const int32 Rows = 45 / FMath::Max(1, ClassicData->Tiny.Height);
+        DrawWadBitmapText(*Canvas, ClassicData->Tiny, ClassicData->Palette, LookDescription,
+            Screen.Layout.At({214, 102}), Screen.Layout.Scale, 92, Rows, LookScroll, false, White);
+        const int32 TotalRows = NativeWadOptions::TextLineCount(LookDescription, ClassicData->Tiny, 92);
+        if (TotalRows > Rows)
+        {
+            const double Y = 112 + double(LookScroll) / (TotalRows - Rows) * 24;
+            Screen.Rect({{309, Y}, {314, Y + 3}}, Screen.Color(White));
+        }
+        return;
+    }
+    if (Form == EForm::Options || Form == EForm::Controls)
+    {
+        const bool bOptions = Form == EForm::Options;
+        Screen.Picture(bOptions ? TEXT("OPTBAR") : TEXT("CNTRLBAR"), {209, 0});
+        Screen.Picture(bOptions ? TEXT("OPTSB") : TEXT("CNTRLSB"), {308, bOptions ? 83.0 : 26.0});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        Screen.Picture(TEXT("UPARROW"), {308, bOptions ? 73.0 : 16.0});
+        Screen.Picture(TEXT("DNARROW"), {308, 140});
+        if (bOptions)
+        {
+            const auto& Preferences = NativeWadOptions::GetAudioPreferences();
+            Screen.Picture(Preferences.bMusic ? TEXT("CRC_TOG1") : TEXT("CRC_TOG2"), {217, 19});
+            Screen.Picture(Preferences.bEffects ? TEXT("CRC_TOG1") : TEXT("CRC_TOG2"), {217, 44});
+            for (int32 Slider = 0; Slider < 2; ++Slider)
+            {
+                const double Y = Slider == 0 ? 35 : 60;
+                const float Volume = Slider == 0 ? Preferences.MusicVolume : Preferences.EffectsVolume;
+                Screen.Rect({{216, Y - 4}, {309, Y + 7}}, Screen.Color(76));
+                Screen.Line({216, Y}, {308, Y}, Screen.Color(213));
+                Screen.Line({216, Y + 1}, {308, Y + 1}, Screen.Color(218));
+                Screen.Line({217, Y + 2}, {309, Y + 2}, Screen.Color(0));
+                Screen.Picture(TEXT("SLIDER"), {216.0 + FMath::RoundToInt(Volume * 84), Y - 4});
+            }
+        }
+        const FString& Text = bOptions ? NativeWadOptions::Credits() : NativeWadOptions::Controls();
+        const int32 Scroll = bOptions ? OptionsScroll : ControlsScroll;
+        const int32 Rows = (bOptions ? 75 : 132) / FMath::Max(1, ClassicData->Tiny.Height);
+        DrawWadBitmapText(*Canvas, ClassicData->Tiny, ClassicData->Palette, Text,
+            Screen.Layout.At({214, bOptions ? 73.0 : 16.0}), Screen.Layout.Scale, 92, Rows, Scroll, false, White);
+        const int32 TotalRows = NativeWadOptions::TextLineCount(Text, ClassicData->Tiny, 92);
+        if (TotalRows > Rows)
+        {
+            const double Top = bOptions ? 83 : 26;
+            const double Y = Top + double(Scroll) / (TotalRows - Rows) * (137 - Top);
+            Screen.Rect({{309, Y}, {314, Y + 3}}, Screen.Color(White));
+        }
         return;
     }
     if (Form == EForm::Notes)
@@ -741,12 +945,25 @@ void ANativeWadHUD::DrawHUD()
                 }
             }
         }
+        static_assert(UE_ARRAY_COUNT(JewelryBoxes) == JewelrySlotCount);
+        for (int32 Location = 0; Location < JewelrySlotCount; ++Location)
+        {
+            const int32 Slot = Player->GetJewelryInventorySlot(Location);
+            if (Items.IsValidIndex(Slot)) { Screen.Item(Items[Slot], JewelryBoxes[Location]); }
+        }
         // BAN00002.FRM lists these fields in two columns.
         const int32 Values[] = {Armor[HeadSlot], Armor[ChestSlot], Armor[LeftArmSlot], Armor[RightArmSlot],
             Armor[LegsSlot], Armor[LegsSlot], Armor[ShieldSlot], Player->GetArmorRating()};
         for (int32 Index = 0; Index < UE_ARRAY_COUNT(Values); ++Index)
         {
             Screen.Text(FString::Printf(TEXT("%d%%"), Values[Index]), Index < 4 ? 241 : 294, 99 + 9 * (Index % 4), 17, 1, true);
+        }
+        FVector2D Cursor;
+        const int32 Selected = Player->GetSelectedInventorySlot();
+        if (Items.IsValidIndex(Selected) && GetOwningPlayerController()->GetMousePosition(Cursor.X, Cursor.Y))
+        {
+            Cursor = (Cursor - Screen.Layout.Origin) / Screen.Layout.Scale;
+            Screen.Item(Items[Selected], {Cursor + FVector2D(1, 1), Cursor + FVector2D(19, 19)});
         }
         return;
     }
@@ -799,10 +1016,9 @@ void ANativeWadHUD::DrawHUD()
         const FName Portrait(*FString::Printf(TEXT("SMPORT%02d"), Player->GetCharacterClass()));
         Screen.Picture(Portrait, {215, 27});
         Screen.Text(FString::FromInt(Player->GetCharacterLevel()), 299, 27, 14, 1, true);
-        const auto Attributes = Player->GetAttributes();
         for (int32 Index = 0; Index < UE_ARRAY_COUNT(StatRows); ++Index)
         {
-            Screen.Text(FString::FromInt(Attributes[StatRows[Index]]), 299, 37 + Index * 10, 14, 1, true);
+            Screen.Text(FString::FromInt(Player->GetEffectiveAttribute(StatRows[Index])), 299, 37 + Index * 10, 14, 1, true);
         }
         Screen.Text(CharacterClasses[Player->GetCharacterClass()].Name, 240, 103, 73, 1, true);
         if (Player->GetCharacterClass() == PriestClass)

@@ -96,6 +96,7 @@ namespace
         Details.bStoreBuys = Type == TEXT("WEAPON") || Type == TEXT("ARMOR") || Type == TEXT("POTION")
             || Type == TEXT("WAND") || Type == TEXT("SCROLL") || Type == TEXT("THING") || Type == TEXT("BOLT") || Type == TEXT("QUIVER");
         Details.bBankBuys = Type == TEXT("RING") || Type == TEXT("AMULET");
+        Details.JewelrySlot = Type == TEXT("AMULET") ? NeckSlot : Type == TEXT("RING") ? Ring1Slot : INDEX_NONE;
         Details.StackLimit = FMath::Max(1, FCString::Atoi(*Field(TEXT("NUMSTACKABLE"), 0, End)));
         Details.bConsumed = Type == TEXT("FOODSTUFF") || Field(TEXT("DESTROY ON"), 0, End) == TEXT("USE");
         if (Type == TEXT("ARMOR"))
@@ -142,6 +143,15 @@ namespace
                     : SubEffect == TEXT("TRANSLUCENT") ? TranslucentStatus
                     : SubEffect == TEXT("STRENGTH MOD") ? StrengthStatus
                     : SubEffect == TEXT("SPEED MOD") ? SpeedStatus
+                    : SubEffect == TEXT("ACCURACY MOD") ? AccuracyStatus
+                    : SubEffect == TEXT("STEALTH MOD") ? StealthStatus
+                    : SubEffect == TEXT("MAGIC MOD") ? MagicStatus
+                    : SubEffect == TEXT("HEALTH REGEN MOD") ? HealthRegenStatus
+                    : SubEffect == TEXT("MANA REGEN MOD") ? ManaRegenStatus
+                    : SubEffect == TEXT("FOOD CONSERVATION") ? FoodConservationStatus
+                    : SubEffect == TEXT("WATER CONSERVATION") ? WaterConservationStatus
+                    : SubEffect == TEXT("ETERNAL NOURISHMENT") ? EternalNourishmentStatus
+                    : SubEffect == TEXT("SHIELD") ? SpellShieldStatus
                     : SubEffect == TEXT("LAVA WALK") ? LavaWalkStatus
                     : SubEffect == TEXT("FIRE ATTACK") ? FireAttackStatus
                     : SubEffect == TEXT("ELECTRICITY ATTACK") ? ElectricityAttackStatus
@@ -160,7 +170,9 @@ namespace
                 {
                     Details.Status = Status;
                     Details.StatusTicks = Ticks;
-                    Details.StatusPower = Status == StrengthStatus || Status == SpeedStatus ? Power : 1;
+                    Details.StatusPower = Status == StrengthStatus || Status == SpeedStatus || Status == SpellShieldStatus
+                        || Status == AccuracyStatus || Status == StealthStatus || Status == MagicStatus
+                        || Status == HealthRegenStatus || Status == ManaRegenStatus ? Power : 1;
                 }
                 else if (Trigger == TEXT("USE"))
                 {

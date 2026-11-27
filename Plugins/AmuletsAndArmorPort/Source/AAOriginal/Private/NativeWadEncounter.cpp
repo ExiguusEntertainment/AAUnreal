@@ -4,6 +4,7 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -53,7 +54,7 @@ namespace
         switch (Profile.SourceType)
         {
         case 1003: case 1037: Velocity = 20.0f; break;
-        case 1010: Velocity = 30.0f; break;
+        case 1010: case 1012: Velocity = 30.0f; break;
         case 1021: Velocity = 25.0f; break;
         case 1023: Velocity = 15.0f; break;
         default: return Profile.WalkSpeed;
@@ -111,7 +112,35 @@ void FWadEncounterProfile::ApplySourceRules()
     case 1032: ChanceContinueAttack = 5; break;
     default: break;
     }
-    if (SourceType == 1003 || SourceType == 1010 || SourceType == 1023 || SourceType == 1021 || SourceType == 1037) { bCanFly = true; }
+    if (SourceType == 1003 || SourceType == 1010 || SourceType == 1012 || SourceType == 1023 || SourceType == 1021 || SourceType == 1037) { bCanFly = true; }
+    if (SourceType == 1012)
+    {
+        MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::Piercing)
+            | DamageFlag(EProjectileDamage::ManaDrain) | DamageFlag(EProjectileDamage::Poison);
+        ResistanceMask = MeleeDamageMask;
+        MeleeDamage = 100;
+        MeleeRange = 250.0f;
+        MeleeDelayUpdates = 10;
+        UpdateTicks = 7;
+        RegenPerUpdate = 3;
+        BoltDamage = 0;
+        VisionHalfAngle = 67.5f;
+    }
+    if (SourceType == 1017 || SourceType == 1018 || SourceType == 1019)
+    {
+        bCanFly = false;
+        MeleeDamageMask = NormalDamage;
+        MeleeDelayUpdates = SourceType == 1018 ? 30 : 10;
+        RangedDelayUpdates = 50;
+        UpdateTicks = SourceType == 1018 ? 5 : 7;
+        RegenPerUpdate = SourceType == 1019 ? 0 : 1;
+        VisionHalfAngle = SourceType == 1017 ? 45.0f : SourceType == 1018 ? 135.0f : 90.0f;
+        SourceMissileType = SourceType == 1017 ? 0 : SourceType == 1018 ? 886 : 4018;
+        HomingMissileType = SourceType == 1019 ? 4018 : 0;
+        BoltDamage = SourceType == 1017 ? 0 : SourceType == 1018 ? 300 : 100;
+        MinBoltRange = SourceType == 1017 ? 0.0f : 250.0f;
+        BoltRange = SourceType == 1017 ? 0 : SourceType == 1018 ? 2000 : 1000;
+    }
     if (SourceType == 1005 || SourceType == 1022)
     {
         bCanFly = false;
@@ -187,6 +216,9 @@ void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Stand
     {
         Sprite->SetRelativeScale3D(FVector(Profile.SpriteSize * 0.01, 1.0));
     }
+    // The short source Wolf still needs a valid Unreal capsule. Keep its small sprite's feet at the capsule base.
+    Sprite->SetRelativeLocation(FVector(0, 0, Profile.SourceType == 1017 && Profile.SpriteSize.Y > 0
+        ? Profile.SpriteSize.Y * 0.5 - GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 0.0));
 }
 
 void ANativeWadGuardian::BeginPlay()
@@ -216,6 +248,41 @@ void ANativeWadGuardian::ConfigureFrom(const ANativeWadGuardian& Example)
 void ANativeWadGuardian::ShowSummonPose()
 {
     AttackPoseUntil = GetWorld()->GetTimeSeconds() + 20 / TicksPerSecond;
+}
+
+FVector2D ANativeWadGuardian::GetPortraitSize() const
+{
+    if (Profile.SpriteSize.X > 0.0 && Profile.SpriteSize.Y > 0.0) { return Profile.SpriteSize; }
+    if (StandingMaterial)
+    {
+        TArray<UTexture*> Textures;
+        StandingMaterial->GetUsedTextures(Textures, EMaterialQualityLevel::High, true, ERHIFeatureLevel::SM5, true);
+        for (UTexture* Texture : Textures)
+        {
+            if (const UTexture2D* Image = Cast<UTexture2D>(Texture); Image && Image->GetSizeX() > 0 && Image->GetSizeY() > 0)
+            { return FVector2D(Image->GetSizeX(), Image->GetSizeY()); }
+        }
+    }
+    const FVector Scale = Sprite->GetRelativeScale3D();
+    return FVector2D(FMath::Max(1.0, FMath::Abs(Scale.X) * 100.0), FMath::Max(1.0, FMath::Abs(Scale.Y) * 100.0));
+}
+
+int32 ANativeWadGuardian::GetLookSourceType() const
+{
+    if (Profile.SourceType > 0) { return Profile.SourceType; }
+    // Earlier saved slices did not assign a combat source ID. Recover only identities established by their importers.
+    if (ActorHasTag(TEXT("L30 Elf Guardian")) || ActorHasTag(TEXT("L301 Elf Guardian 246"))) { return 1018; }
+    if (Profile.Name == TEXT("Elymas")) { return 50158; }
+    if (Profile.Name == TEXT("Exiguus")) { return 1032; }
+    if (Profile.Name == TEXT("Gaiseric Magician")) { return 3002; }
+    if (Profile.Name == TEXT("Mounted Knight of Andrew")) { return ChurchMountedKnight; }
+    if (Profile.Name == TEXT("Knight of Andrew Crossbowman")) { return ChurchFootKnight; }
+    if (Profile.Name == TEXT("Bronze Barbarian")) { return 3000; }
+    if (Profile.Name == TEXT("Black Barbarian")) { return 3001; }
+    if (Profile.Name == TEXT("White Barbarian")) { return 3002; }
+    if (Profile.Name == TEXT("Blue Barbarian")) { return 3003; }
+    if (Profile.Name == TEXT("Skeleton Knight")) { return 1033; }
+    return 0;
 }
 
 bool ANativeWadGuardian::CanSeePlayer(const ANativeWadPlayer& Player) const
@@ -268,12 +335,13 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerCharacter(this, 0));
     if (IsDefeated())
     {
-        if (Profile.bDipper) { TickDipper(DeltaSeconds, false); }
+        if (Profile.bDipper || Profile.SourceType == 1012) { TickDipper(DeltaSeconds, false); }
         return;
     }
 
     LogicTime += DeltaSeconds;
-    const bool bRetreat = Profile.bDipper ? Health <= Profile.RetreatHealth : Health < Profile.RetreatHealth;
+    const bool bRetreat = Profile.SourceType == 1012 || Profile.SourceType == 1017 ? false
+        : Profile.bDipper ? Health <= Profile.RetreatHealth : Health < Profile.RetreatHealth;
     // CRELOGIC.C extends the table's update by half and shortens the fleeing update by a quarter.
     const int32 UpdateTicks = SlowSeconds > 0.0 ? Profile.UpdateTicks * 3 : Profile.UpdateTicks + (Profile.UpdateTicks >> 1);
     const double Interval = (bRetreat ? UpdateTicks - (UpdateTicks >> 2) : UpdateTicks) / TicksPerSecond;
@@ -370,6 +438,42 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         return;
     }
+    if (Profile.SourceType == 1012)
+    {
+        // ITargetScream triggers ten units inside the radius, then damages the complete area without harming its owner.
+        if (MeleeDelay == 0 && Distance < Profile.MeleeRange - 10.0f)
+        {
+            MeleeDelay = Profile.MeleeDelayUpdates;
+            AttackPoseUntil = Now + 20 / TicksPerSecond;
+            GetCharacterMovement()->StopMovementImmediately();
+            ConsumeMovementInputVector();
+            ++ScreamsFired;
+            const FVector Origin = GetActorLocation();
+            const auto Push = [&](ACharacter& Victim)
+            {
+                const FVector Direction = (Victim.GetActorLocation() - Origin).GetSafeNormal2D();
+                Victim.GetCharacterMovement()->AddImpulse(Direction * ((Profile.MeleeDamage / 90) * TicksPerSecond / 8.0f), true);
+            };
+            for (TActorIterator<ANativeWadGuardian> Victim(GetWorld()); Victim; ++Victim)
+            {
+                if (*Victim != this && !Victim->IsHidden() && !Victim->IsDefeated()
+                    && IsWithinDamageRadius(**Victim, Origin, Profile.MeleeRange))
+                {
+                    Push(**Victim);
+                    Victim->TakeHit(Profile.MeleeDamage, nullptr, Profile.MeleeDamageMask);
+                }
+            }
+            for (TActorIterator<ANativeWadPlayer> Victim(GetWorld()); Victim; ++Victim)
+            {
+                if (Victim->GetHealth() > 0 && IsWithinDamageRadius(**Victim, Origin, Profile.MeleeRange))
+                {
+                    Push(**Victim);
+                    Victim->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask);
+                }
+            }
+        }
+        return;
+    }
     if (bMelee && Profile.MeleeDamage > 0 && MeleeDelay == 0)
     {
         MeleeDelay = Profile.MeleeDelayUpdates;
@@ -389,7 +493,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
 double ANativeWadGuardian::GetDipDepth() const
 {
     const ANativeWadLevel* Level = DipperLevel.Get();
-    if (!Profile.bDipper || !Level) { return 0.0; }
+    if ((!Profile.bDipper && Profile.SourceType != 1012) || !Level) { return 0.0; }
     const int32 Sector = Level->FindWadSector(FVector2D(GetActorLocation()));
     if (Sector == INDEX_NONE) { return 0.0; }
     const double Floor = Level->GetActorLocation().Z + Level->GetWalkingHeight(Sector);
@@ -603,6 +707,7 @@ bool ANativeWadGuardian::TakeHit(int32 Damage, ANativeWadPlayer* Credit, uint8 D
     HurtUntil = GetWorld()->GetTimeSeconds() + 20 / TicksPerSecond;
     if (IsDefeated())
     {
+        DropDefeatTreasure();
         RestoreEncounterHealth(0);
         if (Credit)
         {
@@ -613,15 +718,52 @@ bool ANativeWadGuardian::TakeHit(int32 Damage, ANativeWadPlayer* Credit, uint8 D
     return true;
 }
 
+void ANativeWadGuardian::DropDefeatTreasure()
+{
+    if (bDefeatTreasureHandled) { return; }
+    bDefeatTreasureHandled = true;
+    const int32 SourceType = GetLookSourceType(); // The known legacy Guardian tags also establish its original treasure identity.
+    if (SourceType != 1018 && SourceType != 1019) { return; }
+    const TActorIterator<ANativeWadLevel> Level(GetWorld());
+    if (!Level) { return; } // Isolated combat fixtures can run without a native map.
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    const int32 OffsetX = uint16(FMath::Rand32()) % 6 - 3;
+    const int32 OffsetY = uint16(FMath::Rand32()) % 6 - 3;
+    const FWadCreatureTreasure Treasure = ResolveWadCreatureTreasure(SourceType, uint16(FMath::Rand32()));
+    const FWadInventoryDetails* Details = Catalog ? Catalog->ItemDetails.Find(Treasure.ItemType) : nullptr;
+    if (!Details || Details->SpriteSize.X <= 0 || Details->SpriteSize.Y <= 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("The source treasure for %s is missing catalog item %d."), *Profile.Name, Treasure.ItemType);
+        return;
+    }
+    FVector Position = GetActorLocation();
+    Position.X += OffsetX - (Treasure.AmmoIndex != INDEX_NONE ? 2 : 0);
+    Position.Y += OffsetY;
+    Position.Z += Details->SpriteSize.Y * 0.5 - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+    if (ANativeWadPickup* Drop = ANativeWadPickup::SpawnDropped(**Level, Treasure.ItemType, Position))
+    {
+        Drop->SetOwner(this);
+        if (Treasure.AmmoIndex != INDEX_NONE) { Drop->SetAuthoredAmmo(Treasure.AmmoIndex, Treasure.AmmoQuantity); }
+        UE_LOG(LogTemp, Display, TEXT("Released source creature treasure: type %d, ammo %d, quantity %d, life %d."),
+            Treasure.ItemType, Treasure.AmmoIndex, Treasure.AmmoQuantity, CreatureLife);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Could not spawn source treasure item %d for %s."), Treasure.ItemType, *Profile.Name);
+    }
+}
+
 void ANativeWadGuardian::RestoreEncounterHealth(int32 SavedHealth)
 {
     Health = FMath::Clamp(SavedHealth, 0, Profile.MaxHealth);
+    // Reopening a defeated life never rerolls treasure; its existing pickup is restored by the level checkpoint.
+    bDefeatTreasureHandled = IsDefeated();
     if (IsDefeated())
     {
         GetCharacterMovement()->DisableMovement();
         GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         Sprite->SetMaterial(0, DownedMaterial);
-        if (Profile.bDipper) { TickDipper(0.0f, false); }
+        if (Profile.bDipper || Profile.SourceType == 1012) { TickDipper(0.0f, false); }
     }
     if (IsValid(DefeatPickup))
     {
@@ -701,7 +843,7 @@ void ANativeWadGuardian::ResetForGenerator()
     CreatureLife = CreatureLife == MAX_int32 ? MAX_int32 : CreatureLife + 1;
     ClearBerserkTarget();
     Health = Profile.MaxHealth;
-    PoisonLevel = BoltsFired = MeleeHits = RegeneratedHealth = 0;
+    PoisonLevel = BoltsFired = MeleeHits = ScreamsFired = RegeneratedHealth = 0;
     PoisonTime = 5.0;
     SlowSeconds = EarthboundSeconds = 0.0;
     GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
@@ -710,6 +852,7 @@ void ANativeWadGuardian::ResetForGenerator()
     HitTime = HurtUntil = AttackPoseUntil = LogicTime = 0.0;
     DipperTime = 0.0;
     bHasTarget = false;
+    bDefeatTreasureHandled = false;
     Sprite->SetMaterial(0, StandingMaterial);
     GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
     GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
@@ -728,6 +871,12 @@ void ANativeWadGuardian::FireBolt(AActor& Target)
     {
         Bolt->Launch(Sprite->GetStaticMesh(), BoltMaterial, Direction * (30 * TicksPerSecond), Profile.BoltDamage);
         Bolt->SetDamageType(EProjectileDamage(Profile.BoltElement));
+        if (Profile.SourceMissileType == 886)
+        {
+            // CREDATA.H normal effect bolt, used by the original Elf Archer.
+            Bolt->SetDamageMask(NormalDamage);
+            Bolt->SetBlastRadius(20.0f);
+        }
         if (Profile.SourceMissileType != 0)
         {
             for (const auto& Missile : WandProjectiles)

@@ -97,9 +97,72 @@ bool ANativeWadPlayer::CanUseWadItem(int32 Type) const
 
 int32 ANativeWadPlayer::GetStatusPower(EItemStatus Status) const
 {
+    if (Status < 0 || Status >= ItemStatusCount) { return 0; }
+    const auto PassivePower = [&](int32 Slot)
+    {
+        const int32 Type = CarriedItems.IsValidIndex(Slot) ? CarriedItems[Slot] : 0;
+        const FWadInventoryDetails* Rules = GetItemRules(Type);
+        return Rules && CanUseWadItem(Type) && Rules->Status == Status && Rules->StatusTicks == 0 ? Rules->StatusPower : 0;
+    };
+    int32 Power = ItemStatusSeconds[Status] > 0.0 ? ItemStatusPower[Status] : 0;
+    TArray<int32, TInlineAllocator<1 + EquipmentSlotCount + JewelrySlotCount>> Owners;
+    const auto AddOwner = [&](int32 Slot)
+    {
+        if (!CarriedItems.IsValidIndex(Slot) || Owners.Contains(Slot)) { return; }
+        Owners.Add(Slot);
+        Power += PassivePower(Slot);
+    };
+    // EFFECT.C sums effects from distinct object owners. Each worn object is counted
+    // once, even when several rings of the same type occupy the original four slots.
+    // InventoryTransferToReadyHand explicitly skips armor READY effects.
     const FWadInventoryDetails* Ready = GetItemRules(GetReadyItem());
-    const int32 Passive = Ready && CanUseWadItem(GetReadyItem()) && Ready->Status == Status && Ready->StatusTicks == 0 ? Ready->StatusPower : 0;
-    return Passive + (ItemStatusSeconds[Status] > 0.0 ? ItemStatusPower[Status] : 0);
+    if (!IsWornInventorySlot(ReadySlot) && (!Ready || Ready->ArmorSlot == INDEX_NONE)) { AddOwner(ReadySlot); }
+    for (const int32 Slot : JewelrySlots) { AddOwner(Slot); }
+    for (int32 Location = 0; Location < EquipmentSlotCount; ++Location)
+    {
+        const int32 Slot = WornSlots[Location];
+        const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Slot) ? GetItemRules(CarriedItems[Slot]) : nullptr;
+        if (Rules && (Rules->ArmorSlot == Location || (Location == RightArmSlot && Rules->ArmorSlot == LeftArmSlot)))
+        { AddOwner(Slot); }
+    }
+    return Power;
+}
+
+int32 ANativeWadPlayer::GetJewelryInventorySlot(int32 Location) const
+{
+    return Location >= 0 && Location < JewelrySlotCount ? JewelrySlots[Location] : INDEX_NONE;
+}
+
+bool ANativeWadPlayer::HasEquippedItem(int32 Type) const
+{
+    if (Type <= 0 || !CanUseWadItem(Type)) { return false; }
+    if (GetReadyItem() == Type) { return true; }
+    for (const int32 Slot : JewelrySlots)
+    {
+        if (CarriedItems.IsValidIndex(Slot) && CarriedItems[Slot] == Type) { return true; }
+    }
+    return false;
+}
+
+int32 ANativeWadPlayer::GetEffectiveAttribute(int32 Attribute) const
+{
+    if (Attribute < 0 || Attribute >= AttributeCount) { return 0; }
+    const EItemStatus Effects[] = {StrengthStatus, SpeedStatus, MagicStatus, AccuracyStatus, StealthStatus};
+    const int32 Modifier = Attribute < UE_ARRAY_COUNT(Effects) ? GetStatusPower(Effects[Attribute]) : 0;
+    return EffectiveAttribute(Attributes[Attribute], Modifier);
+}
+
+int32 ANativeWadPlayer::GetHealthRegeneration() const
+{
+    const int32 Rate = Attributes[ConstitutionAttribute] * (CharacterLevel + 5) + GetStatusPower(HealthRegenStatus);
+    return FMath::Max(0, Rate >> 3) * Food / MaxFood;
+}
+
+int32 ANativeWadPlayer::GetManaRegeneration() const
+{
+    // Source MAGIC MOD affects spell rolls, not the permanent mana-regeneration base.
+    const int32 Base = Attributes[MagicAttribute] * (CharacterLevel + 5) * CharacterClasses[CharacterClass].ManaRecoveryPercent / 100;
+    return FMath::Max(0, (Base + GetStatusPower(ManaRegenStatus)) >> 2) * Water / MaxFood;
 }
 
 bool ANativeWadPlayer::ConsumeItem(int32 Type)
@@ -135,6 +198,12 @@ bool ANativeWadPlayer::RemoveInventorySlot(int32 Slot)
         if (Worn == Slot) { Worn = INDEX_NONE; }
         else if (Worn > Slot) { --Worn; }
     }
+    for (int32& Worn : JewelrySlots)
+    {
+        if (Worn == Slot) { Worn = INDEX_NONE; }
+        else if (Worn > Slot) { --Worn; }
+    }
+    if (!HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
     return true;
 }
 
@@ -148,7 +217,7 @@ int32 ANativeWadPlayer::GetEquippedWeapon() const
 
 bool ANativeWadPlayer::IsWornInventorySlot(int32 Slot) const
 {
-    return Slot >= 0 && Algo::Find(WornSlots, Slot) != nullptr;
+    return Slot >= 0 && (Algo::Find(WornSlots, Slot) != nullptr || Algo::Find(JewelrySlots, Slot) != nullptr);
 }
 
 uint8 ANativeWadPlayer::GetMeleeDamageMask() const
@@ -194,7 +263,7 @@ int32 ANativeWadPlayer::GetArmorRating() const
         const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Slot) ? GetItemRules(CarriedItems[Slot]) : nullptr;
         return Rules && CanUseWadItem(CarriedItems[Slot]) ? Rules->ArmorValue : 0;
     };
-    int32 Shield = FMath::Max(Rating(ShieldSlot), GetStatusPower(SpellShieldStatus));
+    int32 Shield = GetStatusPower(SpellShieldStatus);
     for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
     {
         if (ShieldSeconds[Index] > 0.0)
@@ -202,7 +271,9 @@ int32 ANativeWadPlayer::GetArmorRating() const
             Shield += 10 + 5 * Index;
         }
     }
-    Shield = FMath::Min(Shield, 100);
+    // STATS.C caps only magical shielding at ninety before comparing each body
+    // piece. Its shield-hand contribution to the weighted average is disabled.
+    Shield = FMath::Clamp(Shield, 0, 90);
     return (2 * (FMath::Max(Shield, Rating(HeadSlot)) + FMath::Max(Shield, Rating(RightArmSlot)) + FMath::Max(Shield, Rating(LeftArmSlot)))
         + 4 * (FMath::Max(Shield, Rating(LegsSlot)) + FMath::Max(Shield, Rating(ChestSlot)))) / 14;
 }
@@ -236,6 +307,47 @@ void ANativeWadPlayer::EquipArmor(int32 Slot, const FWadInventoryDetails& Detail
     ShowInteractionMessage(FString::Printf(TEXT("Equipped %s"), *GetInventoryItemDescription(CarriedItems[Slot])));
 }
 
+bool ANativeWadPlayer::EquipJewelry(int32 Slot, const FWadInventoryDetails& Details, int32 Location)
+{
+    if (!CarriedItems.IsValidIndex(Slot) || (Details.JewelrySlot != NeckSlot && Details.JewelrySlot != Ring1Slot)
+        || !CanUseWadItem(CarriedItems[Slot])) { return false; }
+    int32 Existing = INDEX_NONE;
+    for (int32 Index = 0; Index < JewelrySlotCount; ++Index)
+    {
+        if (JewelrySlots[Index] == Slot) { Existing = Index; break; }
+    }
+    if (Existing != INDEX_NONE && (Location == INDEX_NONE || Location == Existing))
+    {
+        JewelrySlots[Existing] = INDEX_NONE;
+        if (!HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+        ShowInteractionMessage(FString::Printf(TEXT("Removed %s"), *GetInventoryItemDescription(CarriedItems[Slot])));
+        return true;
+    }
+    if (Location == INDEX_NONE)
+    {
+        const int32 Begin = Details.JewelrySlot;
+        const int32 End = Details.JewelrySlot == NeckSlot ? Ring1Slot : JewelrySlotCount;
+        for (int32 Index = Begin; Index < End; ++Index)
+        {
+            if (JewelrySlots[Index] == INDEX_NONE) { Location = Index; break; }
+        }
+        if (Location == INDEX_NONE)
+        {
+            ShowInteractionMessage(Details.JewelrySlot == NeckSlot ? TEXT("You are already wearing an amulet.") : TEXT("All four ring slots are occupied."));
+            return false;
+        }
+    }
+    if (Location < 0 || Location >= JewelrySlotCount || (Location == NeckSlot) != (Details.JewelrySlot == NeckSlot)) { return false; }
+    if (Existing != INDEX_NONE) { JewelrySlots[Existing] = INDEX_NONE; }
+    JewelrySlots[Location] = Slot;
+    if (ReadySlot == Slot) { ReadySlot = INDEX_NONE; }
+    // Equipping is a new READY trigger. Changing a weapon alone does not restart a
+    // worn flight amulet that Earthbind suppressed.
+    if (CarriedItems[Slot] == FlyingAmulet) { bReadiedFlightSuppressed = false; }
+    ShowInteractionMessage(FString::Printf(TEXT("Equipped %s"), *GetInventoryItemDescription(CarriedItems[Slot])));
+    return true;
+}
+
 void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
 {
     if (CarriedItems.IsValidIndex(Slot) && IsRuneItem(CarriedItems[Slot])) { return; }
@@ -259,12 +371,29 @@ void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
             EquipArmor(Selected, *Rules);
             return;
         }
+        for (int32& Worn : JewelrySlots) { if (Worn == Selected) { Worn = INDEX_NONE; } }
         ReadySlot = Selected;
+        if (GetReadyItem() == FlyingAmulet) { bReadiedFlightSuppressed = false; }
         ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
     }
     else if (CarriedItems.IsValidIndex(Slot))
     {
         SelectedInventorySlot = Slot == SelectedInventorySlot ? INDEX_NONE : Slot;
+    }
+}
+
+void ANativeWadPlayer::ClickJewelrySlot(int32 Location)
+{
+    if (!bInventoryOpen || Location < 0 || Location >= JewelrySlotCount) { return; }
+    const int32 Previous = JewelrySlots[Location];
+    const bool bPlacing = CarriedItems.IsValidIndex(SelectedInventorySlot);
+    const int32 Slot = bPlacing ? SelectedInventorySlot : Previous;
+    if (!CarriedItems.IsValidIndex(Slot)) { return; }
+    const FWadInventoryDetails* Rules = GetItemRules(CarriedItems[Slot]);
+    if (Rules && EquipJewelry(Slot, *Rules, bPlacing ? Location : INDEX_NONE))
+    {
+        // The original Equipment form swaps the displaced object into the mouse hand.
+        SelectedInventorySlot = bPlacing ? Previous : Slot;
     }
 }
 
@@ -416,7 +545,7 @@ void ANativeWadPlayer::FireCrossbow()
     }
     Bolt->Launch(Plane, Image, Direction * (30.0 * TicksPerSecond), Ammo.Damage);
     Bolt->SetDamageType(Ammo.Effect);
-    const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute], 0, 100) * 1100;
+    const int32 FrameSpeed = 40000 + FMath::Clamp(GetEffectiveAttribute(SpeedAttribute), 0, 100) * 1100;
     NextMeleeTime = Now + FMath::DivideAndRoundUp(CrossbowFrames * 65536, FrameSpeed) / TicksPerSecond;
     ShowInteractionMessage(TEXT("Fired a crossbow bolt."));
     UE_LOG(LogTemp, Display, TEXT("Fired WAD crossbow missile %d. %s bolts remaining: %d."),

@@ -11,6 +11,7 @@ class ANativeWadLevel;
 class UNativeWadHudData;
 class FNativeWadNotesEditor;
 class SWidget;
+class UMaterialInterface;
 struct FWadInventoryDetails;
 
 UCLASS()
@@ -40,6 +41,8 @@ public:
     int32 GetArmorClass(int32 Location) const;
     uint8 GetResistanceMask() const;
     bool IsWornInventorySlot(int32 Slot) const;
+    int32 GetJewelryInventorySlot(int32 Location) const;
+    bool HasEquippedItem(int32 Type) const;
     bool CanUseWadItem(int32 Type) const;
     int32 GetSuccessfulCasts() const { return SuccessfulCasts; }
     int32 GetMaxHealth() const { return MaxHealth; }
@@ -47,6 +50,11 @@ public:
     int32 GetCharacterLevel() const { return CharacterLevel; }
     int32 GetExperienceNeeded() const { return ExperienceNeeded; }
     TConstArrayView<int32> GetAttributes() const { return Attributes; }
+    int32 GetEffectiveAttribute(int32 Attribute) const;
+    int32 GetHealthRegeneration() const;
+    int32 GetManaRegeneration() const;
+    int32 GetLastMeleeRawDamage() const { return LastMeleeRawDamage; }
+    bool WasLastMeleeCritical() const { return bLastMeleeCritical; }
     int32 GetCharacterClass() const { return CharacterClass; }
     bool CanChooseWadClass() const;
     bool ChooseWadClass(int32 Index);
@@ -65,6 +73,7 @@ public:
     bool IsInventoryOpen() const { return bInventoryOpen; }
     bool IsMouseLook() const { return bMouseLook; }
     void ClickInventorySlot(int32 Slot);
+    void ClickJewelrySlot(int32 Location);
     FString GetRunes() const { return Runes; }
     bool HasRune(int32 Rune) const;
     bool ShouldShowEncounterHUD() const;
@@ -78,8 +87,8 @@ public:
     void ReceiveTrapParalysis();
     void RestoreWadVital(int32 Effect, int32 Amount);
     bool IsParalyzed() const { return ParalysisSeconds > 0.0; }
-    bool CanFly() const { return FlightSeconds > 0.0 || (GetReadyItem() == NativeWadRules::FlyingAmulet && !bReadiedFlightSuppressed); }
-    bool HasFeatherfall() const { return FeatherfallSeconds > 0.0; }
+    bool CanFly() const { return FlightSeconds > 0.0 || (HasEquippedItem(NativeWadRules::FlyingAmulet) && !bReadiedFlightSuppressed); }
+    bool HasFeatherfall() const { return FeatherfallSeconds > 0.0 || HasEquippedItem(NativeWadRules::FeatherfallAmulet); }
     bool IsWaterWalking() const { return bOnWaterSurface; }
     bool IsConcealed() const { return bConcealed; }
     int32 GetStatusPower(NativeWadRules::EItemStatus Status) const;
@@ -122,6 +131,7 @@ private:
     const FWadInventoryDetails* GetItemRules(int32 Type) const;
     bool RemoveInventorySlot(int32 Slot);
     void EquipArmor(int32 Slot, const FWadInventoryDetails& Details);
+    bool EquipJewelry(int32 Slot, const FWadInventoryDetails& Details, int32 Location = INDEX_NONE);
     void UseConsumable(const FWadInventoryDetails& Details);
     void DropInventoryItem();
     void UseReadyHand();
@@ -184,6 +194,7 @@ private:
     int32 Attributes[NativeWadRules::AttributeCount] = {15, 20, 35, 15, 20, 25};
     int32 ReadySlot = INDEX_NONE;
     int32 WornSlots[NativeWadRules::EquipmentSlotCount] = {INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE};
+    int32 JewelrySlots[NativeWadRules::JewelrySlotCount] = {INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE};
     int32 SelectedInventorySlot = INDEX_NONE;
     int32 SelectedAmmo = 0;
     int32 AmmoReserve[UE_ARRAY_COUNT(NativeWadRules::CrossbowAmmo)] = {};
@@ -201,7 +212,7 @@ private:
     int32 PoisonLevel = 0;
     double ParalysisSeconds = 0.0;
     double FlightSeconds = 0.0;
-    bool bReadiedFlightSuppressed = false;
+    bool bReadiedFlightSuppressed = false; // Includes a worn amulet; only a new READY trigger restores its flight.
     double WaterWalkSeconds = 0.0;
     double FeatherfallSeconds = 0.0;
     double ShieldSeconds[NativeWadRules::ShieldPotionLast - NativeWadRules::ShieldPotionFirst + 1] = {};
@@ -217,6 +228,8 @@ private:
     FString Runes;
     double MessageUntil = 0.0;
     double NextMeleeTime = 0.0;
+    int32 LastMeleeRawDamage = 0;
+    bool bLastMeleeCritical = false;
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UCameraComponent> ViewCamera;
@@ -242,13 +255,27 @@ public:
     void ScrollNotes(int32 Delta);
     int32 GetNotesCursor() const;
     int32 GetNotesScroll() const;
+    bool IsOptionsOpen() const;
+    bool IsControlsOpen() const;
+    int32 GetOptionsScroll() const { return OptionsScroll; }
+    int32 GetControlsScroll() const { return ControlsScroll; }
+    bool ExamineAt(const FVector2D& ViewportPoint);
+    bool IsLookOpen() const;
+    int32 GetLookSourceType() const { return LookSourceType; }
+    const FString& GetLookName() const { return LookName; }
+    const FString& GetLookDescription() const { return LookDescription; }
+    int32 GetLookScroll() const { return LookScroll; }
 
 private:
     friend class ANativeWadPlayer;
-    enum class EForm : uint8 { Inventory, Equipment, Statistics, Journal, Ammo, Finances, Notes };
+    enum class EForm : uint8 { Inventory, Equipment, Statistics, Journal, Ammo, Finances, Notes, Options, Controls, Look };
     void ToggleForm(EForm Requested);
     void ToggleNotes();
     void ToggleJournal();
+    void ToggleOptions();
+    void ToggleControls();
+    void ScrollClassicText(int32 Delta);
+    void UpdateOptionsSlider(FVector2D ViewportPoint);
     void ChangeInventoryPage(int32 Offset);
     void SyncNotesInput();
     void ReleaseNotesInput(bool bRestoreInput);
@@ -263,9 +290,20 @@ private:
     UPROPERTY()
     TObjectPtr<UTexture2D> JournalImage;
 
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> LookPortrait;
+
     EForm Form = EForm::Inventory;
     int32 InventoryPage = 0;
     int32 JournalPage = 0;
+    int32 OptionsScroll = 0;
+    int32 ControlsScroll = 0;
+    int32 LookScroll = 0;
+    int32 LookSourceType = 0;
+    FString LookName;
+    FString LookDescription;
+    FVector2D LookPortraitSize = FVector2D::ZeroVector;
+    int32 DraggedOptionSlider = INDEX_NONE;
     TSharedPtr<FNativeWadNotesEditor> NotesEditor;
     TSharedPtr<SWidget> NotesInputWidget;
 };

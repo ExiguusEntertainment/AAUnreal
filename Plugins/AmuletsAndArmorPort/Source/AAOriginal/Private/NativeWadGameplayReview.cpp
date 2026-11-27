@@ -3,6 +3,7 @@
 
 #include "Algo/Find.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/StaticMeshComponent.h"
 #include "Containers/Ticker.h"
@@ -29,6 +30,7 @@
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadInventoryView.h"
+#include "NativeWadOptions.h"
 #include "WadSurfaceTextures.h"
 #include "Engine/Texture2D.h"
 #include "Misc/FileHelper.h"
@@ -1991,6 +1993,12 @@ namespace
         bool bNotesReview = false;
         bool bNotesReload = false;
         int32 NotesScrollBefore = 0;
+        bool bOptionsReview = false;
+        bool bOptionsReload = false;
+        bool bJewelryReview = false;
+        bool bJewelryReload = false;
+        int32 JewelryReviewLocation = 0;
+        bool bLookReview = false;
         bool bDoorMagicReview = false;
         bool bDoorMagicReload = false;
         bool bDoorMagicCompleteReload = false;
@@ -9887,6 +9895,8 @@ namespace
             }
             if (NextPoint == 0)
             {
+                for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                { Enemy->SetActorTickEnabled(false); }
                 const FTransform Transform(FRotator::ZeroRotator, Player.GetActorLocation() + FVector(55, 0, 0));
                 ANativeWadGuardian* Target = Player.GetWorld()->SpawnActorDeferred<ANativeWadGuardian>(
                     ANativeWadGuardian::StaticClass(), Transform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
@@ -9934,14 +9944,22 @@ namespace
                 ++NextPoint;
                 break;
             case 4:
+            {
                 if (Player.GetWorld()->GetTimeSeconds() < StageTime) { break; }
-                // Strength 15 * mace damage 10 / 2 = 75. Chain adds 25%, then one of two elements is resisted.
-                if (Target->GetEncounterHealth() != 3953 || !Player.SaveWadCheckpoint(TEXT("NativeWadElementalMeleeReview")))
+                // Source variance and Accuracy can double the base 75. Apply chain's
+                // electric bonus and the one resisted element to this actual hit.
+                const int32 Raw = Player.GetLastMeleeRawDamage();
+                const int32 Chain = Raw + Raw / 4;
+                const int32 Expected = Chain - Chain / 2;
+                const bool bValidRoll = Player.WasLastMeleeCritical() ? Raw >= 150 && Raw <= 298 : Raw >= 75 && Raw <= 149;
+                if (!bValidRoll || Target->GetEncounterHealth() != 4000 - Expected
+                    || !Player.SaveWadCheckpoint(TEXT("NativeWadElementalMeleeReview")))
                 {
-                    return Finish(&Player, *FString::Printf(TEXT("the normal attack did not apply the expected 47 elemental damage. Target health=%d"), Target->GetEncounterHealth()));
+                    return Finish(&Player, *FString::Printf(TEXT("the source melee roll or elemental result was wrong: raw=%d expected=%d target=%d"), Raw, Expected, Target->GetEncounterHealth()));
                 }
-                UE_LOG(LogTemp, Display, TEXT("Verified normal-damage immunity, electric-attack scroll consumption, and a regular mace hit for 47 damage through chain armor and one resisted element."));
+                UE_LOG(LogTemp, Display, TEXT("Verified normal-damage immunity, electric-attack consumption, and source mace variance/critical: raw %d becomes %d damage through chain and one resisted element."), Raw, Expected);
                 return Finish(&Player);
+            }
             case 5:
                 if (Player.GetStatusPower(ElectricityAttackStatus) != 0) { return true; }
                 if (Player.GetMeleeDamageMask() != NormalDamage) { return Finish(&Player, TEXT("electric attack persisted after the scroll expired")); }
@@ -10996,6 +11014,262 @@ namespace
                 if (Target->GetSlowSeconds() != 0.0 || Target->GetEarthboundSeconds() != 0.0 || !Target->GetCharacterMovement()->IsFlying())
                 { return Finish(&Player, TEXT("a reused generator retained a control effect")); }
                 UE_LOG(LogTemp, Display, TEXT("Verified controlled creature expiry, original player Slow expiry, amulet reactivation, and cleared effects on generator reuse."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickLook(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            auto* Controller = Player.GetController<APlayerController>();
+            auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            const auto* Catalog = UNativeWadHudData::LoadCatalog();
+            if (!Hud || !Catalog) { return Finish(&Player, TEXT("creature Look requires the original HUD catalog")); }
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            if (NextPoint == 0)
+            {
+                ANativeWadGuardian* Target = nullptr;
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                {
+                    Enemy->SetActorTickEnabled(false);
+                    if (!Target && Enemy->GetLookSourceType() == 1018 && !Enemy->IsHidden()) { Target = *Enemy; }
+                }
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                if (!Target || !Level) { return Finish(&Player, TEXT("the Look fixture requires an original L30 Elf Guardian")); }
+                bool bPlaced = false;
+                for (const FVector2D Offset : {FVector2D(-110, 0), FVector2D(110, 0), FVector2D(0, -110), FVector2D(0, 110)})
+                {
+                    if (!PlaceReviewPlayer(**Level, Player, FVector2D(Target->GetActorLocation()) + Offset)) { continue; }
+                    FHitResult Sight;
+                    const FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeWadLookReview), true, &Player);
+                    if (Current.LineTraceSingleByChannel(Sight, Player.GetPawnViewLocation(), Target->GetActorLocation(), ECC_Visibility, Query)
+                        && Sight.GetActor() == Target) { bPlaced = true; break; }
+                }
+                if (!bPlaced) { return Finish(&Player, TEXT("could not approach the original creature for examination")); }
+                ElementalTarget = Target;
+                Aim(Player, Target->GetActorLocation());
+                if (Player.IsMouseLook()) { Press(Player, EKeys::Tab); }
+                ++NextPoint;
+                return true;
+            }
+            ANativeWadGuardian* Target = ElementalTarget.Get();
+            FVector2D Pixel;
+            if (!Target || !Controller->ProjectWorldLocationToScreen(Target->GetActorLocation(), Pixel))
+            { return Finish(&Player, TEXT("the examined creature did not project into the viewport")); }
+            const auto Close = [&]()
+            {
+                int32 Width, Height;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + FVector2D(310, 9) * Scale);
+            };
+            if (NextPoint == 1)
+            {
+                Hud->ExamineAt(Pixel);
+                const auto* Description = Catalog->CreatureDescriptions.Find(1018);
+                if (!Hud->IsLookOpen() || !Description || Hud->GetLookSourceType() != 1018
+                    || Hud->GetLookName() != Description->Name || Hud->GetLookDescription() != Description->Description)
+                { return Finish(&Player, TEXT("cursor examination did not show the original saved creature description")); }
+                ++NextPoint;
+            }
+            if (NextPoint == 2)
+            {
+                bool bSaved = false;
+                if (!CaptureTownFrame(TEXT("creature"), bSaved)) { return true; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not capture the original creature Look form")); }
+                Close();
+                AActor* Wall = Current.SpawnActor<AActor>();
+                if (!Wall) { return Finish(&Player, TEXT("could not create the controlled occlusion wall")); }
+                auto* Box = NewObject<UBoxComponent>(Wall);
+                Wall->AddInstanceComponent(Box);
+                Wall->SetRootComponent(Box);
+                Box->SetBoxExtent(FVector(12, 120, 120));
+                Box->SetCollisionProfileName(TEXT("BlockAll"));
+                Box->RegisterComponent();
+                Wall->SetActorLocation((Player.GetPawnViewLocation() + Target->GetActorLocation()) * 0.5);
+                Hud->ExamineAt(Pixel);
+                const bool bBlocked = !Hud->IsLookOpen();
+                Wall->Destroy();
+                if (!bBlocked) { return Finish(&Player, TEXT("creature examination passed through a blocking wall")); }
+                Press(Player, EKeys::Tab);
+                ++NextPoint;
+                return true;
+            }
+            if (!Player.IsMouseLook() || Player.IsInventoryOpen())
+            { return Finish(&Player, TEXT("closing creature Look did not allow return to mouse-look play")); }
+            UE_LOG(LogTemp, Display, TEXT("Verified original creature portrait/name/description from the saved catalog, cursor examination, blocking-wall occlusion, and mouse-look return."));
+            return Finish(&Player);
+        }
+
+        bool TickJewelry(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            if (bJewelryReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            auto* Controller = Player.GetController<APlayerController>();
+            auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Hud || !Hud->HasClassicHud()) { return Finish(&Player, TEXT("jewelry needs the original equipment interface")); }
+            const auto Click = [&](FVector2D Point)
+            {
+                int32 Width, Height;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale);
+            };
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            constexpr int32 Items[] = {606, 408, 408, 415, 421};
+            const auto WornMatches = [&]()
+            {
+                for (int32 Location = 0; Location < JewelrySlotCount; ++Location)
+                {
+                    const int32 Slot = Player.GetJewelryInventorySlot(Location);
+                    if (!Player.GetCarriedItems().IsValidIndex(Slot) || Player.GetCarriedItems()[Slot] != Items[Location]
+                        || !Player.IsWornInventorySlot(Slot)) { return false; }
+                }
+                return Player.GetReadyItem() == IronMace && Player.GetStatusPower(StrengthStatus) == 20
+                    && Player.GetStatusPower(SpellShieldStatus) == 5 && Player.GetEffectiveAttribute(AccuracyAttribute) == 45
+                    && (Player.GetResistanceMask() & DamageFlag(EProjectileDamage::Poison)) != 0;
+            };
+            if (NextPoint == 0)
+            {
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy) { Enemy->SetActorTickEnabled(false); }
+                if (!bJewelryReload)
+                {
+                    Player.CollectItem(IronMace);
+                    for (const int32 Type : Items) { Player.CollectItem(Type); }
+                }
+                else if (!WornMatches()) { return Finish(&Player, TEXT("the worn necklace/rings, weapon, or passive effects did not restore")); }
+                ++NextPoint;
+            }
+            if (NextPoint == 1)
+            {
+                if (!bJewelryReload && (Player.GetReadyItem() != IronMace || Player.IsInventoryOpen()))
+                { ReadyCampaignItem(Player, IronMace); return true; }
+                if (bJewelryReload) { JewelryReviewLocation = JewelrySlotCount; }
+                ++NextPoint;
+            }
+            if (NextPoint == 2)
+            {
+                if (JewelryReviewLocation < JewelrySlotCount)
+                {
+                    int32 Slot = INDEX_NONE;
+                    for (int32 Index = 0; Index < Player.GetCarriedItems().Num(); ++Index)
+                    {
+                        if (Player.GetCarriedItems()[Index] == Items[JewelryReviewLocation] && !Player.IsWornInventorySlot(Index))
+                        { Slot = Index; break; }
+                    }
+                    if (Slot == INDEX_NONE) { return Finish(&Player, TEXT("the controlled jewelry item is missing")); }
+                    Click({13, 161});
+                    Player.ClickInventorySlot(Slot);
+                    Click({30, 161});
+                    Click(JewelryReviewLocation == NeckSlot ? FVector2D(299, 26) : FVector2D(299, 40 + (JewelryReviewLocation - Ring1Slot) * 12));
+                    const int32 Worn = Player.GetJewelryInventorySlot(JewelryReviewLocation);
+                    if (Worn != Slot || Player.GetReadyItem() != IronMace)
+                    { return Finish(&Player, *FString::Printf(TEXT("placing source item %d at jewelry location %d failed: selected=%d worn=%d ready=%d"), Items[JewelryReviewLocation], JewelryReviewLocation, Slot, Worn, Player.GetReadyItem())); }
+                    ++JewelryReviewLocation;
+                    return true;
+                }
+                if (!WornMatches()) { return Finish(&Player, TEXT("the five original jewelry locations did not apply their effects independently")); }
+                if (!Player.IsInventoryOpen()) { Click({30, 161}); }
+                ++NextPoint;
+            }
+            if (NextPoint == 3)
+            {
+                bool bSaved = false;
+                if (!CaptureTownFrame(TEXT("equipment"), bSaved)) { return true; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not capture original worn jewelry")); }
+                Click({299, 40});
+                if (Player.GetJewelryInventorySlot(Ring1Slot) != INDEX_NONE || Player.GetStatusPower(StrengthStatus) != 10)
+                { return Finish(&Player, TEXT("removing the first ring did not remove only its own contribution")); }
+                Click({299, 40});
+                if (!WornMatches()) { return Finish(&Player, TEXT("replacing the selected ring did not restore its original location")); }
+                Click({310, 9});
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadWornJewelryReview")))
+                { return Finish(&Player, TEXT("could not save the weapon and five worn jewelry locations")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified original Equipment necklace/four-ring placement, independent passive owners, remove/replace, ready weapon retention%s, and checkpoint save."), bJewelryReload ? TEXT(", fresh-process restoration") : TEXT(""));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickOptions(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            auto* Controller = Player.GetController<APlayerController>();
+            auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Hud || !Hud->HasClassicHud()) { return Finish(&Player, TEXT("the Options review needs the classic HUD")); }
+            const auto Click = [&](FVector2D Point)
+            {
+                int32 Width, Height;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale);
+            };
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            if (NextPoint == 0)
+            {
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy) { Enemy->SetActorTickEnabled(false); }
+                Click({13, 175});
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 1)
+            {
+                if (!Hud->IsOptionsOpen()) { return Finish(&Player, TEXT("the original Options button did not open its form")); }
+                const auto& Before = NativeWadOptions::GetAudioPreferences();
+                if (bOptionsReload)
+                {
+                    if (!Before.bMusic || Before.bEffects || !FMath::IsNearlyEqual(Before.MusicVolume, 0.5f)
+                        || !FMath::IsNearlyEqual(Before.EffectsVolume, 0.25f))
+                    { return Finish(&Player, TEXT("the separate user music/effects preferences did not survive restart")); }
+                }
+                else
+                {
+                    if (!Before.bMusic || !Before.bEffects || Before.MusicVolume != 1.0f || Before.EffectsVolume != 1.0f)
+                    { return Finish(&Player, TEXT("the Options fixture requires a fresh preferences profile")); }
+                    Click({262, 35});
+                    Click({241, 60});
+                    Click({222, 48});
+                    Click({222, 23});
+                    if (NativeWadOptions::EffectiveVolume(NativeWadOptions::EAudioChannel::Music, 0.45f) != 0.0f)
+                    { return Finish(&Player, TEXT("the original music toggle did not mute its channel")); }
+                    Click({222, 23});
+                }
+                const auto& After = NativeWadOptions::GetAudioPreferences();
+                if (!After.bMusic || After.bEffects || !FMath::IsNearlyEqual(After.MusicVolume, 0.5f)
+                    || !FMath::IsNearlyEqual(After.EffectsVolume, 0.25f)
+                    || !FMath::IsNearlyEqual(NativeWadOptions::EffectiveVolume(NativeWadOptions::EAudioChannel::Music, 0.45f), 0.225f)
+                    || NativeWadOptions::EffectiveVolume(NativeWadOptions::EAudioChannel::Effects, 0.7f) != 0.0f)
+                { return Finish(&Player, TEXT("the source Options sliders/toggles mixed up nominal volume or channels")); }
+                Click({311, 145});
+                if (Hud->GetOptionsScroll() <= 0) { return Finish(&Player, TEXT("the original credits scroll button did not scroll")); }
+                ++NextPoint;
+            }
+            if (NextPoint == 2)
+            {
+                bool bSaved = false;
+                if (!CaptureTownFrame(TEXT("options"), bSaved)) { return true; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not capture the original Options form")); }
+                Click({310, 9});
+                Press(Player, EKeys::F1);
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 3)
+            {
+                if (!Hud->IsControlsOpen()) { return Finish(&Player, TEXT("F1 did not open the original Controls form")); }
+                Press(Player, EKeys::PageDown);
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 4)
+            {
+                if (Hud->GetControlsScroll() <= 0) { return Finish(&Player, TEXT("the Controls help did not scroll through its actual bindings")); }
+                bool bSaved = false;
+                if (!CaptureTownFrame(TEXT("controls"), bSaved)) { return true; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not capture original Controls help")); }
+                Click({310, 9});
+                if (Player.IsInventoryOpen() || !Player.IsMouseLook()) { return Finish(&Player, TEXT("closing Controls did not restore play")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified original Options sliders, independent audio toggles, credits scrolling, F1 Controls, help scrolling and input return%s."), bOptionsReload ? TEXT(", with persisted preferences in a fresh process") : TEXT(""));
                 return Finish(&Player);
             }
             return true;
@@ -12505,6 +12779,9 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bLookReview) { return TickLook(*Current, *Player); }
+            if (bJewelryReview) { return TickJewelry(*Current, *Player); }
+            if (bOptionsReview) { return TickOptions(*Current, *Player); }
             if (bNotesReview) { return TickNotes(*Current, *Player); }
             if (bPoisonCureReview) { return TickPoisonCures(*Player); }
             if (bFinalCampaignReload)
@@ -13019,6 +13296,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bScriptDoorLockReload = Mode == TEXT("scriptdoorlockreload");
     const bool bPoisonCure = Mode == TEXT("poisoncures") || Mode == TEXT("poisoncuresreload") || Mode == TEXT("poisoncurescompletereload");
     const bool bNotes = Mode == TEXT("notes") || Mode == TEXT("notesreload");
+    const bool bOptions = Mode == TEXT("options") || Mode == TEXT("optionsreload");
+    const bool bJewelry = Mode == TEXT("wornjewelry") || Mode == TEXT("wornjewelryreload");
+    const bool bLook = Mode == TEXT("creaturelook");
     const bool bDoorMagic = Mode == TEXT("doormagic") || Mode == TEXT("doormagicreload") || Mode == TEXT("doormagiccompletereload");
     const bool bBerserk = Mode == TEXT("berserkwand") || Mode == TEXT("berserkwandreload");
     const bool bDispel = Mode == TEXT("dispeleffects") || Mode == TEXT("dispeleffectsreload");
@@ -13055,7 +13335,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : bEconomyReload ? TEXT("L301")
         : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
         : bNotes ? (Mode == TEXT("notesreload") ? TEXT("L301") : TEXT("L30"))
-        : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bPoisonCure || bRevive || bMusic || bCharacter
+        : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bPoisonCure || bOptions || bJewelry || bLook || bRevive || bMusic || bCharacter
             || Mode == TEXT("classequipment") || Mode == TEXT("elementalmelee") || Mode == TEXT("projectilewands") || Mode == TEXT("runeownership") || Mode == TEXT("runelegacy") ? TEXT("L30")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
@@ -13091,6 +13371,11 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bPoisonCureCompleteReload = Mode == TEXT("poisoncurescompletereload");
     Review->bNotesReview = bNotes;
     Review->bNotesReload = Mode == TEXT("notesreload");
+    Review->bOptionsReview = bOptions;
+    Review->bOptionsReload = Mode == TEXT("optionsreload");
+    Review->bJewelryReview = bJewelry;
+    Review->bJewelryReload = Mode == TEXT("wornjewelryreload");
+    Review->bLookReview = bLook;
     Review->bDoorMagicReview = bDoorMagic;
     Review->bDoorMagicReload = Mode == TEXT("doormagicreload");
     Review->bDoorMagicCompleteReload = Mode == TEXT("doormagiccompletereload");

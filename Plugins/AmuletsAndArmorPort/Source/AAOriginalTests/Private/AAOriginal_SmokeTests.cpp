@@ -17,6 +17,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -1701,6 +1702,356 @@ bool FAAOriginalHydraDipper::RunTest(const FString& Parameters)
     Hydra->SetActorLocation(FVector(0, 0, 48));
     TestTrue(TEXT("The complete level checkpoint restores the sunken life"), Level->RestoreCheckpoint(SunkenCheckpoint));
     TestTrue(TEXT("Level restoration does not resurrect the hidden defeated Hydra"), Hydra->IsDefeated() && Hydra->IsHidden());
+    ANativeWadGuardian* Banshee = World->SpawnActor<ANativeWadGuardian>(FVector(0, 200, 60.5), FRotator::ZeroRotator);
+    if (!Banshee) { return false; }
+    Banshee->Tags.Add(TEXT("BansheeSinkFixture"));
+    FWadEncounterProfile BansheeProfile;
+    BansheeProfile.SourceType = 1012;
+    BansheeProfile.MaxHealth = 5000;
+    BansheeProfile.CollisionRadius = 15;
+    BansheeProfile.CollisionHalfHeight = 26.5;
+    BansheeProfile.WalkSpeed = 70;
+    Banshee->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, BansheeProfile);
+    Banshee->RestoreEncounterHealth(0);
+    for (int32 Frame = 0; Frame < 120; ++Frame) { Banshee->Tick(1.0f / 60.0f); }
+    TestTrue(TEXT("Banshee uses source sink death without becoming a living dipper"), Banshee->IsHidden()
+        && FMath::IsNearlyEqual(Banshee->GetDipDepth(), 19.0, 0.01));
+    FWadLevelCheckpoint BansheeCheckpoint;
+    TestTrue(TEXT("A completed Banshee sink can be archived"), Level->WriteCheckpoint(BansheeCheckpoint));
+    TestTrue(TEXT("The hidden defeated Banshee remains in its checkpoint"), BansheeCheckpoint.Encounters.Contains(TEXT("BansheeSinkFixture")));
+    Banshee->SetActorLocation(FVector(0, 200, 60.5));
+    Banshee->ResetForGenerator();
+    Banshee->SetSpawned(true);
+    TestEqual(TEXT("Reused Banshee restores flying movement"), Banshee->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
+    TestTrue(TEXT("The level checkpoint restores Banshee sink state"), Level->RestoreCheckpoint(BansheeCheckpoint));
+    TestTrue(TEXT("Restoring a sunken Banshee keeps its body absent"), Banshee->IsDefeated() && Banshee->IsHidden());
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalEarlyCreatureCombat, "AAOriginal.WAD.Gameplay.EarlyCreatureCombat",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalEarlyCreatureCombat::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for original Wolf, Archer, and Druid combat"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>(FVector(500, 0, 32), FRotator::ZeroRotator);
+    APlayerController* Controller = World->SpawnActor<APlayerController>();
+    ANativeWadGuardian* Creature = World->SpawnActor<ANativeWadGuardian>(FVector(0, 0, 22), FRotator::ZeroRotator);
+    if (!Player || !Controller || !Creature) { return false; }
+    World->AddController(Controller);
+    Controller->Possess(Player);
+    const FStructProperty* Property = FindFProperty<FStructProperty>(ANativeWadGuardian::StaticClass(), TEXT("Profile"));
+    if (!Property) { return false; }
+    const auto& Resolved = *Property->ContainerPtrToValuePtr<FWadEncounterProfile>(Creature);
+    FWadEncounterProfile Profile;
+    Profile.SourceType = 1017;
+    Profile.MaxHealth = 700;
+    Profile.RetreatHealth = 100;
+    Profile.MeleeDamage = 300;
+    Profile.MeleeRange = 60;
+    Profile.CollisionRadius = Profile.CollisionHalfHeight = 20;
+    Profile.SpriteSize = FVector2D(35, 20);
+    Profile.WalkSpeed = 140;
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    Creature->ResetForGenerator();
+    Creature->RestoreEncounterHealth(50);
+    Creature->Tick(0.2f);
+    TestFalse(TEXT("The source Wolf is grounded"), Resolved.bCanFly);
+    TestEqual(TEXT("The Wolf retains source melee damage"), Resolved.MeleeDamage, 300);
+    TestEqual(TEXT("The Wolf has no projectile"), Resolved.BoltDamage, 0);
+    TestTrue(TEXT("The injured berserker still advances instead of fleeing"), Creature->GetPendingMovementInputVector().X > 0.0);
+    const UStaticMeshComponent* Sprite = Creature->FindComponentByClass<UStaticMeshComponent>();
+    TestTrue(TEXT("The short Wolf sprite stays rooted at the valid capsule's feet"), Sprite
+        && FMath::IsNearlyEqual(Sprite->GetRelativeLocation().Z - 10.0, -Creature->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()));
+
+    auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+    auto* Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+    if (!Plane || !Material) { return false; }
+    for (const int32 Type : {1018, 1019})
+    {
+        Profile.SourceType = Type;
+        Profile.MaxHealth = Type == 1018 ? 700 : 2000;
+        Profile.RetreatHealth = 500;
+        Profile.MeleeDamage = Type == 1018 ? 100 : 150;
+        Profile.CollisionHalfHeight = 32;
+        Profile.SpriteSize = FVector2D(64, 64);
+        Profile.WalkSpeed = 70;
+        Creature->Configure(Plane, Material, Material, Material, Material, Material, Profile);
+        Creature->SetActorLocation(FVector(0, 0, 32));
+        Creature->ResetForGenerator();
+        Player->SetActorLocation(FVector(500, 0, 32));
+        const int32 HealthBefore = Player->GetHealth();
+        const int32 XPBefore = Player->GetExperience();
+        for (int32 Frame = 0; Frame < 60; ++Frame) { Creature->Tick(1.0f / 60.0f); }
+        TestEqual(TEXT("The source family fires exactly one projectile before its long cooldown"), Creature->GetBoltsFired(), 1);
+        TestEqual(TEXT("The correct source missile is retained"), Resolved.SourceMissileType, Type == 1018 ? 886 : 4018);
+        ANativeWadBolt* Shot = nullptr;
+        for (TActorIterator<ANativeWadBolt> Bolt(World); Bolt; ++Bolt)
+        { if (!Bolt->IsActorBeingDestroyed()) { Shot = *Bolt; break; } }
+        if (!TestNotNull(TEXT("An actual creature-owned projectile exists"), Shot)) { return false; }
+        if (Type == 1019)
+        {
+            TestEqual(TEXT("Druid uses the original homing dart"), Resolved.HomingMissileType, 4018);
+            TestEqual(TEXT("Druid has no source regeneration"), Resolved.RegenPerUpdate, 0);
+            Player->SetActorLocation(FVector(500, 100, 32));
+            Shot->Tick(0.03f);
+            TestTrue(TEXT("Druid dart bends toward a target that moves sideways"), Shot->GetActorLocation().Y > 0.0);
+        }
+        for (int32 Frame = 0; Frame < 40 && !Shot->IsActorBeingDestroyed(); ++Frame) { Shot->Tick(0.015f); }
+        TestEqual(TEXT("The live source projectile applies its exact normal damage"), Player->GetHealth(), HealthBefore - (Type == 1018 ? 300 : 100));
+        TestEqual(TEXT("A creature-owned projectile never grants the player XP"), Player->GetExperience(), XPBefore);
+        for (TActorIterator<ANativeWadBolt> Bolt(World); Bolt; ++Bolt) { Bolt->Destroy(); }
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalBansheeScream, "AAOriginal.WAD.Gameplay.BansheeScream",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalBansheeScream::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for source Banshee area attack"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>(FVector(200, 0, 26), FRotator::ZeroRotator);
+    APlayerController* Controller = World->SpawnActor<APlayerController>();
+    ANativeWadGuardian* Banshee = World->SpawnActor<ANativeWadGuardian>(FVector(0, 0, 58.5), FRotator::ZeroRotator);
+    ANativeWadGuardian* Neighbor = World->SpawnActor<ANativeWadGuardian>(FVector(100, 80, 26), FRotator::ZeroRotator);
+    ANativeWadGuardian* Outside = World->SpawnActor<ANativeWadGuardian>(FVector(400, 80, 26), FRotator::ZeroRotator);
+    ANativeWadGuardian* OtherBanshee = World->SpawnActor<ANativeWadGuardian>(FVector(100, -80, 58.5), FRotator::ZeroRotator);
+    if (!Player || !Controller || !Banshee || !Neighbor || !Outside || !OtherBanshee) { return false; }
+    World->AddController(Controller);
+    Controller->Possess(Player);
+    FWadEncounterProfile Ordinary;
+    Ordinary.MaxHealth = 1000;
+    Ordinary.RegenPerUpdate = 0;
+    Neighbor->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Ordinary);
+    Outside->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Ordinary);
+    Neighbor->RestoreEncounterHealth(1000);
+    Outside->RestoreEncounterHealth(1000);
+    FWadEncounterProfile Profile;
+    Profile.SourceType = 1012;
+    Profile.MaxHealth = 5000;
+    Profile.CollisionRadius = 15;
+    Profile.CollisionHalfHeight = 26.5;
+    Profile.WalkSpeed = 70;
+    for (ANativeWadGuardian* Actor : {Banshee, OtherBanshee})
+    {
+        Actor->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+        Actor->ResetForGenerator();
+    }
+    TestEqual(TEXT("Banshee uses its source flying velocity cap"), Banshee->GetCharacterMovement()->MaxFlySpeed, 262.5f);
+    const int32 Health = Player->GetHealth(), Mana = Player->GetMana(), XP = Player->GetExperience();
+    for (int32 Frame = 0; Frame < 120 && Banshee->GetScreamCount() == 0; ++Frame) { Banshee->Tick(1.0f / 60.0f); }
+    TestEqual(TEXT("The acquired source target triggers a scream"), Banshee->GetScreamCount(), 1);
+    TestEqual(TEXT("Scream deals source health damage"), Player->GetHealth(), Health - 100);
+    TestEqual(TEXT("The same attack drains mana"), Player->GetMana(), Mana - 100);
+    TestEqual(TEXT("The same attack applies source poison"), Player->GetPoisonLevel(), 10);
+    TestEqual(TEXT("Nearby creatures take the area damage too"), Neighbor->GetEncounterHealth(), 900);
+    TestEqual(TEXT("The collateral creature also receives poison"), Neighbor->GetPoisonLevel(), 10);
+    TestEqual(TEXT("The owner is immune to its own scream"), Banshee->GetEncounterHealth(), 5000);
+    TestEqual(TEXT("Another Banshee resists all four scream elements"), OtherBanshee->GetEncounterHealth(), 5000);
+    TestEqual(TEXT("The attack does not damage creatures beyond its area"), Outside->GetEncounterHealth(), 1000);
+    TestEqual(TEXT("Creature collateral damage grants no player XP"), Player->GetExperience(), XP);
+    Banshee->Tick(0.05f);
+    TestEqual(TEXT("Scream cannot repeat before the source cooldown"), Banshee->GetScreamCount(), 1);
+    Player->SetActorLocation(FVector(245, 0, 26));
+    for (int32 Frame = 0; Frame < 120; ++Frame) { Banshee->Tick(1.0f / 60.0f); }
+    TestEqual(TEXT("The source ten-unit inner trigger margin is preserved"), Banshee->GetScreamCount(), 1);
+    Player->SetActorLocation(FVector(200, 0, 26));
+    AActor* Cover = World->SpawnActor<AActor>();
+    if (!Cover) { return false; }
+    UBoxComponent* Wall = NewObject<UBoxComponent>(Cover);
+    Cover->SetRootComponent(Wall);
+    Wall->SetBoxExtent(FVector(2, 60, 100));
+    Wall->SetCollisionProfileName(TEXT("BlockAll"));
+    Wall->SetWorldLocation(FVector(100, 0, 50));
+    Wall->RegisterComponent();
+    for (int32 Frame = 0; Frame < 120; ++Frame) { Banshee->Tick(1.0f / 60.0f); }
+    TestEqual(TEXT("A wall prevents the scream's target trigger"), Banshee->GetScreamCount(), 1);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalCreatureTreasure, "AAOriginal.WAD.Gameplay.CreatureTreasure",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalCreatureTreasure::RunTest(const FString& Parameters)
+{
+    int32 ArrowChoices = 0, CoinChoices = 0, SwordChoices = 0, PotionChoices = 0;
+    for (int32 Roll = 0; Roll <= MAX_uint16; ++Roll)
+    {
+        const FWadCreatureTreasure Archer = ResolveWadCreatureTreasure(1018, uint16(Roll));
+        if (Archer.ItemType == 144)
+        {
+            ++ArrowChoices;
+            if (Archer.AmmoIndex != 0 || Archer.AmmoQuantity != 6) { AddError(TEXT("Source archer quiver lost its exact six normal arrows")); return false; }
+        }
+        else if (Archer.ItemType == 100) { ++CoinChoices; }
+        else { AddError(TEXT("Unexpected source archer treasure")); return false; }
+        const FWadCreatureTreasure Druid = ResolveWadCreatureTreasure(1019, uint16(Roll));
+        if (Druid.ItemType == 202) { ++SwordChoices; }
+        else if (Druid.ItemType == 822) { ++PotionChoices; }
+        else { AddError(TEXT("Unexpected source druid treasure")); return false; }
+    }
+    TestEqual(TEXT("Half of all 16-bit helper inputs give six arrows"), ArrowChoices, 32768);
+    TestEqual(TEXT("Half of all 16-bit helper inputs give one copper"), CoinChoices, 32768);
+    TestEqual(TEXT("Half of all 16-bit helper inputs give Druid item 202"), SwordChoices, 32768);
+    TestEqual(TEXT("Half of all 16-bit helper inputs give Druid item 822"), PotionChoices, 32768);
+    TestEqual(TEXT("The ordinary mapping does not invent loot for other families"), ResolveWadCreatureTreasure(1012, 1).ItemType, 0);
+
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for actual treasure pickups and archived lives"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadLevel* Level = World->SpawnActor<ANativeWadLevel>();
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>();
+    if (!Level || !Player) { return false; }
+    const FArrayProperty* Property = FindFProperty<FArrayProperty>(ANativeWadLevel::StaticClass(), TEXT("Sectors"));
+    if (!Property) { return false; }
+    auto& Sectors = *Property->ContainerPtrToValuePtr<TArray<FAAWadNativeSector>>(Level);
+    FAAWadNativeSector& Floor = Sectors.AddDefaulted_GetRef();
+    Floor.RepairedBoundaryPoints = {{-500, -500}, {500, -500}, {500, -500}, {500, 500},
+        {500, 500}, {-500, 500}, {-500, 500}, {-500, -500}};
+    Floor.Floor = NewObject<UStaticMeshComponent>(Level);
+    Floor.Ceiling = NewObject<UStaticMeshComponent>(Level);
+    Floor.Floor->SetupAttachment(Level->GetRootComponent());
+    Floor.Ceiling->SetupAttachment(Level->GetRootComponent());
+    Floor.Ceiling->SetRelativeLocation(FVector(0, 0, 256));
+    Floor.Floor->RegisterComponent();
+    Floor.Ceiling->RegisterComponent();
+    Level->SetSectorFloorZ(0, 0);
+    const auto Drops = [&]()
+    {
+        TArray<ANativeWadPickup*> Result;
+        for (TActorIterator<ANativeWadPickup> Item(World); Item; ++Item)
+        { if (!Item->IsActorBeingDestroyed() && Item->IsDropped()) { Result.Add(*Item); } }
+        return Result;
+    };
+    for (const int32 Type : {1018, 1019})
+    {
+        ANativeWadGuardian* Creature = World->SpawnActor<ANativeWadGuardian>(FVector(0, 0, 34), FRotator::ZeroRotator);
+        if (!Creature) { return false; }
+        Creature->Tags.Add(FName(*FString::Printf(TEXT("TreasureLife%d"), Type)));
+        FWadEncounterProfile Profile;
+        Profile.SourceType = Type;
+        Profile.MaxHealth = Type == 1018 ? 700 : 2000;
+        Profile.CollisionHalfHeight = 32;
+        Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+        Creature->RestoreEncounterHealth(Profile.MaxHealth);
+        TestFalse(TEXT("An alive restored life has not handled defeat treasure"), Creature->HasHandledDefeatTreasure());
+        Creature->TakeHit(Profile.MaxHealth);
+        auto Items = Drops();
+        if (!TestEqual(TEXT("A real defeat releases exactly one catalog-backed world drop"), Items.Num(), 1)) { return false; }
+        const FWadCreatureTreasure Even = ResolveWadCreatureTreasure(Type, 0), Odd = ResolveWadCreatureTreasure(Type, 1);
+        TestTrue(TEXT("The released item belongs to the original random table"), Items[0]->GetItemType() == Even.ItemType || Items[0]->GetItemType() == Odd.ItemType);
+        TestTrue(TEXT("The released actor is a usable original pickup"), Items[0]->IsAvailable());
+        const UStaticMeshComponent* Art = Items[0]->FindComponentByClass<UStaticMeshComponent>();
+        TestTrue(TEXT("The drop has its original catalog-backed material"), Art && Art->GetMaterial(0));
+        TestTrue(TEXT("Treasure art remains rooted at the dying creature's feet"), Art
+            && FMath::IsNearlyEqual(Items[0]->GetActorLocation().Z - Art->GetRelativeScale3D().Y * 50.0, 2.0, 0.01));
+        if (Items[0]->GetItemType() == 144)
+        {
+            TestEqual(TEXT("The physical source quiver carries normal ammunition"), Items[0]->GetAmmoIndex(), 0);
+            TestEqual(TEXT("The physical source quiver carries exactly six arrows"), Items[0]->GetAmmoQuantity(), 6);
+        }
+        Creature->TakeHit(100);
+        Creature->RestoreEncounterHealth(0);
+        Creature->RestoreEncounterHealth(0);
+        TestEqual(TEXT("Repeated finishing hits and state restore never release another item"), Drops().Num(), 1);
+        FWadLevelCheckpoint Saved;
+        if (!TestTrue(TEXT("The ordinary drop and defeated life can be archived"), Level->WriteCheckpoint(Saved))) { return false; }
+        TestEqual(TEXT("The existing dropped-item format stores exactly one treasure actor"), Saved.DroppedItems.Num(), 1);
+        Creature->ResetForGenerator();
+        if (!TestTrue(TEXT("The same level checkpoint reopens successfully"), Level->RestoreCheckpoint(Saved))) { return false; }
+        TestTrue(TEXT("The restored defeated life retains its handled treasure phase"), Creature->IsDefeated() && Creature->HasHandledDefeatTreasure());
+        Items = Drops();
+        if (!TestEqual(TEXT("Reopening replaces the old drop with exactly one saved pickup"), Items.Num(), 1)) { return false; }
+        TestEqual(TEXT("Its original selected item is not rerolled"), Items[0]->GetItemType(), Saved.DroppedItems[0].Type);
+        TestEqual(TEXT("Its saved ammunition amount survives"), Items[0]->GetAmmoQuantity(), Saved.DroppedItems[0].AmmoQuantity);
+        for (ANativeWadPickup* Item : Items) { Item->Destroy(); }
+        Creature->ResetForGenerator();
+        Creature->SetSpawned(true);
+        Creature->TakeHit(Profile.MaxHealth);
+        TestEqual(TEXT("A genuinely new generated life can release one fresh item"), Drops().Num(), 1);
+        for (ANativeWadPickup* Item : Drops()) { Item->Destroy(); }
+        Creature->Destroy();
+    }
+    // Check every non-currency table branch through the real world pickup-to-inventory/ammo path.
+    // Currency collection is covered by the live review, which has an initialized campaign purse.
+    for (const int32 Type : {144, 202, 822})
+    {
+        ANativeWadPickup* Item = ANativeWadPickup::SpawnDropped(*Level, Type, FVector(0, 0, 16));
+        if (!TestNotNull(TEXT("Each supported treasure branch has saved catalog art"), Item)) { return false; }
+        const int32 Before = Type == 144 ? Player->GetAmmoCount(0) : Player->GetItemCount(Type);
+        if (Type == 144) { Item->SetAuthoredAmmo(0, 6); }
+        TestTrue(TEXT("The real treasure actor can be collected"), Item->Collect(*Player));
+        TestEqual(TEXT("Collection transfers the original quantity to the right player store"),
+            Type == 144 ? Player->GetAmmoCount(0) : Player->GetItemCount(Type), Before + (Type == 144 ? 6 : 1));
+    }
+    ANativeWadGuardian* Legacy = World->SpawnActor<ANativeWadGuardian>(FVector(0, 0, 28), FRotator::ZeroRotator);
+    if (!Legacy) { return false; }
+    Legacy->Tags.Add(TEXT("L30 Elf Guardian"));
+    Legacy->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, FWadEncounterProfile());
+    Legacy->TakeHit(NativeWadRules::GuardianHealth);
+    TestEqual(TEXT("A known older Guardian placement also releases its source treasure"), Drops().Num(), 1);
+    for (ANativeWadPickup* Item : Drops()) { Item->Destroy(); }
+    Legacy->Destroy();
+    ANativeWadGuardian* QuestCreature = World->SpawnActor<ANativeWadGuardian>(FVector(0, 0, 34), FRotator::ZeroRotator);
+    ANativeWadPickup* QuestDrop = World->SpawnActor<ANativeWadPickup>();
+    if (!QuestCreature || !QuestDrop) { return false; }
+    FWadEncounterProfile QuestProfile;
+    QuestProfile.SourceType = 1019;
+    QuestProfile.MaxHealth = 2000;
+    QuestProfile.CollisionHalfHeight = 32;
+    QuestCreature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, QuestProfile);
+    QuestCreature->RestoreEncounterHealth(2000);
+    QuestDrop->Configure(nullptr, nullptr, NativeWadRules::OrbOfDefense);
+    QuestCreature->SetDefeatPickup(QuestDrop);
+    TestFalse(TEXT("The explicit quest pickup remains withheld before defeat"), QuestDrop->IsAvailable());
+    QuestCreature->TakeHit(2000);
+    TestTrue(TEXT("Ordinary treasure handling preserves the explicit quest drop"), QuestDrop->IsAvailable());
+    TestEqual(TEXT("An explicit quest drop does not duplicate ordinary treasure"), Drops().Num(), 1);
+    QuestCreature->RestoreEncounterHealth(0);
+    TestEqual(TEXT("Restoring that defeated life still does not duplicate its ordinary item"), Drops().Num(), 1);
+    const int32 OrbsBefore = Player->GetItemCount(NativeWadRules::OrbOfDefense);
+    TestTrue(TEXT("The explicit quest item is still collectable"), QuestDrop->Collect(*Player));
+    TestEqual(TEXT("The quest item reaches the player's normal inventory"), Player->GetItemCount(NativeWadRules::OrbOfDefense), OrbsBefore + 1);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalCreatureLookIdentity, "AAOriginal.WAD.Interface.CreatureLookIdentity",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalCreatureLookIdentity::RunTest(const FString& Parameters)
+{
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for original packed creature descriptions"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadGuardian* Creature = World->SpawnActor<ANativeWadGuardian>();
+    if (!Creature) { return false; }
+    FWadEncounterProfile Profile;
+    Profile.Name = TEXT("Elymas");
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    TestEqual(TEXT("Older Elymas profiles retain their unique packed source description"), Creature->GetLookSourceType(), 50158);
+    Profile.SourceType = 50158;
+    Profile.Name = TEXT("Packed authored creature");
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    TestEqual(TEXT("Authored packed IDs are preserved instead of reducing to base type"), Creature->GetLookSourceType(), 50158);
+    Profile.SourceType = 33787;
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    TestEqual(TEXT("Other supplied packed description keys also retain their high bits"), Creature->GetLookSourceType(), 33787);
+    Profile.SourceType = 0;
+    Profile.Name = TEXT("Exiguus");
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    TestEqual(TEXT("The established Exiguus fallback still resolves its source record"), Creature->GetLookSourceType(), 1032);
+    Profile.Name = TEXT("Unknown controlled fixture");
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    TestEqual(TEXT("An unknown fixture is not assigned an invented source identity"), Creature->GetLookSourceType(), 0);
+    Creature->Tags.Add(TEXT("L30 Elf Guardian"));
+    TestEqual(TEXT("A known old Guardian tag recovers its original source identity"), Creature->GetLookSourceType(), 1018);
     return true;
 }
 

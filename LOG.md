@@ -49,3 +49,35 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Rendered Notes and Journal reviews passed normal typing/editing, tabs/newlines, scrolling, reciprocal buttons, focus return, map travel, and fresh-process reload. The null-RHI button fixture lacked a usable viewport, so interface verification uses real offscreen rendering.
 - Inspected the original Notes form capture: [Notes](Saved/PlayableLoops-Rendered-Notes-notes.png) and [reloaded Notes](Saved/PlayableLoops-Rendered-NotesReload-notes.png). The known magenta-sky/palette question remains open in PLAN.md.
 - The next parallel assignments are active: early-campaign creature families; necklace/four-ring equipment plus source passives; five additional utility spells and classic Options/Controls. Their source edits remain separate from the built snapshot being committed now.
+
+## 2026-11-27 13:43 CST — checkpoint pushed and L40 replay
+
+- Committed and pushed verified milestones 219–221 as `58addd5c` (`Restore classic Notes, poison cures, and Destruction creatures`), including 523 LFS objects / approximately 25 MB of saved content. The next parallel source changes remain unstaged.
+- Replayed the carried Priest's actual L40 arrival with the restored enemies active. Both lifts, both gate switches, flight supplies, ledge crossing, Orb of Destruction, and Key 4 pass. Orange Dragon Thing 168 defeats the character on the return passage before the final door. Evidence: `Saved/Logs/PlayableLoops-CampaignTown6Chain-OriginalClassRestoredL40Encounters.log`. Loop 5 remains open; the earlier completed turn-in was before these encounters were restored.
+- The next source batch now covers all four early creature families, jewelry slots and Bank passives, source melee variance/critical rules, five utility spells, classic Options/Controls, and creature Look. Ordinary Elf/Druid treasure drops and remaining conservation effects are also being implemented. These are pending integration build and runtime checks, not completed checklist claims.
+
+## 2026-11-27 13:54 CST — second batch integration
+
+- Froze the parallel source edits and started the next combined Editor build. The batch now includes 98 early-campaign creature placements, Elf/Druid drops, necklace/four-ring equipment, Bank attribute/regeneration passives, conservation items, six new utility spells including Sustenance, and classic Options/Controls/creature Look.
+- Added normal UI reviews for original jewelry placement/remove/replace with a readied weapon and for Options/Controls persistence. Updated the elemental melee review to check the source variance/critical roll and exact typed result rather than assuming a fixed hit.
+- Cross-review found periodic poison damage ignored poison protection. Added the source guard while retaining poison decay and a real needs-tick regression before the build.
+- The build found one Options-slider coordinate type conversion; corrected that line for the next incremental pass. Other pending source audit fixes are the magical shield cap/order, Town ready-hand flight reactivation, and avoiding float-scaled treasure random draws.
+- The original has a shared 4,096-entry random table. New treasure helpers preserve the item/quantity decision for each input; native random selection does not yet reproduce that synchronized table or its exact sequence/distribution. This remains a source-parity and future multiplayer consideration.
+
+## 2026-11-27 14:20 CST — 35 regressions and rendered checks
+
+- All 35 WAD regressions pass in `Saved/Logs/PlayableLoops-JewelrySpellsFormsCreatures-VerifiedAutomation.log`. The initial utility-spell fixture matched modifier shortcuts for keypad 6/7; matching the complete plain-key chord corrected the fixture. The runtime spell definitions passed afterward.
+- Refreshed and validated all ten affected maps, including all 98 early-family placements. The combined checked placement count is 140, and all 11,259 checked native surface mesh references and transforms were preserved. Evidence: `Saved/Logs/PlayableLoops-EarlyCreatures-AllTenMaps-Import.log`.
+- The original toggle graphics exist as `.PIC` files although their form references omit the extension. Added the real source-file fallback and completed the HUD/item import. The source Look catalog contains 47 creature descriptions, including packed Elymas identity 50158.
+- Rendered jewelry checks pass placement in the original neck/four-ring boxes, weapon retention, independent effects, removal/replacement, save, and new-process restoration. The controlled fixture explicitly sets Accuracy 35 and uses an actual amulet in the neck slot; earlier fixture assumptions about a water-walking ring and legacy stat order were corrected.
+- Inspected [worn equipment](Saved/PlayableLoops-VerifiedRendered-WornJewelry-equipment.png). Source art and the five original jewelry locations are visible.
+- Rendered Options/Controls passes its in-session controls, gain ratios, toggles, scrolling, and focus return. Its new-process check found a real persistence defect: the custom GameUserSettings section is not written to disk. A dedicated user-config fix is underway; Options is not marked complete yet.
+- Creature Look and source elemental-melee rendered checks are continuing independently.
+- The next source phase is active and remains separate from the staged built snapshot: temporary effect ownership and additional source spells; full-type item identification/common starter grants; and the source DRK42 missing-texture fallback with material-only refresh support.
+
+## 2026-11-27 14:27 CST — verified checkpoint scope
+
+- Creature Look passed its rendered original portrait/text, source identity, wall-occlusion and mouse-look-return checks. Inspected [creature Look](Saved/PlayableLoops-VerifiedRendered-CreatureLook-creature.png).
+- Source elemental melee passed with an actual raw roll of 110 producing 69 damage after chain's electric bonus and one resisted element. A new process retained the scroll effect, observed expiry, and exercised the enchanted mace's ready/unready behavior.
+- Found a second real interface issue: inherited Unreal debug keys execute in addition to classic bindings. F1 switched to wireframe and compiled an extra shader; F5/F9 and page keys also conflict. Removed those specific debug bindings in DefaultInput.ini. The rerun stays lit, with no view-mode change: [Controls](Saved/PlayableLoops-KeyProof-Options-controls.png). This is not attributed to the user's still-unreproduced movement hitch.
+- Milestones 222–228 are ready as an intermediate checkpoint. Options in-session UI is verified, but disk persistence remains explicitly open until its dedicated-file fix passes the next new-process test. Other pending source changes are excluded from this staged checkpoint.

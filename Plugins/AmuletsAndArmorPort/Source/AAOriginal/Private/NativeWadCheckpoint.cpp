@@ -11,6 +11,7 @@
 #include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
 #include "NativeWadLevel.h"
+#include "NativeWadOptions.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
@@ -65,9 +66,11 @@ void UNativeWadTravelState::UpdateBackgroundMusic(UWorld& World)
             }
             if (Current)
             {
-                BackgroundMusic = UGameplayStatics::SpawnSound2D(Current, Track, 0.45f, 1.0f, 0.0f, nullptr, true);
+                BackgroundMusic = UGameplayStatics::SpawnSound2D(Current, Track,
+                    NativeWadOptions::EffectiveVolume(NativeWadOptions::EAudioChannel::Music, 0.45f), 1.0f, 0.0f, nullptr, true);
                 if (BackgroundMusic)
                 {
+                    NativeWadOptions::TrackAudio(BackgroundMusic, NativeWadOptions::EAudioChannel::Music, 0.45f);
                     UE_LOG(LogTemp, Display, TEXT("Started WAD music %s for %s."), *Track->GetName(), *Map.ToString());
                 }
             }
@@ -156,7 +159,8 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     {
         // A source Hydra disappears after its sink death; retain that defeated
         // life so restoring the map cannot bring the hidden corpse back alive.
-        if ((!Encounter->IsHidden() || (Encounter->IsDefeated() && Encounter->GetSourceType() == 1022))
+        if ((!Encounter->IsHidden() || (Encounter->IsDefeated()
+            && (Encounter->GetSourceType() == 1022 || Encounter->GetSourceType() == 1012)))
             && !Encounter->Tags.IsEmpty())
         {
             const ANativeWadGuardian* Target = Encounter->GetBerserkTarget();

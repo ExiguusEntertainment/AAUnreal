@@ -12,6 +12,21 @@ class USphereComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
 
+struct FWadCreatureTreasure
+{
+    int32 ItemType = 0;
+    int32 AmmoIndex = INDEX_NONE;
+    int32 AmmoQuantity = 0;
+};
+
+// CRELOGIC.C chooses these ordinary drops from the low bit of its 16-bit random value.
+inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 Roll)
+{
+    if (SourceType == 1018) { return (Roll & 1) ? FWadCreatureTreasure{144, 0, 6} : FWadCreatureTreasure{100}; }
+    if (SourceType == 1019) { return FWadCreatureTreasure{(Roll & 1) ? 202 : 822}; }
+    return {};
+}
+
 enum class EWadBoltEffect : uint8
 {
     Damage,
@@ -137,8 +152,13 @@ public:
     void ResetForGenerator();
     int32 GetBoltsFired() const { return BoltsFired; }
     int32 GetMeleeHits() const { return MeleeHits; }
+    int32 GetScreamCount() const { return ScreamsFired; }
     int32 GetRegeneratedHealth() const { return RegeneratedHealth; }
     double GetDipDepth() const;
+    bool HasHandledDefeatTreasure() const { return bDefeatTreasureHandled; }
+    UMaterialInterface* GetPortraitMaterial() const { return StandingMaterial.Get(); }
+    FVector2D GetPortraitSize() const;
+    int32 GetLookSourceType() const;
     bool CanSeePlayer(const ANativeWadPlayer& Player) const;
     const FString& GetEncounterName() const { return Profile.Name; }
     int32 GetSourceType() const { return Profile.SourceType; }
@@ -178,6 +198,8 @@ private:
     int32 CreatureLife = 0;
     int32 BerserkTargetLife = 0;
     void FireBolt(AActor& Target);
+    void DropDefeatTreasure();
+    bool bDefeatTreasureHandled = false;
     bool TickDipper(float DeltaSeconds, bool bRise);
     bool CanMoveOnLiquid(const FVector& Direction, float DeltaSeconds) const;
     TWeakObjectPtr<ANativeWadLevel> DipperLevel;
@@ -189,6 +211,7 @@ private:
     double PoisonTime = 5.0;
     int32 BoltsFired = 0;
     int32 MeleeHits = 0;
+    int32 ScreamsFired = 0;
     int32 RegeneratedHealth = 0;
     int32 MeleeDelay = 5;
     int32 BoltDelay = 5;

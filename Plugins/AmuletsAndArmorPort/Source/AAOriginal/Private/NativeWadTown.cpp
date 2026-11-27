@@ -524,6 +524,7 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
     {
         Slot = INDEX_NONE;
     }
+    for (int32& Slot : JewelrySlots) { Slot = INDEX_NONE; }
     for (int32 Ammo = 0; Ammo < UE_ARRAY_COUNT(AmmoReserve); ++Ammo)
     {
         AmmoReserve[Ammo] = Equipment.Ammo.IsValidIndex(Ammo) ? Equipment.Ammo[Ammo] : 0;
@@ -539,6 +540,7 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
         {
             EquipArmor(Slot, *Item);
         }
+        else if (Item->JewelrySlot != INDEX_NONE) { EquipJewelry(Slot, *Item); }
         else if (ReadySlot == INDEX_NONE && (Item->WeaponDamage > 0 || CarriedItems[Slot] == Crossbow))
         {
             ReadySlot = Slot;
@@ -912,6 +914,43 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
         return;
     }
 
+    if (Ready.IsInside(Point))
+    {
+        if (Player->GetCarriedItems().IsValidIndex(HeldSlot))
+        {
+            const int32 Type = Player->GetCarriedItems()[HeldSlot];
+            if (!Player->CanUseWadItem(Type)) { Player->ShowInteractionMessage(TEXT("Your class can't use this item.")); return; }
+            const int32 Previous = Player->ReadySlot;
+            Player->ReadySlot = HeldSlot;
+            HeldSlot = Previous;
+            if (Type == NativeWadRules::FlyingAmulet) { Player->bReadiedFlightSuppressed = false; }
+        }
+        else
+        {
+            HeldSlot = Player->ReadySlot;
+            Player->ReadySlot = INDEX_NONE;
+        }
+        if (!Player->HasEquippedItem(NativeWadRules::FlyingAmulet)) { Player->bReadiedFlightSuppressed = false; }
+        return;
+    }
+    if (ServiceBanner == EServiceBanner::Equipment)
+    {
+        for (int32 Location = 0; Location < NativeWadRules::JewelrySlotCount; ++Location)
+        {
+            if (!JewelryBoxes[Location].IsInside(Point)) { continue; }
+            const int32 Previous = Player->GetJewelryInventorySlot(Location);
+            const bool bPlacing = Player->GetCarriedItems().IsValidIndex(HeldSlot);
+            const int32 Slot = bPlacing ? HeldSlot : Previous;
+            if (Player->GetCarriedItems().IsValidIndex(Slot))
+            {
+                if (const FWadInventoryDetails* Rules = Player->GetItemRules(Player->GetCarriedItems()[Slot]);
+                    Rules && Player->EquipJewelry(Slot, *Rules, bPlacing ? Location : INDEX_NONE))
+                { HeldSlot = bPlacing ? Previous : Slot; }
+            }
+            return;
+        }
+    }
+
     const bool bBank = IsBankOpen();
     if (bBank)
     {
@@ -1096,6 +1135,12 @@ void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWa
         {
             const int32 Slot = Player.WornSlots[Location];
             if (Items.IsValidIndex(Slot)) { DrawItem(Items[Slot], ArmorBoxes[Location]); }
+        }
+        static_assert(UE_ARRAY_COUNT(JewelryBoxes) == NativeWadRules::JewelrySlotCount);
+        for (int32 Location = 0; Location < NativeWadRules::JewelrySlotCount; ++Location)
+        {
+            const int32 Slot = Player.GetJewelryInventorySlot(Location);
+            if (Items.IsValidIndex(Slot)) { DrawItem(Items[Slot], JewelryBoxes[Location]); }
         }
     }
     else

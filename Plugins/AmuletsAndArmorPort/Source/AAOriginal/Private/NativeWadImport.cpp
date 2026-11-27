@@ -52,6 +52,7 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "NativeWadHudData.h"
 #include "NativeWadItemSource.h"
 #include "NativeWadLevel.h"
+#include "NativeWadLook.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
@@ -728,6 +729,8 @@ struct FAAWadNativeImport
         const bool bLateCampaignMap = MapName == TEXT("L74") || MapName == TEXT("L73") || MapName == TEXT("L72")
             || MapName == TEXT("L32") || MapName == TEXT("L71") || MapName == TEXT("L70")
             || MapName == TEXT("L61") || MapName == TEXT("L40");
+        const bool bJugurthaMap = MapName == TEXT("L30") || MapName == TEXT("L301") || MapName == TEXT("L531")
+            || MapName == TEXT("L31") || MapName == TEXT("L22");
         const bool bExtendedScenery = bRetreatMap || bUndeadMap || bTempleMap || bLateCampaignMap;
         if ((MapName == TEXT("L30") && !InstallL30Slice(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L151") && (!InstallL151Slice(World, Actor, Map, WadPath, Output)
@@ -757,6 +760,7 @@ struct FAAWadNativeImport
                     TEXT("ORB5/ORB5.CPC"), TEXT("L153 Orb of Defense"), Output)))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output)))
+            || (bJugurthaMap && !InstallCampaignCreatures(World, Actor, Map, WadPath, Output))
             || !InstallAuthoredItems(World, Actor, Map, Output))
         {
             return false;
@@ -1093,6 +1097,14 @@ struct FAAWadNativeImport
                 TEXT("D1G001.CPC"), TEXT("D1F008.CPC"), TEXT("MISSILE6/1.CPC"), 30000, 0, 400, 90, 80, 7, 270, 750},
             {1022, TEXT("Hydra"), TEXT("HYDRA"), TEXT("HYW001.CPC"), TEXT("HYDD001.CPC"),
                 TEXT("HYDD004.CPC"), TEXT("HYA001.CPC"), TEXT("MISSIL16/1.CPC"), 8000, 500, 450, 72, 42, 10, 90, 250},
+            {1012, TEXT("Banshee"), TEXT("BANSHEE"), TEXT("BANW001.CPC"), TEXT("BAND001.CPC"),
+                TEXT("BAND008.CPC"), TEXT("BANA001.CPC"), nullptr, 5000, 500, 100, 250, 15, 10, 135, 0},
+            {1017, TEXT("Wolf"), TEXT("DOG"), TEXT("FRTBIT1.CPC"), TEXT("DGDYFT2.CPC"),
+                TEXT("DGDYFT5.CPC"), TEXT("FRTBIT1.CPC"), nullptr, 700, 100, 300, 60, 20, 20, 90, 0},
+            {1018, TEXT("Elf Archer"), TEXT("ARCHER"), TEXT("ARCHER01.CPC"), TEXT("ARCDI01.CPC"),
+                TEXT("ARCDI04.CPC"), TEXT("ARCHER05.CPC"), TEXT("ARROW1/BOLT2.CPC"), 700, 500, 100, 60, 20, 10, 270, 300},
+            {1019, TEXT("Druid"), TEXT("DRUID"), TEXT("DRUDW001.CPC"), TEXT("DRUDD001.CPC"),
+                TEXT("DRUDD008.CPC"), TEXT("DRUID001.CPC"), TEXT("HMISS12/1.CPC"), 2000, 500, 150, 60, 20, 10, 180, 100, nullptr, 4018},
             {1014, TEXT("Eastern Archer"), TEXT("EVILARCH"), TEXT("EARCAT01.CPC"), TEXT("EARCDI02.CPC"),
                 TEXT("EARCDI04.CPC"), TEXT("EARCAT01.CPC"), TEXT("ARROW4/1.CPC"), 4000, 500, 500, 60, 20, 10, 315, 600},
             {1015, TEXT("Mighty Hunter"), TEXT("GIANTARC"), TEXT("GODATK01.CPC"), TEXT("GODDIE01.CPC"),
@@ -1144,6 +1156,7 @@ struct FAAWadNativeImport
             Profile.MeleeRange = FMath::Max(float(Creature.MeleeRange), Creature.Radius + ANativeWadPlayer::CapsuleRadius + 1.0f);
             Profile.CollisionRadius = Creature.Radius;
             Profile.CollisionHalfHeight = Size.Y * 0.5f;
+            if (Creature.Type == 1017) { Profile.CollisionHalfHeight = FMath::Max(Profile.CollisionHalfHeight, Profile.CollisionRadius); }
             Profile.SpriteSize = FVector2D(Size);
             Profile.UpdateTicks = 7;
             Profile.WalkSpeed = Creature.Step * TicksPerSecond / 10.0f;
@@ -1210,7 +1223,7 @@ struct FAAWadNativeImport
                 Profile.RailEnd = FVector2D(Rail[1].X, Rail[1].Y);
             }
             int32 Placed = 0;
-            const double Offset = Profile.CollisionHalfHeight + 2.0;
+            const double Offset = Profile.CollisionHalfHeight + 2.0 + (Creature.Type == 1012 ? 32.0 : 0.0);
             const auto Configure = [&](ANativeWadGuardian& Enemy)
             {
                 Enemy.Configure(Plane, Standing, Downed, Attacking, Hurt, Bolt, Profile);
@@ -1228,7 +1241,26 @@ struct FAAWadNativeImport
                     return false;
                 }
                 const FString Label = FString::Printf(TEXT("WAD Creature Thing %d"), Id);
-                auto* Enemy = ImportSliceThing<ANativeWadGuardian>(World, Map, Id, Actor.GetWalkingHeight(Sector) + Offset, *Label);
+                // Adopt the two earlier slice actors, retaining their first checkpoint tag.
+                const TCHAR* LegacyTag = MapName.Equals(TEXT("L30"), ESearchCase::IgnoreCase) && Id == 9 ? TEXT("L30 Elf Guardian")
+                    : MapName.Equals(TEXT("L301"), ESearchCase::IgnoreCase) && Id == 246 ? TEXT("L301 Elf Guardian 246") : nullptr;
+                ANativeWadGuardian* Enemy = nullptr;
+                if (LegacyTag)
+                {
+                    for (TActorIterator<ANativeWadGuardian> Existing(&World); Existing; ++Existing)
+                    {
+                        if (Existing->ActorHasTag(FName(LegacyTag))) { Enemy = *Existing; break; }
+                    }
+                }
+                if (Enemy)
+                {
+                    Enemy->Modify();
+                    Enemy->Tags.AddUnique(FName(*Label));
+                    Enemy->SetActorLabel(Label);
+                    Enemy->SetActorLocationAndRotation(FVector(Thing.X, Thing.Y, Actor.GetWalkingHeight(Sector) + Offset),
+                        FRotator(0, Thing.Angle * 45.0, 0));
+                }
+                else { Enemy = ImportSliceThing<ANativeWadGuardian>(World, Map, Id, Actor.GetWalkingHeight(Sector) + Offset, *Label); }
                 if (!Enemy)
                 {
                     return false;
@@ -3172,6 +3204,9 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     TSet<int32> Types;
     Types.Add(NativeWadRules::StartingWaterGourd);
     Types.Add(234); // Original electric mace, also used by the ready/unready review.
+    for (const int32 Type : {100, 144, 202, 822}) { Types.Add(Type); } // Original Elf Archer and Druid defeat treasure.
+    // Non-shop equipment still needs saved art and rules for normal use and restoration.
+    for (const int32 Type : {411, 419, 604, 610, 614, 615, 712, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
     for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
@@ -3637,11 +3672,40 @@ bool SaveNativeWadHud(FOutputDevice& Output)
     {
         return false;
     }
+    const FString CreatureDirectory = FPaths::ProjectDir() /
+        TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/CREDESC");
+    TArray<FString> CreatureFiles;
+    IFileManager::Get().FindFiles(CreatureFiles, *(CreatureDirectory / TEXT("DES*.TXT")), true, false);
+    Data->CreatureDescriptions.Reset();
+    for (const FString& File : CreatureFiles)
+    {
+        const FString Stem = FPaths::GetBaseFilename(File);
+        const FString Digits = Stem.Mid(3);
+        if (!Stem.StartsWith(TEXT("DES")) || Digits.Len() != 5 || !Digits.IsNumeric()) { continue; }
+        FString Source;
+        FWadCreatureDescription Description;
+        if (!FFileHelper::LoadFileToString(Source, *(CreatureDirectory / File))
+            || !NativeWadLook::ParseDescription(Source, Description) || Description.Name.IsEmpty())
+        {
+            Output.Logf(TEXT("Could not import the source creature description %s."), *File);
+            return false;
+        }
+        Data->CreatureDescriptions.Add(FCString::Atoi(*Digits), MoveTemp(Description));
+    }
+    if (Data->CreatureDescriptions.IsEmpty())
+    {
+        Output.Log(TEXT("No original creature descriptions were available for the Look form."));
+        return false;
+    }
+    Output.Logf(TEXT("Imported %d source creature descriptions for the classic Look form."), Data->CreatureDescriptions.Num());
     TArray<FString> Pictures = {
         TEXT("UI/3DUI/MAINBACK"), TEXT("UI/3DUI/INVBAR3"), TEXT("UI/3DUI/STABAR"),
         TEXT("UI/3DUI/EQPBAR"), TEXT("UI/3DUI/2EQBUTN"), TEXT("UI/3DUI/2INVBUTN"),
         TEXT("UI/3DUI/JNLBAR"), TEXT("UI/3DUI/RWND"), TEXT("UI/3DUI/FFWD"),
         TEXT("UI/3DUI/NTSBAR"), TEXT("UI/3DUI/NOTESSB"), TEXT("UI/3DUI/2JOURNBT"), TEXT("UI/3DUI/2NOTESBT"),
+        TEXT("UI/3DUI/OPTBAR"), TEXT("UI/3DUI/OPTSB"), TEXT("UI/3DUI/SLIDER"), TEXT("UI/3DUI/CNTRLBAR"),
+        TEXT("UI/3DUI/CNTRLSB"), TEXT("UI/CREATEC/CRC_TOG1"), TEXT("UI/CREATEC/CRC_TOG2"),
+        TEXT("UI/3DUI/VIEWBAR"), TEXT("UI/3DUI/VIEWSB"),
         TEXT("UI/3DUI/AMMBAR"), TEXT("UI/3DUI/AMMSELUP"), TEXT("UI/3DUI/AMMSELDN"), TEXT("UI/3DUI/AMMGET"),
         TEXT("UI/3DUI/MONBAR2"), TEXT("UI/3DUI/PGET1"), TEXT("UI/3DUI/PGET5"),
         TEXT("UI/3DUI/GGET1"), TEXT("UI/3DUI/GGET5"), TEXT("UI/3DUI/SGET1"),
