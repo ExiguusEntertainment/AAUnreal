@@ -82,6 +82,8 @@ namespace NativeWadRules
         {TEXT("23"), TEXT("Pull"), ESpellSchool::Cleric, ESpellEffect::Projectile, 200, 30, 0, 1, 14 }, // SPL00078
         {TEXT("43"), TEXT("Push"), ESpellSchool::Cleric, ESpellEffect::Projectile, 300, 20, 0, 1, 13 }, // SPL00079
         {TEXT("697"), TEXT("Gods Wrath"), ESpellSchool::Cleric, ESpellEffect::Projectile, 1000, -40, 0, 1, 8 }, // SPL00101
+        {TEXT("134"), TEXT("Angry Word"), ESpellSchool::Mage, ESpellEffect::Projectile, 300, 20, 0, 1, 18}, // SPL00010
+        {TEXT("134"), TEXT("Angry Word"), ESpellSchool::Arcane, ESpellEffect::Projectile, 300, 20, 0, 1, 18}, // SPL00052
         {TEXT("184"), TEXT("Dispel Magic"), ESpellSchool::Mage, ESpellEffect::Projectile, 800, 10, 0, 1, 11}, // SPL00015
         {TEXT("138"), TEXT("Dispel Magic"), ESpellSchool::Arcane, ESpellEffect::Projectile, 800, 10, 0, 1, 11}, // SPL00064
         {TEXT("68"), TEXT("Dispel Magic"), ESpellSchool::Cleric, ESpellEffect::Projectile, 800, 10, 0, 1, 11}, // SPL00082
@@ -259,6 +261,7 @@ namespace NativeWadRules
         {16, 4015, 250, 100.0f, DamageFlag(EProjectileDamage::Poison), false, TEXT("MISSIL16/1.CPC")},
         {13, 31, 2500, 20.0f, SpecialDamageFlag(ESpecialDamage::Push), false, TEXT("FIREBALL/BOLT01.CPC")},
         {14, 4002, 2500, 100.0f, SpecialDamageFlag(ESpecialDamage::Pull), false, TEXT("MISSILE3/1.CPC")},
+        {18, 4000, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Berserk), false, TEXT("MISSILE1/1.CPC")},
         {11, 4007, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Dispel), false, TEXT("MISSILE8/1.CPC")},
         {15, 4008, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Earthbind), false, TEXT("MISSILE9/1.CPC")},
         {19, 4009, 100, 100.0f, SpecialDamageFlag(ESpecialDamage::Slow), false, TEXT("MISSIL10/1.CPC")},

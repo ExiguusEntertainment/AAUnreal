@@ -27,6 +27,14 @@ struct FWadSavedEncounter
     double SlowSeconds = 0.0;
     UPROPERTY()
     double EarthboundSeconds = 0.0;
+    UPROPERTY()
+    int32 CreatureLife = 0;
+    UPROPERTY()
+    FName BerserkTarget;
+    UPROPERTY()
+    double BerserkSeconds = 0.0;
+    UPROPERTY()
+    int32 BerserkTargetLife = 0;
 };
 
 USTRUCT()

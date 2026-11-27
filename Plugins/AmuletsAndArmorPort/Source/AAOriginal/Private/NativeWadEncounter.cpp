@@ -70,6 +70,32 @@ void FWadEncounterProfile::ApplySourceRules()
     case 1002: MeleeDamageMask = SpecialDamageFlag(ESpecialDamage::Push); break; // Source Push: no player health damage.
     default: break;
     }
+    switch (SourceType)
+    {
+    case 1003: case 1005: ChanceAttackCreature = 50; break;
+    case 1006: case 1017: ChanceAttackCreature = 70; break;
+    case 1008: case 1025: case 1033: case 1035: case 1036: ChanceAttackCreature = 10; break;
+    case 1009: case 1019: case 1023: case 1032: ChanceAttackCreature = 20; break;
+    case 1011: case 1014: case 1020: ChanceAttackCreature = 25; break;
+    case 1018: case 1022: ChanceAttackCreature = 40; break;
+    case 1034: ChanceAttackCreature = 60; break;
+    default: if (SourceType != 0) { ChanceAttackCreature = 0; } break;
+    }
+    // CREDATA.H chanceContinueAttack, used after the initial ten-second Berserk interval.
+    switch (SourceType)
+    {
+    case 1003: ChanceContinueAttack = 50; break;
+    case 1005: case 1006: case 1008: case 1009: case 1025: case 1033: case 1035: case 1036: ChanceContinueAttack = 10; break;
+    case 1011: ChanceContinueAttack = 40; break;
+    case 1014: case 1020: ChanceContinueAttack = 25; break;
+    case 1017: ChanceContinueAttack = 60; break;
+    case 1018: ChanceContinueAttack = 20; break;
+    case 1019: ChanceContinueAttack = 15; break;
+    case 1022: ChanceContinueAttack = 30; break;
+    case 1023: case 1034: ChanceContinueAttack = 80; break;
+    case 1032: ChanceContinueAttack = 5; break;
+    default: break;
+    }
     if (SourceType == 1003 || SourceType == 1010 || SourceType == 1023) { bCanFly = true; }
     if (SourceType == 1023)
     {
@@ -143,14 +169,16 @@ void ANativeWadGuardian::ShowSummonPose()
 
 bool ANativeWadGuardian::CanSeePlayer(const ANativeWadPlayer& Player) const
 {
-    if (Player.IsConcealed())
-    {
-        return false;
-    }
+    return CanSeeTarget(Player);
+}
+
+bool ANativeWadGuardian::CanSeeTarget(const AActor& Target) const
+{
+    if (const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(&Target); Player && Player->IsConcealed()) { return false; }
     FHitResult Hit;
     const FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeWadGuardianSight), true, this);
-    return !GetWorld()->LineTraceSingleByChannel(Hit, GetActorLocation(), Player.GetActorLocation(), ECC_Visibility, Query)
-        || Hit.GetActor() == &Player;
+    return !GetWorld()->LineTraceSingleByChannel(Hit, GetActorLocation(), Target.GetActorLocation(), ECC_Visibility, Query)
+        || Hit.GetActor() == &Target;
 }
 
 void ANativeWadGuardian::Tick(float DeltaSeconds)
@@ -176,21 +204,13 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         }
     }
     ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerCharacter(this, 0));
-    if (!Player)
-    {
-        return;
-    }
     if (IsDefeated())
     {
         return;
     }
 
     LogicTime += DeltaSeconds;
-    const FVector Offset = Player->GetActorLocation() - GetActorLocation();
-    const FVector TowardPlayer = Profile.bCanFly && EarthboundSeconds == 0.0 ? Offset.GetSafeNormal() : Offset.GetSafeNormal2D();
-    const double Distance = Offset.Size2D();
     const bool bRetreat = Health < Profile.RetreatHealth;
-    const bool bCloseRetreat = Profile.bKeepsBoltDistance && Distance < Profile.MinBoltRange;
     // CRELOGIC.C extends the table's update by half and shortens the fleeing update by a quarter.
     const int32 UpdateTicks = SlowSeconds > 0.0 ? Profile.UpdateTicks * 3 : Profile.UpdateTicks + (Profile.UpdateTicks >> 1);
     const double Interval = (bRetreat ? UpdateTicks - (UpdateTicks >> 2) : UpdateTicks) / TicksPerSecond;
@@ -205,6 +225,20 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         BoltDelay = FMath::Max(0, BoltDelay - Updates);
     }
 
+    BerserkSeconds = FMath::Max(0.0, BerserkSeconds - DeltaSeconds);
+    ANativeWadGuardian* Enemy = BerserkTarget.Get();
+    if (Enemy && (Enemy->IsDefeated() || Enemy->IsHidden() || Enemy->GetCreatureLife() != BerserkTargetLife
+        || (BerserkSeconds == 0.0 && Updates > 0 && FMath::RandRange(0, 65535) % 100 >= Profile.ChanceContinueAttack)))
+    {
+        ClearBerserkTarget();
+        Enemy = nullptr;
+    }
+    AActor* Target = Enemy ? static_cast<AActor*>(Enemy) : static_cast<AActor*>(Player);
+    if (!Target) { return; }
+    const FVector Offset = Target->GetActorLocation() - GetActorLocation();
+    const FVector TowardPlayer = Profile.bCanFly && EarthboundSeconds == 0.0 ? Offset.GetSafeNormal() : Offset.GetSafeNormal2D();
+    const double Distance = Offset.Size2D();
+    const bool bCloseRetreat = Profile.bKeepsBoltDistance && Distance < Profile.MinBoltRange;
     const double Now = GetWorld()->GetTimeSeconds();
     UMaterialInterface* Pose = Now < HurtUntil ? HurtMaterial.Get()
         : Now < AttackPoseUntil ? AttackingMaterial.Get() : StandingMaterial.Get();
@@ -212,7 +246,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         Sprite->SetMaterial(0, Pose);
     }
-    const bool bVisible = Player->GetHealth() > 0 && CanSeePlayer(*Player);
+    const bool bVisible = (Enemy || (Player && Player->GetHealth() > 0)) && CanSeeTarget(*Target);
     const bool bMelee = bVisible && Distance < Profile.MeleeRange && FMath::Abs(Offset.Z) <= 26.0;
     if (HitTime > 0.0 && Now >= HitTime)
     {
@@ -220,8 +254,9 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         if (bMelee)
         {
             ++MeleeHits;
-            Player->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask);
-            if (Player->GetHealth() <= 0)
+            if (Enemy) { Enemy->TakeHit(Profile.MeleeDamage, nullptr, Profile.MeleeDamageMask); }
+            else { Player->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask); }
+            if (!Enemy && Player->GetHealth() <= 0)
             {
                 UE_LOG(LogTemp, Display, TEXT("%s defeated the player with a melee hit."), *GetActorNameOrLabel());
             }
@@ -265,7 +300,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         BoltDelay = Profile.RangedDelayUpdates;
         AttackPoseUntil = Now + 20 / TicksPerSecond;
-        FireBolt(*Player);
+        FireBolt(*Target);
     }
 }
 
@@ -322,6 +357,28 @@ bool ANativeWadGuardian::TakeHit(int32 Damage, ANativeWadPlayer* Credit, uint8 D
     }
     if (DamageMask & SpecialDamage)
     {
+        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Berserk))
+        {
+            ANativeWadGuardian* Closest = nullptr;
+            double Distance = TNumericLimits<double>::Max();
+            for (TActorIterator<ANativeWadGuardian> Candidate(GetWorld()); Candidate; ++Candidate)
+            {
+                if (*Candidate == this || Candidate->IsHidden() || Candidate->IsDefeated()
+                    || Candidate->Profile.RailStart != Candidate->Profile.RailEnd) { continue; }
+                const double NextDistance = FVector::DistSquared2D(GetActorLocation(), Candidate->GetActorLocation());
+                if (NextDistance < Distance) { Closest = *Candidate; Distance = NextDistance; }
+            }
+            const AActor* Previous = BerserkTarget.Get();
+            if (!Previous && bHasTarget) { Previous = UGameplayStatics::GetPlayerCharacter(this, 0); }
+            const bool bCandidatePreferred = Closest && (!Previous || (CanSeeTarget(*Closest)
+                && (!CanSeeTarget(*Previous) || Distance < FVector::DistSquared2D(GetActorLocation(), Previous->GetActorLocation()))));
+            bHasTarget = false;
+            HitTime = 0.0;
+            if (bCandidatePreferred && FMath::RandRange(0, 65535) % 100 < Profile.ChanceAttackCreature)
+            { RestoreBerserkTarget(Closest, 10.0, Closest->GetCreatureLife()); }
+            else if (BerserkTarget.IsValid()) { BerserkSeconds = 10.0; }
+            return true;
+        }
         if (DamageMask == SpecialDamageFlag(ESpecialDamage::Slow)
             || (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind) && Profile.bCanFly))
         {
@@ -335,6 +392,7 @@ bool ANativeWadGuardian::TakeHit(int32 Damage, ANativeWadPlayer* Credit, uint8 D
         if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse))
         {
             // CRELOGIC.C loses the target, changes heading, and blocks the previous move.
+            ClearBerserkTarget();
             bHasTarget = false;
             HitTime = 0.0;
             SetActorRotation(FRotator(0.0, FMath::FRand() * 360.0, 0.0));
@@ -448,6 +506,25 @@ void ANativeWadGuardian::RestoreControlEffects(double Slow, double Earthbound)
     ApplyControlMovement();
 }
 
+void ANativeWadGuardian::ClearBerserkTarget()
+{
+    BerserkTarget.Reset();
+    BerserkSeconds = 0.0;
+    BerserkTargetLife = 0;
+    HitTime = 0.0;
+}
+
+void ANativeWadGuardian::RestoreBerserkTarget(ANativeWadGuardian* Target, double Seconds, int32 TargetLife)
+{
+    ClearBerserkTarget();
+    if (!Target || Target == this || Target->IsDefeated() || Target->IsHidden()
+        || Target->GetCreatureLife() != TargetLife || !FMath::IsFinite(Seconds)) { return; }
+    BerserkTarget = Target;
+    BerserkTargetLife = TargetLife;
+    BerserkSeconds = FMath::Clamp(Seconds, 0.0, 10.0);
+    bHasTarget = true;
+}
+
 void ANativeWadGuardian::SetDefeatPickup(ANativeWadPickup* Pickup)
 {
     DefeatPickup = Pickup;
@@ -464,6 +541,8 @@ void ANativeWadGuardian::SetSpawned(bool bSpawned)
 
 void ANativeWadGuardian::ResetForGenerator()
 {
+    CreatureLife = CreatureLife == MAX_int32 ? MAX_int32 : CreatureLife + 1;
+    ClearBerserkTarget();
     Health = Profile.MaxHealth;
     PoisonLevel = BoltsFired = MeleeHits = RegeneratedHealth = 0;
     PoisonTime = 5.0;
@@ -478,10 +557,10 @@ void ANativeWadGuardian::ResetForGenerator()
     GetCharacterMovement()->SetMovementMode(Profile.bCanFly ? MOVE_Flying : MOVE_Walking);
 }
 
-void ANativeWadGuardian::FireBolt(ANativeWadPlayer& Player)
+void ANativeWadGuardian::FireBolt(AActor& Target)
 {
     const FVector Start = GetActorLocation();
-    const FVector Direction = (Player.GetActorLocation() + FVector(0, 0, 10) - Start).GetSafeNormal();
+    const FVector Direction = (Target.GetActorLocation() + FVector(0, 0, 10) - Start).GetSafeNormal();
     FActorSpawnParameters Parameters;
     Parameters.Owner = this;
     Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -492,7 +571,7 @@ void ANativeWadGuardian::FireBolt(ANativeWadPlayer& Player)
         const int32 HomingType = Profile.bHomingPlasma ? 4017 : Profile.HomingMissileType;
         if (const FWadWandProjectile* Homing = FindHomingMissile(HomingType))
         {
-            Bolt->SetHomingTarget(&Player);
+            Bolt->SetHomingTarget(&Target);
             Bolt->SetBlastRadius(Homing->Radius);
             Bolt->SetDamageMask(Homing->DamageMask);
         }
@@ -544,19 +623,16 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
         {
             ApplyBlast(Hit.Location);
         }
-        else if (ANativeWadPlayer* Shooter = Cast<ANativeWadPlayer>(GetOwner()))
-        {
-            if (ANativeWadGuardian* Guardian = Cast<ANativeWadGuardian>(Hit.GetActor()))
-            {
-                Guardian->TakeHit(Damage, Shooter, DamageMask);
-            }
-        }
         else if (Effect == EWadBoltEffect::LockDoor)
         {
             if (ANativeWadLevel* Level = ScriptTrap.Get())
             {
                 Level->LockScriptDoorsNear(FVector2D(Hit.ImpactPoint));
             }
+        }
+        else if (ANativeWadGuardian* Guardian = Cast<ANativeWadGuardian>(Hit.GetActor()))
+        {
+            Guardian->TakeHit(Damage, Cast<ANativeWadPlayer>(GetOwner()), DamageMask);
         }
         else if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(Hit.GetActor()))
         {

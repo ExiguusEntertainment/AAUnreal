@@ -1980,6 +1980,10 @@ namespace
         FVector PresentationPlayerStart = FVector::ZeroVector;
         bool bAmmoReview = false;
         bool bAmmoBannerReview = false;
+        bool bBerserkReview = false;
+        bool bBerserkReload = false;
+        TWeakObjectPtr<ANativeWadGuardian> BerserkVictim;
+        int32 BerserkVictimHealthBefore = 0;
         int32 DispelEffectsBefore = 0;
         bool bDispelReview = false;
         bool bDispelReload = false;
@@ -10465,6 +10469,134 @@ namespace
             return true;
         }
 
+        bool TickBerserkWand(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            UWorld& Current = *Player.GetWorld();
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            ANativeWadGuardian* Target = ElementalTarget.Get();
+            ANativeWadGuardian* Victim = BerserkVictim.Get();
+            const auto Configure = [](ANativeWadGuardian& Creature, int32 Melee)
+            {
+                FWadEncounterProfile Profile;
+                Profile.MaxHealth = 5000;
+                Profile.ChanceAttackCreature = 100;
+                Profile.RegenPerUpdate = 0;
+                Profile.WalkSpeed = 0;
+                Profile.MeleeDamage = Melee;
+                Profile.BoltDamage = 0;
+                Creature.Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+                Creature.GetCharacterMovement()->DisableMovement();
+            };
+            if (NextPoint == 0)
+            {
+                if (bBerserkReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                {
+                    if (Enemy->IsHidden() || Enemy->GetSourceType() != 1023) { continue; }
+                    if (!Target) { Target = *Enemy; ElementalTarget = Target; }
+                    else if (!Victim) { Victim = *Enemy; BerserkVictim = Victim; }
+                }
+                if (!Target || !Victim) { return Finish(&Player, TEXT("Berserk requires two original L61 Griffons")); }
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                {
+                    if (*Enemy != Target && *Enemy != Victim)
+                    { Enemy->SetActorTickEnabled(false); Enemy->GetCharacterMovement()->DisableMovement(); Enemy->SetActorHiddenInGame(true); }
+                }
+                if (bBerserkReload)
+                {
+                    if (Target->GetBerserkTarget() != Victim || Target->GetBerserkSeconds() <= 5.0
+                        || Target->GetBerserkTargetLife() != Victim->GetCreatureLife()
+                        || Player.GetReadyItem() != 914 || Player.GetMana() != 175 || Player.GetItemCount(914) != 1)
+                    { return Finish(&Player, TEXT("Berserk target identity, duration, wand, or mana failed to reload")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified Berserk target, creature life, remaining duration, retained wand, and refusal mana across a process restart."));
+                    Configure(*Target, 0);
+                    Configure(*Victim, 0);
+                    Victim->SetActorTickEnabled(false);
+                    Target->RestoreBerserkTarget(Victim, 0.15, Victim->GetCreatureLife());
+                    StageTime = Current.GetTimeSeconds();
+                    NextPoint = 20;
+                    return true;
+                }
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                const FVector Position = Target->GetActorLocation();
+                if (!Level || !PlaceReviewPlayer(**Level, Player, FVector2D(Position) + FVector2D(-180, 0)))
+                { return Finish(&Player, TEXT("could not use the original Griffon room for Berserk")); }
+                Configure(*Target, 100);
+                Configure(*Victim, 0);
+                Target->SetActorRotation((Player.GetActorLocation() - Target->GetActorLocation()).Rotation());
+                Target->RestoreEncounterHealth(5000);
+                Victim->RestoreEncounterHealth(5000);
+                Victim->SetActorLocation(Position + FVector(0, 50, 0), false, nullptr, ETeleportType::TeleportPhysics);
+                Victim->SetActorTickEnabled(false);
+                ExperienceBeforeTravel = Player.GetExperience();
+                HealthBeforeCast = Player.GetHealth();
+                ++NextPoint;
+            }
+            switch (NextPoint)
+            {
+            case 1:
+                if (Player.GetReadyItem() != 914 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 914); break; }
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 2:
+                if (Current.GetTimeSeconds() - StageTime < 1.5) { break; }
+                if (Target->GetBerserkTarget() != Victim || Target->GetMeleeHits() == 0 || Victim->GetEncounterHealth() >= 5000
+                    || Target->GetEncounterHealth() != 5000 || Player.GetHealth() != HealthBeforeCast
+                    || Player.GetExperience() != ExperienceBeforeTravel || Player.GetMana() != 350)
+                { return Finish(&Player, *FString::Printf(TEXT("Berserk did not cause creature combat without player damage or XP: victimHP=%d, hits=%d, mana=%d"), Victim->GetEncounterHealth(), Target->GetMeleeHits(), Player.GetMana())); }
+                UE_LOG(LogTemp, Display, TEXT("Verified normal Berserk wand hit redirects an original actor into creature melee without damaging or awarding XP to the player."));
+                Target->SetActorTickEnabled(false);
+                BerserkVictimHealthBefore = Victim->GetEncounterHealth();
+                {
+                    FActorSpawnParameters Params;
+                    Params.Owner = Target;
+                    ANativeWadBolt* Bolt = Current.SpawnActor<ANativeWadBolt>(Target->GetActorLocation(), FRotator::ZeroRotator, Params);
+                    if (!Bolt) { return Finish(&Player, TEXT("could not launch the creature-owned missile")); }
+                    Bolt->Launch(nullptr, nullptr, FVector(0, 2000, 0), 100);
+                }
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 3:
+                if (Current.GetTimeSeconds() - StageTime < 0.15) { break; }
+                if (Victim->GetEncounterHealth() != BerserkVictimHealthBefore - 100 || Player.GetExperience() != ExperienceBeforeTravel)
+                { return Finish(&Player, TEXT("a creature-owned missile did not damage the other creature without player XP")); }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 4:
+                if (Player.GetMana() != 175 || Player.GetItemCount(914) != 1)
+                { return Finish(&Player, TEXT("Berserk did not retain its wand or apply the source exact-cost refusal")); }
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadBerserkWandReview")))
+                { return Finish(&Player, TEXT("could not save the live Berserk target")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified creature-owned missile damage without player XP, source wand cost/refusal, and saved Berserk target."));
+                return Finish(&Player);
+            case 20:
+                if (Current.GetTimeSeconds() - StageTime < 0.5) { break; }
+                if (Target->GetBerserkTarget()) { return Finish(&Player, TEXT("Berserk did not return to the player after its source continuation check")); }
+                Target->RestoreBerserkTarget(Victim, 10.0, Victim->GetCreatureLife());
+                Victim->ResetForGenerator();
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 21:
+                if (Current.GetTimeSeconds() - StageTime < 0.1) { break; }
+                if (Target->GetBerserkTarget()) { return Finish(&Player, TEXT("Berserk attached to a reused generator creature life")); }
+                Target->RestoreBerserkTarget(Victim, 10.0, Victim->GetCreatureLife());
+                Target->ResetForGenerator();
+                if (Target->GetBerserkTarget() || Target->GetBerserkSeconds() != 0.0)
+                { return Finish(&Player, TEXT("generator reuse retained the owner's Berserk effect")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified Berserk continuation expiry and generator-life cleanup for both the owner and target."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool LaunchIncomingReviewMissile(ANativeWadPlayer& Player, uint8 DamageMask)
         {
             UWorld& Current = *Player.GetWorld();
@@ -12017,6 +12149,7 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bBerserkReview) { return TickBerserkWand(*Player); }
             if (bDispelReview) { return TickDispelEffects(*Player); }
             if (bControlWandReview) { return TickControlWands(*Player); }
             if (bRuneProjectileReview) { return TickRuneProjectiles(*Player); }
@@ -12475,6 +12608,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bBoulder = Mode == TEXT("boulderrail") || Mode == TEXT("boulderrail75");
     const bool bAmmo = Mode == TEXT("specialammo") || Mode == TEXT("specialammoreload");
     const bool bAmmoBanner = Mode == TEXT("ammobanner");
+    const bool bBerserk = Mode == TEXT("berserkwand") || Mode == TEXT("berserkwandreload");
     const bool bDispel = Mode == TEXT("dispeleffects") || Mode == TEXT("dispeleffectsreload");
     const bool bControlWands = Mode == TEXT("controlwands") || Mode == TEXT("controlwandsreload");
     const bool bRuneProjectile = Mode == TEXT("runeprojectiles") || Mode == TEXT("runeprojectilesreload");
@@ -12492,7 +12626,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         || L25Review == EL25Review::L20Exit;
     const FString CampaignMap = CampaignRoute ? FString::Printf(TEXT("L%d"), CampaignRoute->Map) : FString();
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : CampaignRoute ? *CampaignMap : bStartsInL20 ? TEXT("L20")
-        : bControlWands ? TEXT("L61")
+        : bControlWands || bBerserk ? TEXT("L61")
         : Mode == TEXT("elymaspresentation") ? TEXT("L44") : Mode == TEXT("templegenerator") ? TEXT("L41") : Mode == TEXT("undeadwizardgenerator") ? TEXT("L10")
         : (Mode == TEXT("infinitegenerator") || Mode == TEXT("lavaterrain")) ? TEXT("L71")
         : TempleReview == ETempleReview::L51 ? TEXT("L51") : TempleReview != ETempleReview::None ? TEXT("L52")
@@ -12537,6 +12671,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bElymasPresentationReview = Mode == TEXT("elymaspresentation");
     Review->bAmmoReview = bAmmo;
     Review->bAmmoBannerReview = bAmmoBanner;
+    Review->bBerserkReview = bBerserk;
+    Review->bBerserkReload = Mode == TEXT("berserkwandreload");
     Review->bDispelReview = bDispel;
     Review->bDispelReload = Mode == TEXT("dispeleffectsreload");
     Review->bControlWandReview = bControlWands;

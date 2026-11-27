@@ -59,6 +59,10 @@ struct FWadEncounterProfile
     UPROPERTY()
     bool bCanFly = false;
     UPROPERTY()
+    int32 ChanceAttackCreature = 0;
+    UPROPERTY()
+    int32 ChanceContinueAttack = 0;
+    UPROPERTY()
     int32 UpdateTicks = 5;
     UPROPERTY()
     int32 RegenPerUpdate = 1;
@@ -115,6 +119,12 @@ public:
     double GetSlowSeconds() const { return SlowSeconds; }
     double GetEarthboundSeconds() const { return EarthboundSeconds; }
     void RestoreControlEffects(double Slow, double Earthbound);
+    ANativeWadGuardian* GetBerserkTarget() const { return BerserkTarget.Get(); }
+    double GetBerserkSeconds() const { return BerserkSeconds; }
+    int32 GetCreatureLife() const { return CreatureLife; }
+    int32 GetBerserkTargetLife() const { return BerserkTargetLife; }
+    void RestoreCreatureLife(int32 Life) { CreatureLife = FMath::Max(0, Life); }
+    void RestoreBerserkTarget(ANativeWadGuardian* Target, double Seconds, int32 TargetLife);
     void RestoreEncounterHealth(int32 SavedHealth);
     void SetDefeatPickup(class ANativeWadPickup* Pickup);
     void SetSpawned(bool bSpawned);
@@ -154,7 +164,13 @@ private:
     void ApplyControlMovement();
     double SlowSeconds = 0.0;
     double EarthboundSeconds = 0.0;
-    void FireBolt(ANativeWadPlayer& Player);
+    bool CanSeeTarget(const AActor& Target) const;
+    void ClearBerserkTarget();
+    TWeakObjectPtr<ANativeWadGuardian> BerserkTarget;
+    double BerserkSeconds = 0.0;
+    int32 CreatureLife = 0;
+    int32 BerserkTargetLife = 0;
+    void FireBolt(AActor& Target);
     void TickRailHazard(float DeltaSeconds);
     TWeakObjectPtr<ANativeWadLevel> RailLevel;
     int32 Health = NativeWadRules::GuardianHealth;

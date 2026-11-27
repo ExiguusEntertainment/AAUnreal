@@ -155,8 +155,11 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     {
         if (!Encounter->IsHidden() && !Encounter->Tags.IsEmpty())
         {
+            const ANativeWadGuardian* Target = Encounter->GetBerserkTarget();
+            const FName TargetTag = Target && !Target->Tags.IsEmpty() ? Target->Tags[0] : NAME_None;
             Checkpoint.Encounters.Add(Encounter->Tags[0], {Encounter->GetActorTransform(), Encounter->GetEncounterHealth(),
-                Encounter->GetPoisonLevel(), Encounter->GetPoisonTime(), Encounter->GetSlowSeconds(), Encounter->GetEarthboundSeconds()});
+                Encounter->GetPoisonLevel(), Encounter->GetPoisonTime(), Encounter->GetSlowSeconds(), Encounter->GetEarthboundSeconds(),
+                Encounter->GetCreatureLife(), TargetTag, Encounter->GetBerserkSeconds(), Encounter->GetBerserkTargetLife()});
         }
     }
     return true;
@@ -410,6 +413,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
             Item->Destroy();
         }
     }
+    TMap<FName, ANativeWadGuardian*> RestoredEncounters;
     for (TActorIterator<ANativeWadGuardian> Encounter(GetWorld()); Encounter; ++Encounter)
     {
         if (!Encounter->Tags.IsEmpty())
@@ -420,8 +424,16 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
                 Encounter->RestoreEncounterHealth(State->Health);
                 Encounter->RestorePoison(State->Poison, State->PoisonTime);
                 Encounter->RestoreControlEffects(State->SlowSeconds, State->EarthboundSeconds);
+                Encounter->RestoreCreatureLife(State->CreatureLife);
+                RestoredEncounters.Add(Encounter->Tags[0], *Encounter);
             }
         }
+    }
+    // Resolve shared creature references after every life and health state has been restored.
+    for (const auto& [Tag, Encounter] : RestoredEncounters)
+    {
+        const FWadSavedEncounter& State = Checkpoint.Encounters.FindChecked(Tag);
+        Encounter->RestoreBerserkTarget(RestoredEncounters.FindRef(State.BerserkTarget), State.BerserkSeconds, State.BerserkTargetLife);
     }
     return true;
 }

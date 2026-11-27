@@ -18,6 +18,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "TextureResource.h"
 #include "Misc/ScopeExit.h"
+#include "UObject/UnrealType.h"
 #include "LegacyMapLoader.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -1530,5 +1531,72 @@ bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
     TestEqual(TEXT("Earthbind has no effect on a source-grounded creature"), Creature->GetEarthboundSeconds(), 0.0);
     Creature->TakeHit(100, Player, NativeWadRules::SpecialDamageFlag(NativeWadRules::ESpecialDamage::Slow));
     TestEqual(TEXT("Source grounded Slow halves walking step frequency rather than applying the flyer velocity cap"), Creature->GetCharacterMovement()->MaxWalkSpeed, 52.5f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalBerserkTarget, "AAOriginal.WAD.Gameplay.BerserkTarget",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalBerserkTarget::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for creature targeting"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>(FVector(-500, 0, 0), FRotator::ZeroRotator);
+    APlayerController* Controller = World->SpawnActor<APlayerController>();
+    ANativeWadGuardian* Owner = World->SpawnActor<ANativeWadGuardian>();
+    ANativeWadGuardian* Near = World->SpawnActor<ANativeWadGuardian>(FVector(50, 0, 0), FRotator::ZeroRotator);
+    ANativeWadGuardian* Far = World->SpawnActor<ANativeWadGuardian>(FVector(200, 0, 0), FRotator::ZeroRotator);
+    if (!Player || !Controller || !Owner || !Near || !Far) { return false; }
+    World->AddController(Controller);
+    Controller->Possess(Player);
+    FWadEncounterProfile Profile;
+    FWadEncounterProfile Griffon;
+    Griffon.SourceType = 1023;
+    Owner->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Griffon);
+    const FStructProperty* ProfileProperty = FindFProperty<FStructProperty>(ANativeWadGuardian::StaticClass(), TEXT("Profile"));
+    if (!TestNotNull(TEXT("Saved encounter profile property"), ProfileProperty)) { return false; }
+    const FWadEncounterProfile& Resolved = *ProfileProperty->ContainerPtrToValuePtr<FWadEncounterProfile>(Owner);
+    TestEqual(TEXT("Source Griffon has a twenty-percent chance to attack another creature"), Resolved.ChanceAttackCreature, 20);
+    TestEqual(TEXT("Source Griffon has an eighty-percent continuation chance"), Resolved.ChanceContinueAttack, 80);
+    Profile.ChanceAttackCreature = 100;
+    Profile.MeleeDamage = Profile.BoltDamage = 0;
+    Profile.WalkSpeed = Profile.RegenPerUpdate = 0;
+    Owner->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    const int32 OwnerHealth = Owner->GetEncounterHealth();
+    const int32 XP = Player->GetExperience();
+    Owner->TakeHit(100, Player, SpecialDamageFlag(ESpecialDamage::Berserk));
+    TestTrue(TEXT("Berserk chooses the nearest other creature"), Owner->GetBerserkTarget() == Near);
+    TestEqual(TEXT("Berserk starts a ten-second continuation interval"), Owner->GetBerserkSeconds(), 10.0);
+    TestEqual(TEXT("Berserk does no health damage"), Owner->GetEncounterHealth(), OwnerHealth);
+    TestEqual(TEXT("Berserk grants no player XP"), Player->GetExperience(), XP);
+    Owner->RestoreBerserkTarget(Near, 0.01, Near->GetCreatureLife());
+    Owner->Tick(0.2f);
+    TestNull(TEXT("Zero source continuation chance returns to the previous player target"), Owner->GetBerserkTarget());
+    Profile.ChanceContinueAttack = 100;
+    Owner->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    Owner->RestoreBerserkTarget(Near, 0.0, Near->GetCreatureLife());
+    Owner->Tick(0.2f);
+    TestTrue(TEXT("Full continuation chance retains the creature after the interval"), Owner->GetBerserkTarget() == Near);
+    Near->RestoreEncounterHealth(0);
+    Owner->Tick(0.2f);
+    TestNull(TEXT("Defeated targets are released"), Owner->GetBerserkTarget());
+    Owner->TakeHit(100, Player, SpecialDamageFlag(ESpecialDamage::Berserk));
+    TestTrue(TEXT("A defeated nearby creature is excluded from target selection"), Owner->GetBerserkTarget() == Far);
+    Owner->RestoreBerserkTarget(Far, 10.0, Far->GetCreatureLife());
+    Far->ResetForGenerator();
+    Owner->Tick(0.2f);
+    TestNull(TEXT("A reused target is a distinct creature life"), Owner->GetBerserkTarget());
+    Owner->RestoreBerserkTarget(Far, 10.0, Far->GetCreatureLife());
+    Owner->ResetForGenerator();
+    TestNull(TEXT("Reusing the owner clears its target"), Owner->GetBerserkTarget());
+    TestEqual(TEXT("Reusing the owner clears its timer"), Owner->GetBerserkSeconds(), 0.0);
+    Profile.ChanceAttackCreature = 0;
+    Owner->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    Owner->TakeHit(100, Player, SpecialDamageFlag(ESpecialDamage::Berserk));
+    TestNull(TEXT("Zero willingness to attack creatures refuses the Berserk target change"), Owner->GetBerserkTarget());
+    Owner->RestoreBerserkTarget(Owner, 10.0, Owner->GetCreatureLife());
+    TestNull(TEXT("An invalid saved self-target is rejected"), Owner->GetBerserkTarget());
     return true;
 }
