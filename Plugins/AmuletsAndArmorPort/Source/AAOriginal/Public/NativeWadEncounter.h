@@ -19,12 +19,13 @@ struct FWadCreatureTreasure
     int32 AmmoQuantity = 0;
     // -1 means no source payload; recorded zero is a valid, distinct value.
     int32 AccessoryData = INDEX_NONE;
+    int32 AdditionalItemType = 0; // Verified multi-item ordinary treasure (Jugurtha).
     bool HasAccessoryData() const { return AccessoryData >= 0 && AccessoryData <= MAX_uint16; }
 };
 
-// CRELOGIC.C CreatureDropTreasure's ordinary, single-item drops. These are full
+// CRELOGIC.C ordinary drops, including Jugurtha's verified two-item case. Full
 // source identities: Elymas 50158 must not become Orange Wizard 1006. Quest
-// objects remain separate DefeatPickups, so bosses release only their extra ring here.
+// objects remain separate DefeatPickups; Exiguus/Elymas release their extra ring here.
 // The helper reproduces branch/table selection, not the original global RNG sequence.
 inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 Roll)
 {
@@ -41,6 +42,8 @@ inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 
     case 1014: return {145, 3, 6}; // Source "fire" quiver; retain the established banner-to-ammo mapping.
     case 1018: return (Roll & 1) ? FWadCreatureTreasure{144, 0, 6} : FWadCreatureTreasure{100};
     case 1019: return {(Roll & 1) ? 202 : 822};
+    case 33787: return {(Roll & 1) ? 202 : 825};
+    case 46075: return {415, INDEX_NONE, 0, INDEX_NONE, 234};
     case 1032: return {416};
     case 1035: return {BadKnight[Roll % 12]};
     case 1036: return {106};
@@ -160,6 +163,7 @@ public:
     bool TakeHit(int32 Damage, ANativeWadPlayer* Credit = nullptr,
         uint8 DamageMask = NativeWadRules::NormalDamage);
     bool IsDefeated() const { return Health == 0; }
+    UFUNCTION(BlueprintPure, Category="WAD|Creature")
     int32 GetEncounterHealth() const { return Health; }
     int32 GetPoisonLevel() const { return PoisonLevel; }
     double GetPoisonTime() const { return PoisonTime; }
@@ -183,11 +187,13 @@ public:
     int32 GetRegeneratedHealth() const { return RegeneratedHealth; }
     double GetDipDepth() const;
     bool HasHandledDefeatTreasure() const { return bDefeatTreasureHandled; }
+    UFUNCTION(BlueprintPure, Category="WAD|Creature")
     UMaterialInterface* GetPortraitMaterial() const { return StandingMaterial.Get(); }
     FVector2D GetPortraitSize() const;
     int32 GetLookSourceType() const;
     bool CanSeePlayer(const ANativeWadPlayer& Player) const;
     const FString& GetEncounterName() const { return Profile.Name; }
+    UFUNCTION(BlueprintPure, Category="WAD|Creature")
     int32 GetSourceType() const { return Profile.SourceType; }
     const FWadEncounterProfile& GetEncounterProfile() const { return Profile; }
     double GetMagicMapRadius() const { return Profile.CollisionRadius; }

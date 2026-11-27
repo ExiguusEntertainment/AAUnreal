@@ -165,6 +165,34 @@ void FWadEncounterProfile::ApplySourceRules()
         MinBoltRange = SourceType == 1017 ? 0.0f : 250.0f;
         BoltRange = SourceType == 1017 ? 0 : SourceType == 1018 ? 2000 : 1000;
     }
+    if (SourceType == 33787 || SourceType == 46075)
+    {
+        // Full CREDATA identities share DRUID object art, not Druid1019 logic data.
+        const bool bJugurtha = SourceType == 46075;
+        bCanFly = false;
+        MaxHealth = bJugurtha ? 4500 : 2500;
+        RetreatHealth = 500;
+        UpdateTicks = 7;
+        RegenPerUpdate = bJugurtha ? 4 : 1;
+        WalkSpeed = 70.0f; // step10 *70/(7+(7>>1)).
+        CollisionRadius = 20.0f; // Shared DRUID.INF.
+        MeleeDamage = bJugurtha ? 350 : 150;
+        MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::Poison);
+        MeleeRange = 60.0f;
+        MeleeDelayUpdates = 10;
+        RangedDelayUpdates = bJugurtha ? 10 : 40;
+        MinBoltRange = 250.0f;
+        BoltRange = 1000;
+        SourceMissileType = 4015;
+        HomingMissileType = 0;
+        BoltDamage = 250; // Original poison projectile, independent of melee350/150.
+        BoltElement = uint8(EProjectileDamage::Poison);
+        ResistanceMask = DamageFlag(EProjectileDamage::Poison);
+        ArmorClass = 0; // Source cloth: no palette-dependent piercing bonus.
+        VisionHalfAngle = bJugurtha ? 157.5f : 90.0f;
+        ChanceAttackCreature = bJugurtha ? 100 : 20;
+        ChanceContinueAttack = bJugurtha ? 15 : 10;
+    }
     if (SourceType == 1005 || SourceType == 1022)
     {
         bCanFly = false;
@@ -258,6 +286,7 @@ void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Stand
     GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
     GetCharacterMovement()->MaxFlySpeed = SourceFlightSpeed(Profile);
     if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
+    else if (Profile.SourceType==33787 || Profile.SourceType==46075) { GetCharacterMovement()->SetMovementMode(MOVE_Walking); }
     if (Profile.SpriteSize.X > 0 && Profile.SpriteSize.Y > 0)
     {
         Sprite->SetRelativeScale3D(FVector(Profile.SpriteSize * 0.01, 1.0));
@@ -276,6 +305,7 @@ void ANativeWadGuardian::BeginPlay()
     GetCharacterMovement()->MaxFlySpeed = SourceFlightSpeed(Profile);
     Health = Profile.MaxHealth;
     if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
+    else if (Profile.SourceType==33787 || Profile.SourceType==46075) { GetCharacterMovement()->SetMovementMode(MOVE_Walking); }
     if (Profile.RailStart != Profile.RailEnd)
     {
         const TActorIterator<ANativeWadLevel> Level(GetWorld());
@@ -776,27 +806,29 @@ void ANativeWadGuardian::DropDefeatTreasure()
     const int32 OffsetX = uint16(FMath::Rand32()) % 6 - 3;
     const int32 OffsetY = uint16(FMath::Rand32()) % 6 - 3;
     const FWadCreatureTreasure Treasure = ResolveWadCreatureTreasure(SourceType, uint16(FMath::Rand32()));
-    const FWadInventoryDetails* Details = Catalog ? Catalog->ItemDetails.Find(Treasure.ItemType) : nullptr;
-    if (!Details || Details->SpriteSize.X <= 0 || Details->SpriteSize.Y <= 0)
+    const FWadCreatureTreasure Drops[] = {Treasure, {Treasure.AdditionalItemType}};
+    for (const auto& DropData : Drops)
     {
-        UE_LOG(LogTemp, Warning, TEXT("The source treasure for %s is missing catalog item %d."), *Profile.Name, Treasure.ItemType);
-        return;
-    }
-    FVector Position = GetActorLocation();
-    Position.X += OffsetX - (Treasure.AmmoIndex != INDEX_NONE ? 2 : 0);
-    Position.Y += OffsetY;
-    Position.Z += Details->SpriteSize.Y * 0.5 - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-    if (ANativeWadPickup* Drop = ANativeWadPickup::SpawnDropped(**Level, Treasure.ItemType, Position))
-    {
-        Drop->SetOwner(this);
-        if (Treasure.AmmoIndex != INDEX_NONE) { Drop->SetAuthoredAmmo(Treasure.AmmoIndex, Treasure.AmmoQuantity); }
-        if (Treasure.HasAccessoryData()) { Drop->SetAccessoryData(Treasure.AccessoryData); }
-        UE_LOG(LogTemp, Display, TEXT("Released source creature treasure: type %d, ammo %d, quantity %d, auxiliary %d, life %d."),
-            Treasure.ItemType, Treasure.AmmoIndex, Treasure.AmmoQuantity, Treasure.AccessoryData, CreatureLife);
-    }
-    else
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Could not spawn source treasure item %d for %s."), Treasure.ItemType, *Profile.Name);
+        if (DropData.ItemType == 0) { continue; }
+        const FWadInventoryDetails* Details = Catalog ? Catalog->ItemDetails.Find(DropData.ItemType) : nullptr;
+        if (!Details || Details->SpriteSize.X <= 0 || Details->SpriteSize.Y <= 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("The source treasure for %s is missing catalog item %d."), *Profile.Name, DropData.ItemType);
+            continue;
+        }
+        FVector Position = GetActorLocation();
+        Position.X += OffsetX - (DropData.AmmoIndex != INDEX_NONE ? 2 : 0);
+        Position.Y += OffsetY;
+        Position.Z += Details->SpriteSize.Y * 0.5 - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+        if (ANativeWadPickup* Drop = ANativeWadPickup::SpawnDropped(**Level, DropData.ItemType, Position))
+        {
+            Drop->SetOwner(this);
+            if (DropData.AmmoIndex != INDEX_NONE) { Drop->SetAuthoredAmmo(DropData.AmmoIndex, DropData.AmmoQuantity); }
+            if (DropData.HasAccessoryData()) { Drop->SetAccessoryData(DropData.AccessoryData); }
+            UE_LOG(LogTemp, Display, TEXT("Released source creature treasure: type %d, ammo %d, quantity %d, auxiliary %d, life %d."),
+                DropData.ItemType, DropData.AmmoIndex, DropData.AmmoQuantity, DropData.AccessoryData, CreatureLife);
+        }
+        else { UE_LOG(LogTemp, Warning, TEXT("Could not spawn source treasure item %d for %s."), DropData.ItemType, *Profile.Name); }
     }
 }
 
@@ -986,6 +1018,10 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
     if (GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility,
         FCollisionShape::MakeSphere(5.0f), Query))
     {
+        // A wall collision remains a blocked script shot even when its source
+        // payload also explodes nearby. Preserve existing review/telemetry counts.
+        if (!Cast<ANativeWadPlayer>(Hit.GetActor()) && !Cast<ANativeWadGuardian>(Hit.GetActor()))
+        { if (ANativeWadLevel* Level = ScriptTrap.Get()) { Level->CountBlockedScriptMissile(); } }
         if (BlastRadius > 0.0f)
         {
             ApplyBlast(Hit.Location);
@@ -1017,10 +1053,6 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
             case EWadBoltEffect::LockDoor:
                 break;
             }
-        }
-        else if (ANativeWadLevel* Level = ScriptTrap.Get())
-        {
-            Level->CountBlockedScriptMissile();
         }
         Destroy();
         return;

@@ -21,6 +21,8 @@ bool RefreshNativeWadSkeletonKnights(const FString& MapPackage, FOutputDevice& O
 bool RefreshNativeWadL151Encounters(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadTerrainFriction(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadAmbientAudio(const FString& MapPackage, const FString& WadPath, FOutputDevice& Output);
+bool RefreshNativeWadL41ScriptMissiles(const FString& MapPackage, FOutputDevice& Output);
+bool RefreshNativeWadPackedDruids(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadAcidEnvironment(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadMissingMaterials(const FString& MapPackage, FOutputDevice& Output);

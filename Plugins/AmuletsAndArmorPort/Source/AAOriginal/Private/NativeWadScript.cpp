@@ -1,6 +1,23 @@
 #include "NativeWadScript.h"
 #include "NativeWadRules.h"
 
+int32 ResolveWadScriptContinuation(const FWadScriptActivity& Activity, int32 LegacyIndex, int32 SourceOffset)
+{
+    if (LegacyIndex < 0 || LegacyIndex > Activity.Commands.Num()) { return INDEX_NONE; }
+    if (SourceOffset == MAX_int32) { return Activity.Commands.Num(); }
+    if (SourceOffset != INDEX_NONE)
+    {
+        return Activity.Commands.IndexOfByPredicate([SourceOffset](const FWadScriptCommand& Command)
+            { return Command.SourceOffset == SourceOffset; });
+    }
+    if (!Activity.LegacyResumeCommands.IsEmpty())
+    {
+        const int32 Resolved = Activity.LegacyResumeCommands.IsValidIndex(LegacyIndex) ? Activity.LegacyResumeCommands[LegacyIndex] : INDEX_NONE;
+        return Resolved >= 0 && Resolved <= Activity.Commands.Num() ? Resolved : INDEX_NONE;
+    }
+    return LegacyIndex >= 0 && LegacyIndex <= Activity.Commands.Num() ? LegacyIndex : INDEX_NONE;
+}
+
 #if WITH_EDITOR
 #include "Misc/FileHelper.h"
 
@@ -107,6 +124,8 @@ namespace
             return true;
         }
 
+        int32 Tell() const { return Position; }
+
     private:
         TConstArrayView<uint8> Bytes;
         int32 Position = 0;
@@ -115,6 +134,7 @@ namespace
     bool ReadCommands(FScriptReader& Reader, int32 SectorCount, int32 SideCount, int32 NextActivity, FWadScriptActivity& Activity,
         FOutputDevice& Output)
     {
+        Activity.LegacyResumeCommands.Add(0);
         uint32 Opcode = 0;
         while (Reader.Unsigned(1, Opcode))
         {
@@ -123,6 +143,8 @@ namespace
                 return true;
             }
             FWadScriptCommand Command;
+            Command.SourceOffset = Reader.Tell() - 1;
+            bool bNewL41Missile = false;
             switch (Opcode)
             {
             case 60:
@@ -317,11 +339,13 @@ namespace
                 }
                 else if (Opcode == 54 && (Args[0] == NativeWadRules::AcidBall
                     || NativeWadRules::FindHomingMissile(Args[0])
+                    || Args[0] == 4001 || Args[0] == 4002 || Args[0] == 4007 || Args[0] == 4009
                     || Args[0] == 4005 || Args[0] == 4006 || Args[0] == 4011 || Args[0] == 4012
                     || Args[0] == 4015 || Args[0] == 4016
                     || Args[0] == NativeWadRules::PoisonCrossbowBolt
                     || Args[0] == NativeWadRules::PiercingCrossbowBolt) && Args[7] > 0)
                 {
+                    bNewL41Missile = Args[0] == 4001 || Args[0] == 4002 || Args[0] == 4007 || Args[0] == 4009;
                     Command.Operation = EWadScriptOperation::LaunchMissile;
                     Command.Position = FIntVector(Args[1], Args[2], Args[3]);
                     Command.Aim = FIntVector(Args[4], Args[5], Args[6]);
@@ -339,6 +363,7 @@ namespace
                 return false;
             }
             Activity.Commands.Add(MoveTemp(Command));
+            if (!bNewL41Missile) { Activity.LegacyResumeCommands.Add(Activity.Commands.Num()); }
         }
         if (NextActivity == INDEX_NONE)
         {
@@ -346,8 +371,10 @@ namespace
         }
         // Place table entries are labels, not return instructions. Source execution can enter the next label.
         FWadScriptCommand& Fallthrough = Activity.Commands.AddDefaulted_GetRef();
+        Fallthrough.SourceOffset = Reader.Tell();
         Fallthrough.Operation = EWadScriptOperation::Jump;
         Fallthrough.Target = NextActivity;
+        Activity.LegacyResumeCommands.Add(Activity.Commands.Num());
         return true;
     }
 }

@@ -303,3 +303,17 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All119 WAD regressions pass; actual L30 door147 cycle/walking/light regression passes with new obstacles. L151 day/dusk PNGs reviewed at Saved/PlayableLoops-OrdinaryScenery-L151-{day,dusk}.png. Existing fixed unlit sprite shading and source palette/minification remain explicit presentation gaps.
 - Multiplayer note: existing CPU billboards still face the first view. Future multiplayer needs per-view orientation/directional frames without moving shared collision/actor transforms. Private Night Vision already has a separate two-view proof.
 - PLAN251 complete; committing/pushing matching source, scripts and required map/art assets before L41/packed-variant integration.
+
+## 2026-11-27 17:49 CST - scenery pushed; L41 and packed Druids compiling
+
+- Pushed1fbf32bc to origin/main,904files including892 LFSobjects/137MB. Source geometry remains unchanged; all3377 supported ordinary placements are persisted and reproducibly verified.
+- Integrated frozen L41 missed Dispel/Slow/ManaDrain/Pull trap commands, typed script impacts and source-byte-offset wait migration. Registered its bounded console refresh.
+- Integrated13 Mithril poison Druids33787 plus Jugurtha46075, exact source profiles/treasure/variant art and retained Thing/boss identities. Registered its bounded refresh. Compile, catalog/art import, targeted preservation/fresh reopen and expanded127 tests are pending.
+- Source-family audit also records remaining shared NPC muzzle/3D-normalized flight approximation, distinct from source-exact L41 opcode54 launch math. Next66 packed actors are in isolated work with shared source-art recipes; sprite shading/sector feedback remain staged separately.
+
+## 2026-11-27 17:58 CST - L41 and packed Druids verified
+
+- Targeted L41/L31/L22 import and independent fresh reopening pass, retaining prior actor/tag/component/geometry/script/override state. L41 has seven restored control trap shots; L31 has five packed33787 Druids, L22 eight plus Jugurtha46075.
+- All127 WAD regressions pass. New source tests verify four Druid CPC/variant stances pixel-for-pixel, full profiles/treasure/drop/reuse/checkpoints, source script velocity, legacy waits and real typed impacts. Headless tests now inspect saved editor texture samples/source bytes rather than inactive SM5 shader-cache usage. The isolated movement component required activation; Pull now queues exact236.25 source impulse and accelerates toward the blast origin.
+- Fixed test-module private API/include and int64 dimension issues without widening production APIs. UI/item rules remain375 types/55 usable consumables. Dangerous825/826/827 USE effects and907 READY electricity remain explicitly queued, not silently considered working because their art imports.
+- PLAN252–253 complete. Committing/pushing this source and required three-map/art checkpoint before the source-frame/provenance work.

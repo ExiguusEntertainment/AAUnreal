@@ -1050,6 +1050,28 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD surface refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADL41SCRIPTMISSILES")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName != TEXT("L41") || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadL41ScriptMissiles(Package, Ar))
+            { UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadL41ScriptMissiles failed. Usage: <MAP> L41 /Game/Maps/L41")); }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD L41 script missiles refresh finished"));
+            return true;
+        }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADPACKEDDRUIDS")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || (MapName != TEXT("L31") && MapName != TEXT("L22")) || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadPackedDruids(Package, Ar))
+            { UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadPackedDruids failed. Usage: <MAP> <L31|L22> /Game/Maps/<Map>")); }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD packed Druids refresh finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADORDINARYSCENERY")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));

@@ -315,6 +315,12 @@ public:
     UFUNCTION(BlueprintPure, Category="WAD|Audio")
     FString DescribeWadAmbientAudio() const;
     const TArray<FWadAmbientEmitter>& GetWadAmbientEmitters() const { return AmbientEmitters; }
+    // External native activators use the same budgeted interpreter as authored sector/switch callbacks.
+    bool RunWadActivity(int32 Activity, ANativeWadPlayer* Player = nullptr);
+
+    UFUNCTION(BlueprintPure, Category="WAD|Scripts")
+    FString DescribeWadScriptMissiles() const;
+
     bool HasWadActivities() const { return !ImportedActivities.IsEmpty(); }
     int32 GetWadScriptBlockCount(int32 Activity) const { return ScriptBlockCounts.FindRef(Activity); }
     int32 GetScriptMissileCount() const { return ScriptMissileCount; }
@@ -363,7 +369,6 @@ private:
     void UpdateDaySky();
     bool ContainsSectorPoint(int32 Sector, const FVector2D& LocalPosition) const;
     const FWadScriptActivity* FindWadActivity(int32 Activity) const;
-    bool RunWadActivity(int32 Activity, ANativeWadPlayer* Player = nullptr);
     void RunWadScriptCommands(int32 Activity, int32 StartCommand, TWeakObjectPtr<ANativeWadPlayer> Player, int32& Budget);
     void ScheduleScriptContinuation(int32 Activity, int32 NextCommand, TWeakObjectPtr<ANativeWadPlayer> Player, float Delay);
     void StartActivitySlide(int32 Sector, double Target, int32 Ticks, bool bCeiling, bool bPauseOnCrush, int32 CompletionActivity);

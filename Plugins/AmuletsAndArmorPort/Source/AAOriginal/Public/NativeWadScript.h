@@ -57,6 +57,10 @@ struct FWadScriptCommand
     UPROPERTY()
     int32 CompletionActivity = INDEX_NONE;
 
+    // Byte position within this activity body; survives inserted native commands.
+    UPROPERTY()
+    int32 SourceOffset = INDEX_NONE;
+
     UPROPERTY()
     EWadScriptOperation Operation = EWadScriptOperation::Wait;
 
@@ -116,6 +120,10 @@ struct FWadScriptActivity
 
     UPROPERTY()
     TArray<FWadScriptCommand> Commands;
+
+    // Translate pre-L41-missile checkpoints, whose parser omitted four missile types.
+    UPROPERTY()
+    TArray<int32> LegacyResumeCommands;
 };
 
 USTRUCT()
@@ -133,8 +141,10 @@ struct FWadCreatureGeneratorState
     bool bPaused = false;
 };
 
+AAORIGINAL_API int32 ResolveWadScriptContinuation(const FWadScriptActivity& Activity, int32 LegacyIndex, int32 SourceOffset);
+
 #if WITH_EDITOR
-bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> ActivityIds, int32 SectorCount,
+AAORIGINAL_API bool ImportWadScriptActivities(const FString& Filename, TConstArrayView<int32> ActivityIds, int32 SectorCount,
     int32 SideCount, TArray<FWadScriptActivity>& Out, FOutputDevice& Output);
 bool ImportWadSounds(const FString& Filename, const TArray<FWadScriptActivity>& Activities,
     TMap<int32, FWadSoundSample>& Sounds, FOutputDevice& Output, TConstArrayView<int32> UnavailableSounds = {});

@@ -86,6 +86,10 @@ struct FWadSavedScriptDelay
     float SecondsRemaining = 0.0f;
     UPROPERTY()
     bool bHasPlayer = false;
+    // Absent in older saves. MAX_int32 represents the end of an activity.
+    UPROPERTY()
+    int32 SourceCommandOffset = INDEX_NONE;
+
 };
 
 USTRUCT()

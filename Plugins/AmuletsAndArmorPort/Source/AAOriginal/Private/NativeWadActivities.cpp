@@ -9,6 +9,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadOptions.h"
@@ -17,6 +18,8 @@
 #include "Sound/SoundAttenuation.h"
 #include "Sound/SoundWaveProcedural.h"
 #include "TimerManager.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
 
 namespace
 {
@@ -767,12 +770,12 @@ int32 ANativeWadLevel::CountPlayingAmbientEmitters(int32 Sound) const
 
 void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
 {
-    const NativeWadRules::FWadWandProjectile* Homing = NativeWadRules::FindHomingMissile(Command.Target);
+    const NativeWadRules::FWadWandProjectile* Projectile = NativeWadRules::FindWandProjectileByType(Command.Target);
     const EWadBoltEffect Effect = Command.Target == 4015 || Command.Target == NativeWadRules::PoisonCrossbowBolt
         ? EWadBoltEffect::Poison
         : Command.Target == 4016 ? EWadBoltEffect::Paralyze
         : Command.Target == 4012 ? EWadBoltEffect::LockDoor : EWadBoltEffect::Damage;
-    const int32 Damage = Homing ? Homing->Damage
+    const int32 Damage = Projectile ? Projectile->Damage
         : Command.Target == NativeWadRules::PoisonCrossbowBolt ? PoisonCrossbowDamage
         : Effect == EWadBoltEffect::Poison ? PoisonMissileDamage
         : Command.Target == NativeWadRules::AcidBall ? NativeWadRules::AcidBallDamage
@@ -786,28 +789,67 @@ void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
     const FVector Start = GetActorTransform().TransformPosition(FVector(Command.Position));
     const FVector Destination = GetActorTransform().TransformPosition(FVector(Command.Aim));
     const FVector Offset = Destination - Start;
-    FVector Velocity = Offset.GetSafeNormal() * (Command.Value * TicksPerSecond);
-    if (Homing)
-    {
-        // SCRIPT.C uses ServerShootBasicProjectile, which sets XY speed and Z pitch separately.
-        const double Distance = Offset.Size2D();
-        Velocity = Offset.GetSafeNormal2D() * (Command.Value * TicksPerSecond);
-        Velocity.Z = Distance > UE_SMALL_NUMBER
-            ? FMath::FloorToDouble(FMath::Clamp(40.0 * Offset.Z / Distance, -50.0, 50.0)) * TicksPerSecond
-            : 0.0;
-    }
+    const FVector Velocity = NativeWadRules::ScriptMissileVelocity(Offset, Command.Value);
     FActorSpawnParameters Spawn;
     Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     if (ANativeWadBolt* Missile = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Velocity.Rotation(), Spawn))
     {
         Missile->Launch(ScriptMissileMesh, Art, Velocity, Damage, Effect, this);
-        if (Homing)
+        if (Projectile)
         {
-            Missile->SetBlastRadius(Homing->Radius);
-            Missile->SetDamageMask(Homing->DamageMask);
+            Missile->SetBlastRadius(Projectile->Radius);
+            Missile->SetDamageMask(Projectile->DamageMask);
         }
         ++ScriptMissileCount;
         ++ScriptMissilesByType.FindOrAdd(Command.Target);
         UE_LOG(LogTemp, Display, TEXT("Launched WAD script missile %d from %s."), Command.Target, *Start.ToString());
     }
+}
+
+FString ANativeWadLevel::DescribeWadScriptMissiles() const
+{
+    auto Root = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> Activities;
+    for (const auto& Activity : ImportedActivities)
+    {
+        auto A = MakeShared<FJsonObject>();
+        A->SetNumberField(TEXT("id"), Activity.Id);
+        TArray<TSharedPtr<FJsonValue>> Commands;
+        for (auto Command : Activity.Commands)
+        {
+            auto C = MakeShared<FJsonObject>();
+            C->SetNumberField(TEXT("operation"), int32(Command.Operation));
+            C->SetNumberField(TEXT("target"), Command.Target);
+            C->SetNumberField(TEXT("offset"), Command.SourceOffset);
+            C->SetBoolField(TEXT("missile"), Command.Operation == EWadScriptOperation::LaunchMissile);
+            // Normalize additive callback metadata before comparing authored command content.
+            Command.SourceOffset = INDEX_NONE;
+            FString Text;
+            FWadScriptCommand::StaticStruct()->ExportText(Text, &Command, nullptr, nullptr, PPF_None, nullptr);
+            C->SetStringField(TEXT("command"), Text);
+            Commands.Add(MakeShared<FJsonValueObject>(C));
+        }
+        A->SetArrayField(TEXT("commands"), Commands);
+        Activities.Add(MakeShared<FJsonValueObject>(A));
+    }
+    Root->SetArrayField(TEXT("activities"), Activities);
+    TArray<TSharedPtr<FJsonValue>> Art;
+    TArray<int32> Types; ScriptMissileMaterials.GetKeys(Types); Types.Sort();
+    for (int32 Type : Types)
+    {
+        auto Entry = MakeShared<FJsonObject>();
+        Entry->SetNumberField(TEXT("type"), Type);
+        Entry->SetStringField(TEXT("material"), GetPathNameSafe(ScriptMissileMaterials.FindRef(Type).Get()));
+        Art.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    Root->SetArrayField(TEXT("art"), Art);
+    FWadLevelCheckpoint Checkpoint;
+    if (WriteCheckpoint(Checkpoint, true))
+    {
+        FString State;
+        FWadLevelCheckpoint::StaticStruct()->ExportText(State, &Checkpoint, nullptr, nullptr, PPF_None, nullptr);
+        Root->SetStringField(TEXT("state"), State);
+    }
+    Root->SetNumberField(TEXT("launched"), ScriptMissileCount);
+    FString Out; FJsonSerializer::Serialize(Root, TJsonWriterFactory<>::Create(&Out)); return Out;
 }

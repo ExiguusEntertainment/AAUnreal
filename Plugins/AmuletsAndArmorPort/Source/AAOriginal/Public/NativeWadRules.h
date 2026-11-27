@@ -450,6 +450,23 @@ namespace NativeWadRules
         }
         return nullptr;
     }
+    constexpr const FWadWandProjectile* FindWandProjectileByType(int32 Type)
+    {
+        for (const auto& Projectile : WandProjectiles)
+        {
+            if (Projectile.Type == Type) { return &Projectile; }
+        }
+        return nullptr;
+    }
+    // SCRIPT.C -> SERVER.C: independent XY velocity and signed, clamped Z pitch.
+    inline FVector ScriptMissileVelocity(const FVector& Offset, int32 InitialSpeed)
+    {
+        FVector Velocity = Offset.GetSafeNormal2D() * (uint8(InitialSpeed) * TicksPerSecond);
+        const double Distance = FMath::FloorToDouble(Offset.Size2D());
+        Velocity.Z = Distance > 0.0
+            ? FMath::FloorToDouble(FMath::Clamp(double((int64(Offset.Z) * 65536 / int64(Distance)) * 40) / 65536.0, -50.0, 50.0)) * TicksPerSecond : 0.0;
+        return Velocity;
+    }
     constexpr const FWadWandProjectile* FindHomingMissile(int32 Type)
     {
         for (const auto& Missile : WandProjectiles)

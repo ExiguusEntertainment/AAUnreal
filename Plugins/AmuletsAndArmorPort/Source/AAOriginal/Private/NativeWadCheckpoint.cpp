@@ -160,7 +160,17 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     {
         const FPendingScriptDelay& Waiting = PendingScriptDelays.FindChecked(Id);
         const float Remaining = GetWorldTimerManager().GetTimerRemaining(Waiting.Handle);
-        Checkpoint.Delays.Add({Waiting.Activity, Waiting.NextCommand, FMath::Max(0.001f, Remaining), Waiting.Player.IsValid()});
+        FWadSavedScriptDelay& Saved = Checkpoint.Delays.AddDefaulted_GetRef();
+        Saved.Activity = Waiting.Activity;
+        Saved.NextCommand = Waiting.NextCommand;
+        Saved.SecondsRemaining = FMath::Max(0.001f, Remaining);
+        Saved.bHasPlayer = Waiting.Player.IsValid();
+        if (const FWadScriptActivity* Activity = FindWadActivity(Waiting.Activity))
+        {
+            Saved.SourceCommandOffset = Activity->LegacyResumeCommands.IsEmpty() ? INDEX_NONE
+                : Activity->Commands.IsValidIndex(Waiting.NextCommand)
+                ? Activity->Commands[Waiting.NextCommand].SourceOffset : MAX_int32;
+        }
     }
     for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item; ++Item)
     {
@@ -285,7 +295,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     for (const FWadSavedScriptDelay& Waiting : Checkpoint.Delays)
     {
         const FWadScriptActivity* Activity = FindWadActivity(Waiting.Activity);
-        if (!Activity || Waiting.NextCommand < 0 || Waiting.NextCommand > Activity->Commands.Num()
+        if (!Activity || ResolveWadScriptContinuation(*Activity, Waiting.NextCommand, Waiting.SourceCommandOffset) == INDEX_NONE
             || !FMath::IsFinite(Waiting.SecondsRemaining) || Waiting.SecondsRemaining <= 0.0f)
         {
             return false;
@@ -330,7 +340,8 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerPawn(this, 0));
     for (const FWadSavedScriptDelay& Waiting : Checkpoint.Delays)
     {
-        ScheduleScriptContinuation(Waiting.Activity, Waiting.NextCommand, Waiting.bHasPlayer ? Player : nullptr,
+        const FWadScriptActivity* Activity = FindWadActivity(Waiting.Activity);
+        ScheduleScriptContinuation(Waiting.Activity, ResolveWadScriptContinuation(*Activity, Waiting.NextCommand, Waiting.SourceCommandOffset), Waiting.bHasPlayer ? Player : nullptr,
             Waiting.SecondsRemaining);
     }
     PendingPickupGenerators = Checkpoint.PendingPickupGenerators;

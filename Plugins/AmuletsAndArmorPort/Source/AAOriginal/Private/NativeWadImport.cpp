@@ -1104,8 +1104,9 @@ struct FAAWadNativeImport
     }
 
     bool InstallCampaignCreatures(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
-        const FString& WadPath, FOutputDevice& Output)
+        const FString& WadPath, FOutputDevice& Output, bool bPackedDruidsOnly = false)
     {
+        Actor.InitializeTopology(); // Saved editor maps have no transient sector cache yet.
         struct FGeneratorSource
         {
             int32 Type, X, Y, Angle, Interval, Random, MaxActive, MaxLike, Active, Count;
@@ -1201,6 +1202,10 @@ struct FAAWadNativeImport
                 TEXT("ARCDI04.CPC"), TEXT("ARCHER05.CPC"), TEXT("ARROW1/BOLT2.CPC"), 700, 500, 100, 60, 20, 10, 270, 300},
             {1019, TEXT("Druid"), TEXT("DRUID"), TEXT("DRUDW001.CPC"), TEXT("DRUDD001.CPC"),
                 TEXT("DRUDD008.CPC"), TEXT("DRUID001.CPC"), TEXT("HMISS12/1.CPC"), 2000, 500, 150, 60, 20, 10, 180, 100, nullptr, 4018},
+            {33787, TEXT("Ulfilas Druid"), TEXT("DRUID"), TEXT("DRUDW001.CPC"), TEXT("DRUDD001.CPC"),
+                TEXT("DRUDD008.CPC"), TEXT("DRUID001.CPC"), TEXT("MISSIL16/1.CPC"), 2500, 500, 150, 60, 20, 10, 180, 250},
+            {46075, TEXT("Jugurtha"), TEXT("DRUID"), TEXT("DRUDW001.CPC"), TEXT("DRUDD001.CPC"),
+                TEXT("DRUDD008.CPC"), TEXT("DRUID001.CPC"), TEXT("MISSIL16/1.CPC"), 4500, 500, 350, 60, 20, 10, 315, 250},
             {1014, TEXT("Eastern Archer"), TEXT("EVILARCH"), TEXT("EARCAT01.CPC"), TEXT("EARCDI02.CPC"),
                 TEXT("EARCDI04.CPC"), TEXT("EARCAT01.CPC"), TEXT("ARROW4/1.CPC"), 4000, 500, 500, 60, 20, 10, 315, 600},
             {1015, TEXT("Mighty Hunter"), TEXT("GIANTARC"), TEXT("GODATK01.CPC"), TEXT("GODDIE01.CPC"),
@@ -1217,27 +1222,40 @@ struct FAAWadNativeImport
                 TEXT("ELDIE08.CPC"), TEXT("ELATK01.CPC"), nullptr, 7000, 0, 400, 55, 20, 10, 315, 0, TEXT("L152")},
         };
         const FString MapName = FPaths::GetBaseFilename(WadPath);
-        Actor.CreatureGenerators.Reset();
+        if (!bPackedDruidsOnly) { Actor.CreatureGenerators.Reset(); }
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         for (const FCreatureSource& Creature : Creatures)
         {
+            const bool bPackedDruid = Creature.Type == 33787 || Creature.Type == 46075;
+            if (bPackedDruidsOnly && !bPackedDruid) { continue; }
             if (Creature.OnlyMap && !MapName.Equals(Creature.OnlyMap, ESearchCase::IgnoreCase))
             {
                 continue;
             }
-            const auto HasType = [&Creature](const auto& Entry) { return Entry.Type == Creature.Type; };
+            const auto HasType = [&Creature](const auto& Entry) { return int32(uint16(Entry.Type)) == Creature.Type; };
             if (!Map.Things.ContainsByPredicate(HasType) && !Source.ContainsByPredicate(HasType))
             {
                 continue;
             }
             const FString Root(Creature.Resource);
+            const FString ArtName = bPackedDruid ? FString::Printf(TEXT("Druid%d"), Creature.Type) : Root;
+            TArray<uint8> ColorTable;
+            if (bPackedDruid)
+            {
+                const FString Path = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/COLORIZE")
+                    / FString::Printf(TEXT("COLORT%02d"), Creature.Type >> 12);
+                if (!FFileHelper::LoadFileToArray(ColorTable,*Path) || ColorTable.Num()!=256)
+                { Output.Logf(TEXT("Missing original packed Druid palette for%d."),Creature.Type); return false; }
+            }
             FIntPoint Size;
-            auto* Standing = SpriteMaterial(Root, Root / Creature.Standing, &Size);
-            auto* Hurt = SpriteMaterial(Root + TEXT("_Hurt"), Root / Creature.Hurt);
-            auto* Downed = SpriteMaterial(Root + TEXT("_Down"), Root / Creature.Downed);
-            auto* Attacking = SpriteMaterial(Root + TEXT("_Attack"), Root / Creature.Attacking);
-            const FString BoltName = Creature.Type == 1025 ? TEXT("MagicDart") : Root + TEXT("_Bolt");
-            auto* Bolt = Creature.Bolt ? SpriteMaterial(BoltName, Creature.Bolt) : nullptr;
+            auto* Standing = SpriteMaterial(ArtName, Root / Creature.Standing, &Size, ColorTable);
+            auto* Hurt = SpriteMaterial(ArtName + TEXT("_Hurt"), Root / Creature.Hurt, nullptr, ColorTable);
+            auto* Downed = SpriteMaterial(ArtName + TEXT("_Down"), Root / Creature.Downed, nullptr, ColorTable);
+            auto* Attacking = SpriteMaterial(ArtName + TEXT("_Attack"), Root / Creature.Attacking, nullptr, ColorTable);
+            const FString BoltName = Creature.Type == 1025 ? TEXT("MagicDart") : bPackedDruid ? TEXT("PackedDruid_Bolt") : Root + TEXT("_Bolt");
+            UMaterial* Bolt = Creature.Bolt && bPackedDruidsOnly
+                ? LoadObject<UMaterial>(nullptr,*(AssetRoot / TEXT("Things/M_") + BoltName + TEXT(".M_") + BoltName)) : nullptr;
+            if (!Bolt && Creature.Bolt) { Bolt = SpriteMaterial(BoltName, Creature.Bolt); }
             if (!Plane || !Standing || !Hurt || !Downed || !Attacking || (Creature.Bolt && !Bolt))
             {
                 return false;
@@ -1348,7 +1366,27 @@ struct FAAWadNativeImport
                         if (Existing->ActorHasTag(FName(LegacyTag))) { Enemy = *Existing; break; }
                     }
                 }
-                if (Enemy)
+                if (bPackedDruid)
+                {
+                    for (TActorIterator<ANativeWadGuardian> Existing(&World); Existing; ++Existing)
+                    {
+                        const bool bThing = Existing->ActorHasTag(FName(*Label));
+                        const bool bLegacyBoss = Creature.Type == 46075 && (Existing->GetSourceType() == 46075
+                            || Existing->GetEncounterName().Equals(TEXT("Jugurtha"), ESearchCase::IgnoreCase));
+                        if (!bThing && !bLegacyBoss) { continue; }
+                        if (Enemy && Enemy != *Existing)
+                        { Output.Log(TEXT("Ambiguous packed Druid identity; refusing duplicate boss/Thing actors.")); return false; }
+                        if (Existing->GetSourceType()!=0 && Existing->GetSourceType()!=1019 && Existing->GetSourceType()!=Creature.Type)
+                        { Output.Log(TEXT("Packed Druid refresh refuses a conflicting source creature identity.")); return false; }
+                        Enemy = *Existing;
+                    }
+                    if (Enemy)
+                    {
+                        Enemy->Modify();
+                        Enemy->Tags.AddUnique(FName(*Label)); // Keep the old primary checkpoint tag and transform.
+                    }
+                }
+                if (Enemy && !bPackedDruid)
                 {
                     Enemy->Modify();
                     Enemy->Tags.AddUnique(FName(*Label));
@@ -1356,15 +1394,18 @@ struct FAAWadNativeImport
                     Enemy->SetActorLocationAndRotation(FVector(Thing.X, Thing.Y, Actor.GetWalkingHeight(Sector) + Offset),
                         FRotator(0, Thing.Angle * 45.0, 0));
                 }
-                else { Enemy = ImportSliceThing<ANativeWadGuardian>(World, Map, Id, Actor.GetWalkingHeight(Sector) + Offset, *Label); }
+                if (!Enemy) { Enemy = ImportSliceThing<ANativeWadGuardian>(World, Map, Id, Actor.GetWalkingHeight(Sector) + Offset, *Label); }
                 if (!Enemy)
                 {
                     return false;
                 }
+                const bool bWasDefeated = Enemy->IsDefeated();
                 Configure(*Enemy);
+                if (bPackedDruid && bWasDefeated) { Enemy->RestoreEncounterHealth(0); }
                 ++Placed;
             }
             Output.Logf(TEXT("Imported %d placed actors for %s (type %d)."), Placed, Creature.Name, Creature.Type);
+            if (bPackedDruidsOnly) { continue; } // Targeted encounter refresh never edits generator records or pools.
             for (int32 Id = 0; Id < Source.Num(); ++Id)
             {
                 const FGeneratorSource& Record = Source[Id];
@@ -1622,6 +1663,73 @@ struct FAAWadNativeImport
         return InstallCampaignScript(Actor, Map, WadPath, MapName, Entries, UnavailableSounds, Output);
     }
 
+    bool InstallScriptMissileArt(ANativeWadLevel& Actor, int32 Type, FOutputDevice& Output)
+    {
+        if (IsValid(Actor.ScriptMissileMaterials.FindRef(Type))) { return true; }
+        const auto* Projectile = NativeWadRules::FindWandProjectileByType(Type);
+        const TCHAR* Resource = Projectile ? Projectile->Art
+            : Type == 4016 ? TEXT("EARTHBND/1.CPC")
+            : Type == NativeWadRules::PoisonCrossbowBolt ? TEXT("ARROW2/1.CPC") : nullptr;
+        UStaticMesh* Plane = Actor.ScriptMissileMesh ? Actor.ScriptMissileMesh.Get()
+            : LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        UMaterialInterface* Image = Resource ? SpriteMaterial(FString::Printf(TEXT("Missile%d"), Type), Resource) : nullptr;
+        if (!Plane || !Image)
+        { Output.Logf(TEXT("Could not install original art for scripted missile %d."), Type); return false; }
+        Actor.ScriptMissileMesh = Plane;
+        Actor.ScriptMissileMaterials.Add(Type, Image);
+        return true;
+    }
+
+    bool RefreshL41ScriptMissiles(ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        const FString Filename = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe/S41.SRP");
+        const int32 Entries[] = {11, 20};
+        TArray<FWadScriptActivity> Parsed;
+        if (!ImportWadScriptActivities(Filename, Entries, Map.Sectors.Num(), Map.Sides.Num(), Parsed, Output)) { return false; }
+        const auto NewType = [](const FWadScriptCommand& C)
+        { return C.Operation == EWadScriptOperation::LaunchMissile && (C.Target == 4001 || C.Target == 4002 || C.Target == 4007 || C.Target == 4009); };
+        const auto Retained = [&](const FWadScriptActivity& Activity)
+        {
+            TArray<FWadScriptCommand> Out;
+            for (auto C : Activity.Commands) { if (!NewType(C)) { C.SourceOffset = INDEX_NONE; Out.Add(MoveTemp(C)); } }
+            return Out;
+        };
+        // Validate before changing either saved activity: only the seven audited
+        // source missile commands may be inserted. User-authored script edits are not replaced.
+        for (int32 Id : Entries)
+        {
+            const auto* Old = Actor.ImportedActivities.FindByPredicate([Id](const auto& A) { return A.Id == Id; });
+            const auto* New = Parsed.FindByPredicate([Id](const auto& A) { return A.Id == Id; });
+            if (!Old || !New) { Output.Log(TEXT("L41 must retain both existing trap activities.")); return false; }
+            const auto Before = Retained(*Old), After = Retained(*New);
+            if (Before.Num() != After.Num()) { Output.Log(TEXT("L41 trap commands differ from their original retained layout.")); return false; }
+            for (int32 Index = 0; Index < Before.Num(); ++Index)
+            {
+                if (!FWadScriptCommand::StaticStruct()->CompareScriptStruct(&Before[Index], &After[Index], 0))
+                { Output.Log(TEXT("L41 trap refresh refuses to overwrite an authored command override.")); return false; }
+            }
+            const int32 Expected = Id == 11 ? 3 : 4;
+            if (New->Commands.FilterByPredicate(NewType).Num() != Expected) { return false; }
+        }
+        for (const auto& Activity : Parsed)
+        {
+            if (Activity.Id != 11 && Activity.Id != 20) { continue; }
+            for (const auto& Command : Activity.Commands)
+            {
+                if (Command.Operation == EWadScriptOperation::LaunchMissile
+                    && !InstallScriptMissileArt(Actor, Command.Target, Output)) { return false; }
+            }
+        }
+        Actor.Modify();
+        for (const auto& Activity : Parsed)
+        {
+            if (Activity.Id == 11 || Activity.Id == 20)
+            { *Actor.ImportedActivities.FindByPredicate([&](const auto& A) { return A.Id == Activity.Id; }) = Activity; }
+        }
+        Output.Log(TEXT("Restored seven original L41 script missiles in activities11/20; all script state, callbacks, other activities, sounds and existing valid art retained."));
+        return !bAssetError;
+    }
+
     bool InstallCampaignScript(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
         const FString& MapName, TConstArrayView<int32> Entries, TConstArrayView<int32> UnavailableSounds, FOutputDevice& Output)
     {
@@ -1667,23 +1775,9 @@ struct FAAWadNativeImport
                         return false;
                     }
                 }
-                else if (Command.Operation == EWadScriptOperation::LaunchMissile && !Actor.ScriptMissileMaterials.Contains(Command.Target))
+                else if (Command.Operation == EWadScriptOperation::LaunchMissile && !IsValid(Actor.ScriptMissileMaterials.FindRef(Command.Target)))
                 {
-                    const auto* Homing = NativeWadRules::FindHomingMissile(Command.Target);
-                    const TCHAR* Resource = Homing ? Homing->Art
-                        : Command.Target == NativeWadRules::AcidBall ? TEXT("MISSILE5/1.CPC")
-                        : Command.Target == 4005 ? TEXT("MISSILE6/1.CPC") : Command.Target == 4006 ? TEXT("MISSILE7/1.CPC")
-                        : Command.Target == 4012 ? TEXT("MISSIL13/1.CPC") : Command.Target == 4015 ? TEXT("MISSIL16/1.CPC")
-                        : Command.Target == 4016 ? TEXT("EARTHBND/1.CPC")
-                        : Command.Target == NativeWadRules::PoisonCrossbowBolt ? TEXT("ARROW2/1.CPC") : nullptr;
-                    Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-                    UMaterialInterface* Image = Resource ? SpriteMaterial(FString::Printf(TEXT("Missile%d"), Command.Target), Resource) : nullptr;
-                    if (!Actor.ScriptMissileMesh || !Image)
-                    {
-                        Output.Logf(TEXT("Could not install art for scripted missile %d."), Command.Target);
-                        return false;
-                    }
-                    Actor.ScriptMissileMaterials.Add(Command.Target, Image);
+                    if (!InstallScriptMissileArt(Actor, Command.Target, Output)) { return false; }
                 }
                 else if (Command.Operation == EWadScriptOperation::AddJournalPage)
                 {
@@ -3526,7 +3620,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     // Every branch of the restored ordinary creature treasure tables needs saved
     // rules and world art, including full packed equipment identities absent from shops.
     const TSet<int32> OrdinaryTreasureTypes{100, 101, 102, 104, 105, 106, 144, 145, 147, 202, 204, 362, 373,
-        416, 417, 708, 709, 710, 711, 818, 822, 12492, 12996, 12997, 12998, 12999, 37067};
+        234, 415, 416, 417, 708, 709, 710, 711, 818, 822, 825, 12492, 12996, 12997, 12998, 12999, 37067};
     for (const int32 Type : OrdinaryTreasureTypes) { Types.Add(Type); }
     for (const int32 Type : {244, 350, 351, 373, 823}) { Types.Add(Type); } // Source identification scrolls and the accessory-data journal object.
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
@@ -4610,6 +4704,58 @@ bool RefreshNativeWadAmbientAudio(const FString& MapPackage,const FString& WadPa
     if(!Level||(World->WorldType!=EWorldType::Editor&&World->WorldType!=EWorldType::Inactive)){return false;}
     if(!FAAWadNativeImport::InstallAmbientEmitters(*Level,*Map,WadPath,Output)){return false;}
     return SaveAsset(*World,*FPackageName::GetMapPackageExtension());
+}
+
+bool RefreshNativeWadL41ScriptMissiles(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || FPackageName::GetShortName(MapPackage) != TEXT("L41") || !MapPackage.StartsWith(TEXT("/Game/"))
+        || !FPackageName::IsValidLongPackageName(MapPackage) || !FPackageName::DoesPackageExist(MapPackage))
+    { Output.Log(TEXT("L41 missile refresh needs the loaded original MAP and existing native L41 package.")); return false; }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    { Output.Log(TEXT("L41 missile refresh requires a saved native editor topology; running gameplay is not mutated.")); return false; }
+    FAAWadNativeImport Import;
+    Import.AssetRoot = MapPackage + TEXT("_Assets");
+    if (!Import.RefreshL41ScriptMissiles(*Level, *Map, Output)) { return false; }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    { if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension())) { return false; } }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
+    return true;
+}
+
+bool RefreshNativeWadPackedDruids(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    const FString Name=FPackageName::GetShortName(MapPackage);
+    if (!Map || (Name!=TEXT("L31") && Name!=TEXT("L22")) || !MapPackage.StartsWith(TEXT("/Game/"))
+        || !FPackageName::IsValidLongPackageName(MapPackage) || !FPackageName::DoesPackageExist(MapPackage))
+    { Output.Log(TEXT("Packed Druid refresh needs original L31/L22 MAP and its existing native package.")); return false; }
+    const int32 PoisonCount=Map->Things.FilterByPredicate([](const auto& T){return uint16(T.Type)==33787;}).Num();
+    const int32 BossCount=Map->Things.FilterByPredicate([](const auto& T){return uint16(T.Type)==46075;}).Num();
+    if (PoisonCount!=(Name==TEXT("L31")?5:8) || BossCount!=(Name==TEXT("L31")?0:1))
+    { Output.Log(TEXT("Original packed Druid placements do not match the audited map.")); return false; }
+    UWorld* World=LoadObject<UWorld>(nullptr,*(MapPackage+TEXT(".")+Name));
+    auto* Level=World?FAAWadNativeImport::FindMatchingLevel(*World,*Map):nullptr;
+    if (!Level || (World->WorldType!=EWorldType::Editor && World->WorldType!=EWorldType::Inactive))
+    { Output.Log(TEXT("Packed Druid refresh requires a saved native editor topology.")); return false; }
+    FAAWadNativeImport Import; Import.AssetRoot=MapPackage+TEXT("_Assets");
+    // Generator tables, script triggers, journal pickup, geometry and unrelated actors are not reinstalled.
+    const FString WadPath=FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe")/(Name+TEXT(".MAP"));
+    if (!Import.InstallCampaignCreatures(*World,*Level,*Map,WadPath,Output,true)) { return false; }
+    int32 ActualPoison=0,ActualBoss=0;
+    for (TActorIterator<ANativeWadGuardian> Enemy(World);Enemy;++Enemy)
+    { ActualPoison+=Enemy->GetSourceType()==33787; ActualBoss+=Enemy->GetSourceType()==46075; }
+    if (ActualPoison!=PoisonCount || ActualBoss!=BossCount)
+    { Output.Log(TEXT("Packed Druid refresh would leave duplicate or missing source identities.")); return false; }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset:Import.AssetsToSave)
+    { if (!SaveAsset(*Asset,*FPackageName::GetAssetPackageExtension())) { return false; } }
+    if (!SaveAsset(*World,*FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Restored %d Ulfilas Druids and%d Jugurtha with full source IDs/palettes in%s; retained geometry, scripts, journal and existing checkpoint tags."),ActualPoison,ActualBoss,*Name);
+    return true;
 }
 
 #endif
