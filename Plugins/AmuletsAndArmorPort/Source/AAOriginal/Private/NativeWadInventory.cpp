@@ -5,6 +5,8 @@
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
+#include "NativeWadInventoryView.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInterface.h"
@@ -349,43 +351,119 @@ bool ANativeWadPlayer::EquipJewelry(int32 Slot, const FWadInventoryDetails& Deta
     return true;
 }
 
+bool ANativeWadPlayer::TakeInventoryItem(int32 Slot)
+{
+    if (Health <= 0 || !CarriedItems.IsValidIndex(Slot) || IsRuneItem(CarriedItems[Slot])) { return false; }
+    if (SelectedInventorySlot == Slot) { return true; }
+    if (CarriedItems.IsValidIndex(SelectedInventorySlot) || Slot == ReadySlot || IsWornInventorySlot(Slot)) { return false; }
+    SelectedInventorySlot = Slot;
+    return true;
+}
+
+void ANativeWadPlayer::StoreMouseHandInInventory()
+{
+    if (Health <= 0) { return; }
+    // CarriedItems owns every object. A free bag placement only releases its location pointer;
+    // display stacks regroup individual objects without destroying or duplicating one.
+    SelectedInventorySlot = INDEX_NONE;
+}
+
+bool ANativeWadPlayer::CreateWadItemInMouseHand(int32 Type)
+{
+    // EFFECT.C CREATE_OBJECT checks the hand after SPELLS.C has charged mana.
+    // It adds an ordinary inventory object without a GET/identify/use trigger.
+    if (GetMouseHandItem() != 0)
+    {
+        ShowInteractionMessage(TEXT("Can't create while item is in hand."));
+        return false;
+    }
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    if (Health <= 0 || Type <= 0 || Type > MAX_uint16 || !Catalog
+        || !Catalog->ItemDetails.Contains(Type) || !Catalog->Items.FindRef(Type))
+    {
+        ShowInteractionMessage(TEXT("The created item is unavailable."));
+        return false;
+    }
+    SelectedInventorySlot = CarriedItems.Add(Type);
+    return true;
+}
+
+bool ANativeWadPlayer::SwapMouseAndReady()
+{
+    if (Health <= 0) { return false; }
+    if (CarriedItems.IsValidIndex(SelectedInventorySlot))
+    {
+        const int32 Type = CarriedItems[SelectedInventorySlot];
+        if (IsRuneItem(Type) || !CanUseWadItem(Type))
+        { ShowInteractionMessage(TEXT("Your class can't use this item.")); return false; }
+        if (const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog())
+        {
+            if (const UTexture2D* Image = Catalog->Items.FindRef(Type);
+                Image && (Image->GetSizeX() >= 35 || Image->GetSizeY() >= 27))
+            { ShowInteractionMessage(TEXT("This item won't fit in your ready hand.")); return false; }
+        }
+    }
+    Swap(SelectedInventorySlot, ReadySlot);
+    if (GetReadyItem() == FlyingAmulet || !HasEquippedItem(FlyingAmulet)) { bReadiedFlightSuppressed = false; }
+    ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
+    return true;
+}
+
 void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
 {
-    if (CarriedItems.IsValidIndex(Slot) && IsRuneItem(CarriedItems[Slot])) { return; }
-
-    if (!bInventoryOpen)
+    if (Health <= 0) { return; }
+    if (Slot == INDEX_NONE) { SwapMouseAndReady(); return; }
+    if (!CarriedItems.IsValidIndex(Slot)) { return; }
+    if (CarriedItems.IsValidIndex(SelectedInventorySlot) && Slot != SelectedInventorySlot)
     {
+        // INVENTOR.C permits placement on an existing stack only for the exact same type with room.
+        const int32 Type = CarriedItems[SelectedInventorySlot];
+        const FWadInventoryDetails* Details = GetItemRules(Type);
+        if (CarriedItems[Slot] == Type && Slot != ReadySlot && !IsWornInventorySlot(Slot) && Details)
+        {
+            const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+            if (Catalog)
+            {
+                const NativeWadInventoryView::FView View(*this, *Catalog, true, SelectedInventorySlot);
+                const int32 Cell = View.CellForSlot(Slot);
+                if (View.Cells.IsValidIndex(Cell) && View.Cells[Cell].Count < Details->StackLimit)
+                { StoreMouseHandInInventory(); }
+            }
+        }
         return;
     }
-    if (Slot == INDEX_NONE)
+    TakeInventoryItem(Slot);
+}
+
+void ANativeWadPlayer::ClickArmorSlot(int32 Location)
+{
+    if (Health <= 0 || Location < 0 || Location >= EquipmentSlotCount) { return; }
+    const int32 Previous = WornSlots[Location];
+    if (!CarriedItems.IsValidIndex(SelectedInventorySlot))
     {
-        const int32 Selected = SelectedInventorySlot;
-        SelectedInventorySlot = INDEX_NONE;
-        const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Selected) ? GetItemRules(CarriedItems[Selected]) : nullptr;
-        if (CarriedItems.IsValidIndex(Selected) && !CanUseWadItem(CarriedItems[Selected]))
-        {
-            ShowInteractionMessage(TEXT("Your class can't use this item."));
-            return;
-        }
-        if (Rules && Rules->ArmorSlot >= 0 && Rules->ArmorSlot < EquipmentSlotCount)
-        {
-            EquipArmor(Selected, *Rules);
-            return;
-        }
-        for (int32& Worn : JewelrySlots) { if (Worn == Selected) { Worn = INDEX_NONE; } }
-        ReadySlot = Selected;
-        if (GetReadyItem() == FlyingAmulet) { bReadiedFlightSuppressed = false; }
-        ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
+        SelectedInventorySlot = Previous;
+        WornSlots[Location] = INDEX_NONE;
+        return;
     }
-    else if (CarriedItems.IsValidIndex(Slot))
+    const int32 Type = CarriedItems[SelectedInventorySlot];
+    const FWadInventoryDetails* Details = GetItemRules(Type);
+    if (!Details) { return; }
+    if (Details->WeaponDamage > 0 || Type == Crossbow)
     {
-        SelectedInventorySlot = Slot == SelectedInventorySlot ? INDEX_NONE : Slot;
+        if (ReadySlot == INDEX_NONE) { SwapMouseAndReady(); }
+        else { ShowInteractionMessage(TEXT("There is already something in your hand.")); }
+        return;
     }
+    if (Details->ArmorSlot != Location && !(Location == RightArmSlot && Details->ArmorSlot == LeftArmSlot)) { return; }
+    if (!CanUseWadItem(Type)) { ShowInteractionMessage(TEXT("Your class can't equip this item.")); return; }
+    WornSlots[Location] = SelectedInventorySlot;
+    SelectedInventorySlot = Previous;
+    ShowInteractionMessage(FString::Printf(TEXT("Equipped %s"), *GetInventoryItemDescription(Type)));
 }
 
 void ANativeWadPlayer::ClickJewelrySlot(int32 Location)
 {
-    if (!bInventoryOpen || Location < 0 || Location >= JewelrySlotCount) { return; }
+    if (Health <= 0 || Location < 0 || Location >= JewelrySlotCount) { return; }
     const int32 Previous = JewelrySlots[Location];
     const bool bPlacing = CarriedItems.IsValidIndex(SelectedInventorySlot);
     const int32 Slot = bPlacing ? SelectedInventorySlot : Previous;
@@ -393,7 +471,6 @@ void ANativeWadPlayer::ClickJewelrySlot(int32 Location)
     const FWadInventoryDetails* Rules = GetItemRules(CarriedItems[Slot]);
     if (Rules && EquipJewelry(Slot, *Rules, bPlacing ? Location : INDEX_NONE))
     {
-        // The original Equipment form swaps the displaced object into the mouse hand.
         SelectedInventorySlot = bPlacing ? Previous : Slot;
     }
 }
@@ -589,7 +666,7 @@ bool ANativeWadPlayer::CollectAmmo(int32 Index, int32 Quantity)
 
 void ANativeWadPlayer::RetrieveAmmo(int32 Index)
 {
-    if (Health <= 0 || Index < 0 || Index >= UE_ARRAY_COUNT(AmmoReserve) || AmmoReserve[Index] <= 0)
+    if (Health <= 0 || GetMouseHandItem() != 0 || Index < 0 || Index >= UE_ARRAY_COUNT(AmmoReserve) || AmmoReserve[Index] <= 0)
     {
         return;
     }
@@ -597,6 +674,7 @@ void ANativeWadPlayer::RetrieveAmmo(int32 Index)
     if (CollectItem(bQuiver ? CrossbowAmmo[Index].Quiver : CrossbowAmmo[Index].Bolt))
     {
         AmmoReserve[Index] -= bQuiver ? NormalQuiverBolts : 1;
+        SelectedInventorySlot = CarriedItems.Num() - 1;
     }
 }
 
@@ -728,7 +806,7 @@ void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
 
 void ANativeWadPlayer::DropInventoryItem()
 {
-    const int32 Slot = bInventoryOpen && SelectedInventorySlot != INDEX_NONE ? SelectedInventorySlot : ReadySlot;
+    const int32 Slot = GetMouseHandItem() != 0 ? SelectedInventorySlot : ReadySlot;
     ANativeWadLevel* Level = NativeLevel.Get();
     if (Health <= 0 || IsParalyzed() || !CarriedItems.IsValidIndex(Slot) || !Level || !GetCharacterMovement()->IsMovingOnGround())
     {
@@ -847,7 +925,6 @@ void ANativeWadPlayer::ClickPressed()
 void ANativeWadPlayer::ToggleInventory()
 {
     bInventoryOpen = !bInventoryOpen;
-    SelectedInventorySlot = INDEX_NONE;
     if (const APlayerController* LocalPlayer = Cast<APlayerController>(GetController()))
     {
         if (ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>())

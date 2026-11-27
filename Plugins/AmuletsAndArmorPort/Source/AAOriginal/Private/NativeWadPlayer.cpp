@@ -41,6 +41,7 @@ ANativeWadPlayer::ANativeWadPlayer(const FObjectInitializer& ObjectInitializer)
     BaseEyeHeight = 22.0f;
     bUseControllerRotationYaw = true;
     GetCharacterMovement()->MaxWalkSpeed = 190.0f;
+    GetCharacterMovement()->JumpZVelocity = float(SourceVerticalSpeed(19200));
     GetCharacterMovement()->MaxStepHeight = 40.0f;
     ViewCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
     ViewCamera->SetupAttachment(GetCapsuleComponent());
@@ -174,6 +175,7 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
             }
         }
     }
+    SelectedInventorySlot = INDEX_NONE; // Old saves had no retained mouse-hand location.
     if (const TCHAR* Value = URL.GetOption(TEXT("WadItems="), nullptr))
     {
         CarriedItems.Reset();
@@ -257,6 +259,14 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
                 JewelrySlots[Location] = Slot;
             }
         }
+    }
+    if (const TCHAR* Option = URL.GetOption(TEXT("WadMouseHand="), nullptr))
+    {
+        int32 Slot = INDEX_NONE;
+        if (LexTryParseString(Slot, Option) && FString(Option) == LexToString(Slot)
+            && CarriedItems.IsValidIndex(Slot) && Slot != ReadySlot
+            && !IsWornInventorySlot(Slot) && !IsRuneItem(CarriedItems[Slot]))
+        { SelectedInventorySlot = Slot; }
     }
     RestoreTimedEffects(URL.GetOption(TEXT("WadOwnedEffects="), nullptr));
 }
@@ -522,6 +532,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
         }
     }
     Options += FString::Printf(TEXT("?WadCreated=%d?WadRuneRules=1"), bWadCharacterCreated);
+    Options += FString::Printf(TEXT("?WadMouseHand=%d"), SelectedInventorySlot);
     return Options;
 }
 
@@ -777,10 +788,43 @@ void ANativeWadPlayer::ReceiveTrapParalysis()
 
 void ANativeWadPlayer::Jump()
 {
-    if (!IsParalyzed() && !CanFly())
-    {
-        Super::Jump();
-    }
+    TryWadLeap(0);
+}
+
+int32 ANativeWadPlayer::GetWadJumpPower() const
+{
+    return SourceJumpPower(CharacterClass, GetStatusPower(JumpStatus));
+}
+
+bool ANativeWadPlayer::TryWadLeap(int32 ExtraPower)
+{
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    if (Health <= 0 || bInventoryOpen || IsParalyzed() || ExtraPower < 0 || ExtraPower > 28000
+        || (!Movement->IsMovingOnGround() && !CanFly())) { return false; }
+    const uint16 Power = SourceLeapPower(GetWadJumpPower(), ExtraPower);
+    Movement->JumpZVelocity = float(SourceVerticalSpeed(Power));
+    const bool bAirborne = !Movement->IsMovingOnGround();
+    const int32 Thrust = bAirborne ? (Power >> 2) + (Power >> 3) : Power;
+    Movement->Velocity.Z += SourceVerticalSpeed(Thrust);
+    Movement->SetMovementMode(CanFly() ? MOVE_Flying : MOVE_Falling);
+    return true;
+}
+
+bool ANativeWadPlayer::BlinkWadForward(int32 Distance)
+{
+    if (Health <= 0 || bInventoryOpen || IsParalyzed() || Distance <= 0 || Distance > 28000) { return false; }
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+    const FVector Before = GetActorLocation();
+    const FVector Velocity = Movement->Velocity;
+    const FVector Direction = FRotator(0.0, GetControlRotation().Yaw, 0.0).Vector();
+    FHitResult Hit;
+    // Sweep the entire capsule along the horizontal path. Blocked Blink may
+    // make partial progress, but never jumps across an intervening wall.
+    Movement->SafeMoveUpdatedComponent(Direction * Distance, GetActorQuat(), true, Hit);
+    Movement->Velocity = Velocity;
+    Movement->bJustTeleported = true;
+    Movement->bForceNextFloorCheck = true;
+    return !GetActorLocation().Equals(Before);
 }
 
 void ANativeWadPlayer::StartWadEarthquake(double Duration)
@@ -1040,8 +1084,12 @@ void ANativeWadPlayer::CastRejuvenate()
             const double Duration = Spell.DurationTicks / double(TicksPerSecond);
             const int32 PoisonBefore = PoisonLevel;
             const FString EffectOwner = FWadPlayerEffects::SpellOwner(Spell.SourceDefinition);
+            bool bKeepEffectMessage = false;
             switch (Spell.Effect)
             {
+            case ESpellEffect::CreateObject: bKeepEffectMessage = !CreateWadItemInMouseHand(Spell.Power); break;
+            case ESpellEffect::Leap: TryWadLeap(Spell.Power); break;
+            case ESpellEffect::Blink: BlinkWadForward(Spell.Power); break;
             case ESpellEffect::Projectile: break;
             case ESpellEffect::WaterWalk: ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::WaterWalk, INDEX_NONE, 1, Duration); break;
             case ESpellEffect::FeatherFall: ApplyTimedEffect(EffectOwner, EWadTimedEffectKind::FeatherFall, INDEX_NONE, 1, Duration); break;
@@ -1068,7 +1116,7 @@ void ANativeWadPlayer::CastRejuvenate()
                 break;
             }
             ++SuccessfulCasts;
-            if (Spell.Effect != ESpellEffect::IdentifyEquipped && Spell.Effect != ESpellEffect::IdentifyAll)
+            if (!bKeepEffectMessage && Spell.Effect != ESpellEffect::IdentifyEquipped && Spell.Effect != ESpellEffect::IdentifyAll)
             {
                 ShowInteractionMessage(Spell.Effect == ESpellEffect::PurifyBlood && PoisonBefore > 0
                     ? TEXT("The poison in your body is less.") : Spell.Name);

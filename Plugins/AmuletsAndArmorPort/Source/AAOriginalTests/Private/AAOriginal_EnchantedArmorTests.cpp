@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "NativeWadPlayer.h"
+#include "../../AAOriginal/Private/NativeWadHudData.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalEnchantedArmor, "AAOriginal.WAD.Gameplay.EnchantedArmor",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -39,8 +40,16 @@ bool FAAOriginalEnchantedArmor::RunTest(const FString& Parameters)
     const auto Select = [&](int32 Slot)
     {
         Press(TEXT("I"));
-        Player->ClickInventorySlot(Slot);
-        Player->ClickInventorySlot(INDEX_NONE);
+        Player->StoreMouseHandInInventory();
+        const int32 Type = Player->GetCarriedItems()[Slot];
+        const auto* Catalog = static_cast<UNativeWadHudData*>(LoadObject<UObject>(nullptr, UNativeWadHudData::ObjectPath));
+        const auto* Rules = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
+        if (Rules && Rules->ArmorSlot != INDEX_NONE)
+        {
+            if (!Player->IsWornInventorySlot(Slot)) { Player->ClickInventorySlot(Slot); }
+            Player->ClickArmorSlot(Rules->ArmorSlot);
+        }
+        else { Player->ClickInventorySlot(Slot); Player->ClickInventorySlot(INDEX_NONE); }
         Press(TEXT("I"));
     };
     const auto Armor = [&](int32 Type)
@@ -54,6 +63,7 @@ bool FAAOriginalEnchantedArmor::RunTest(const FString& Parameters)
     {
         Player->CollectItem(Type);
         Press(TEXT("I"));
+        Player->StoreMouseHandInInventory();
         Player->ClickInventorySlot(Player->GetCarriedItems().Num() - 1);
         Player->ClickJewelrySlot(Location);
         Press(TEXT("I"));
@@ -80,6 +90,7 @@ bool FAAOriginalEnchantedArmor::RunTest(const FString& Parameters)
     TestEqual(TEXT("Removing enchanted armor removes its own passive"), Player->GetStatusPower(FireResistStatus), 0);
     TestEqual(TEXT("Removing that armor preserves another worn object's passive"), Player->GetStatusPower(ElectricityResistStatus), 1);
     Press(TEXT("I"));
+    Player->StoreMouseHandInInventory();
     Player->ClickJewelrySlot(NeckSlot);
     Press(TEXT("I"));
     const int32 AcidPlate = Armor(45765);

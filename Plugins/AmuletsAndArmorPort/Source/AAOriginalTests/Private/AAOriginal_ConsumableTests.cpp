@@ -34,6 +34,7 @@ bool FAAOriginalPoisonCures::RunTest(const FString& Parameters)
     const auto Ready = [&](int32 Type)
     {
         if (!Press(TEXT("I"))) { return false; }
+        Player->StoreMouseHandInInventory();
         Player->ClickInventorySlot(Player->GetCarriedItems().Find(Type));
         Player->ClickInventorySlot(INDEX_NONE);
         return Press(TEXT("I")) && Player->GetReadyItem() == Type;

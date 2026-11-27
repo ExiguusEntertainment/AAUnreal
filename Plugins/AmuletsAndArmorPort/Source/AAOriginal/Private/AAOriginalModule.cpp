@@ -1151,6 +1151,7 @@ public:
                     || Review == TEXT("poisoncures") || Review == TEXT("poisoncuresreload") || Review == TEXT("poisoncurescompletereload")
                     || Review == TEXT("notes") || Review == TEXT("notesreload")
                     || Review == TEXT("options") || Review == TEXT("optionsreload")
+                    || Review == TEXT("retainedhand") || Review == TEXT("retainedhandreload")
                     || Review == TEXT("itemowners") || Review == TEXT("itemownersreload") || Review == TEXT("itemownerscompletereload")
                     || Review == TEXT("wornjewelry") || Review == TEXT("wornjewelryreload")
                     || Review == TEXT("creaturelook")

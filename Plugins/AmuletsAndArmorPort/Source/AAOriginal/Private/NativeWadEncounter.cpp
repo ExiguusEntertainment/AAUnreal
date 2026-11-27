@@ -723,7 +723,7 @@ void ANativeWadGuardian::DropDefeatTreasure()
     if (bDefeatTreasureHandled) { return; }
     bDefeatTreasureHandled = true;
     const int32 SourceType = GetLookSourceType(); // The known legacy Guardian tags also establish its original treasure identity.
-    if (SourceType != 1018 && SourceType != 1019) { return; }
+    if (ResolveWadCreatureTreasure(SourceType, 0).ItemType == 0) { return; }
     const TActorIterator<ANativeWadLevel> Level(GetWorld());
     if (!Level) { return; } // Isolated combat fixtures can run without a native map.
     const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();

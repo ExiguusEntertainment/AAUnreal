@@ -1998,6 +1998,8 @@ namespace
         bool bItemOwnersReview = false;
         bool bItemOwnersReload = false;
         bool bItemOwnersCompleteReload = false;
+        bool bRetainedHandReview = false;
+        bool bRetainedHandReload = false;
         double RefreshedOwnerBefore = 0.0;
         bool bJewelryReview = false;
         bool bJewelryReload = false;
@@ -2053,6 +2055,9 @@ namespace
         TWeakObjectPtr<ANativeWadGuardian> WalkBlockingEnemy;
         bool bCampaignConcealmentVerified = false;
         bool bL61ArrivalConcealmentUsed = false;
+        int32 L40InvisibilityBefore = INDEX_NONE;
+        double L40InvisibilityUseAt = -1.0;
+        bool bL40InvisibilityUsed = false;
         bool bFightingForeground = false;
         int32 CombatStrafe = 0;
         bool bFireballWandReview = false;
@@ -2220,6 +2225,9 @@ namespace
             CampaignObstacleAfter.Reset();
             WalkBlockingEnemy.Reset();
             bCampaignConcealmentVerified = false;
+            L40InvisibilityBefore = INDEX_NONE;
+            L40InvisibilityUseAt = -1.0;
+            bL40InvisibilityUsed = false;
             bCampaignArrivalVerified = false;
             if (HeldKey)
             {
@@ -2571,8 +2579,8 @@ namespace
                         return Finish(&Player, TEXT("could not supply the authored chain helmet"));
                     }
                     const int32 Slot = Player.GetCarriedItems().Find(Helmet);
-                    Hud->ClickHUD(Hud->InventorySlotCenter(Slot));
-                    Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
+                    if (!SelectReviewBagItem(Player, Slot) || !PlaceReviewArmor(Player, NativeWadRules::HeadSlot))
+                    { return Finish(&Player, TEXT("could not move the source helmet from bag to head")); }
                     Click({265, 144});
                     if (!Player.IsWornInventorySlot(Slot))
                     {
@@ -2603,6 +2611,7 @@ namespace
                     {
                         return Finish(&Player, TEXT("could not capture the classic statistics"));
                     }
+                    if (!StowReviewMouseHand(Player)) { return Finish(&Player, TEXT("could not return the removed helmet to the bag")); }
                     Click({309, 9});
                     if (Player.IsInventoryOpen())
                     {
@@ -2864,6 +2873,7 @@ namespace
                 {
                     return Finish(&Player, TEXT("could not capture the inventory after the three world pickups"));
                 }
+                if (!StowReviewMouseHand(Player)) { return Finish(&Player, TEXT("could not return the inspected cherries to the bag")); }
                 Player.CollectItem(245);
                 if (Hud->InventorySlotCenter(0) != Hud->InventorySlotCenter(3))
                 {
@@ -2893,6 +2903,7 @@ namespace
                 {
                     return Finish(&Player, TEXT("could not capture the second page of the classic inventory"));
                 }
+                if (!StowReviewMouseHand(Player)) { return Finish(&Player, TEXT("could not place the second-page object in an empty bag cell")); }
                 Press(Player, EKeys::PageUp);
                 break;
             case 16:
@@ -2936,21 +2947,13 @@ namespace
                 return nullptr;
             };
             const auto Select = [&](int32 Type)
-            {
-                const int32 Slot = Player.GetCarriedItems().Find(Type);
-                if (Slot == INDEX_NONE || !Player.IsInventoryOpen())
-                {
-                    return false;
-                }
-                Hud->ClickHUD(Hud->InventorySlotCenter(Slot));
-                return Player.GetSelectedInventorySlot() == Slot;
-            };
+            { return SelectReviewBagItem(Player, FindReviewItemSlot(Player, Type)); };
             const auto Ready = [&](int32 Type)
             {
-                if (!Select(Type))
-                {
-                    return false;
-                }
+                if (!Select(Type)) { return false; }
+                const auto* Catalog = UNativeWadHudData::LoadCatalog();
+                const auto* Rules = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
+                if (Rules && Rules->ArmorSlot != INDEX_NONE) { return PlaceReviewArmor(Player, Rules->ArmorSlot); }
                 Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
                 return true;
             };
@@ -6352,24 +6355,118 @@ namespace
             }
         }
 
+        bool ClickReviewPoint(ANativeWadPlayer& Player, FVector2D Point)
+        {
+            auto* Controller = Player.GetController<APlayerController>();
+            int32 Width = 0, Height = 0;
+            if (!Controller) { return false; }
+            Controller->GetViewportSize(Width, Height);
+            const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+            if (Scale <= 0.0) { return false; }
+            const FVector2D Screen = (FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale;
+            if (auto* Hud = Controller->GetHUD<ANativeWadHUD>()) { Hud->ClickHUD(Screen); return true; }
+            if (auto* Hud = Controller->GetHUD<ANativeWadTownHUD>()) { Hud->ClickAction(Screen); return true; }
+            return false;
+        }
+
+        bool ShowReviewBag(ANativeWadPlayer& Player)
+        {
+            if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi"))) { return Player.IsInventoryOpen(); }
+            // The Inventory icon selects that banner, or closes it if already selected. A second
+            // click in the latter case reopens it normally without discarding the retained hand.
+            if (!ClickReviewPoint(Player, {13, 161})) { return false; }
+            if (!Player.IsInventoryOpen()) { ClickReviewPoint(Player, {13, 161}); }
+            return Player.IsInventoryOpen();
+        }
+
+        bool StowReviewMouseHand(ANativeWadPlayer& Player, bool bTown = false)
+        {
+            if (!Player.GetMouseHandItem()) { return true; }
+            if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            { Player.StoreMouseHandInInventory(); return Player.GetMouseHandItem() == 0; }
+            const auto* Catalog = UNativeWadHudData::LoadCatalog();
+            if (!Catalog) { return false; }
+            if (bTown) { ClickReviewPoint(Player, {13, 161}); }
+            else if (!ShowReviewBag(Player)) { return false; }
+            const NativeWadInventoryView::FView Bag(Player, *Catalog, true, Player.GetMouseHandSlot());
+            // Navigate to the last page's genuinely empty placement cell, even at exactly 48/96
+            // occupied visible cells. This exercises normal HUD hit tests instead of auto-stashing.
+            for (int32 Page = 0; Page < FMath::Max(6, Bag.PageCount()); ++Page) { ClickReviewPoint(Player, {271, 132}); }
+            for (int32 Page = 0; Page < Bag.Cells.Num() / NativeWadInventoryView::SlotsPerPage; ++Page)
+            { ClickReviewPoint(Player, {281, 132}); }
+            ClickReviewPoint(Player, NativeWadInventoryView::SlotBox(Bag.Cells.Num()).GetCenter());
+            return Player.GetMouseHandItem() == 0;
+        }
+
+        int32 FindReviewItemSlot(const ANativeWadPlayer& Player, int32 Type) const
+        {
+            if (Player.GetMouseHandItem() == Type) { return Player.GetMouseHandSlot(); }
+            const auto& Items = Player.GetCarriedItems();
+            for (int32 Slot = 0; Slot < Items.Num(); ++Slot)
+            { if (Items[Slot] == Type && Slot != Player.GetReadySlot() && !Player.IsWornInventorySlot(Slot)) { return Slot; } }
+            return Items.Find(Type); // An explicitly located item must be taken through its actual location.
+        }
+
+        bool SelectReviewBagItem(ANativeWadPlayer& Player, int32 Slot)
+        {
+            if (!Player.GetCarriedItems().IsValidIndex(Slot)) { return false; }
+            if (Player.GetMouseHandSlot() == Slot) { return true; }
+            if (!StowReviewMouseHand(Player) || !ShowReviewBag(Player)) { return false; }
+            if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            {
+                if (Slot == Player.GetReadySlot()) { Player.SwapMouseAndReady(); }
+                else if (Player.IsWornInventorySlot(Slot))
+                {
+                    for (int32 Location = 0; Location < NativeWadRules::JewelrySlotCount; ++Location)
+                    { if (Player.GetJewelryInventorySlot(Location) == Slot) { Player.ClickJewelrySlot(Location); break; } }
+                }
+                else { Player.ClickInventorySlot(Slot); }
+                return Player.GetMouseHandSlot() == Slot;
+            }
+            const auto* Catalog = UNativeWadHudData::LoadCatalog();
+            if (!Catalog) { return false; }
+            const NativeWadInventoryView::FView Bag(Player, *Catalog, true, Player.GetMouseHandSlot());
+            const int32 Cell = Bag.CellForSlot(Slot);
+            if (Cell == INDEX_NONE)
+            {
+                if (Slot == Player.GetReadySlot())
+                { ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter()); return Player.GetMouseHandSlot() == Slot; }
+                for (int32 Location = 0; Location < NativeWadRules::JewelrySlotCount; ++Location)
+                {
+                    if (Player.GetJewelryInventorySlot(Location) != Slot) { continue; }
+                    ClickReviewPoint(Player, {30, 161});
+                    ClickReviewPoint(Player, NativeWadInventoryView::JewelryBoxes[Location].GetCenter());
+                    ShowReviewBag(Player);
+                    return Player.GetMouseHandSlot() == Slot;
+                }
+                return false; // Armor fixtures use their explicit body rectangle instead of guessing a bracing side.
+            }
+            for (int32 Page = 0; Page < Bag.PageCount(); ++Page) { ClickReviewPoint(Player, {271, 132}); }
+            for (int32 Page = 0; Page < Cell / NativeWadInventoryView::SlotsPerPage; ++Page) { ClickReviewPoint(Player, {281, 132}); }
+            ClickReviewPoint(Player, NativeWadInventoryView::SlotBox(Cell).GetCenter());
+            return Player.GetMouseHandSlot() == Slot;
+        }
+
+        bool PlaceReviewArmor(ANativeWadPlayer& Player, int32 Location)
+        {
+            if (Location < 0 || Location >= NativeWadRules::EquipmentSlotCount) { return false; }
+            if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi"))) { Player.ClickArmorSlot(Location); return true; }
+            if (!ShowReviewBag(Player)) { return false; }
+            ClickReviewPoint(Player, {30, 161});
+            ClickReviewPoint(Player, NativeWadInventoryView::ArmorBoxes[Location].GetCenter());
+            ShowReviewBag(Player);
+            return true;
+        }
+
         void ReadyCampaignItem(ANativeWadPlayer& Player, int32 Type)
         {
-            if (Player.IsInventoryOpen())
+            if (!Player.IsInventoryOpen()) { Press(Player, EKeys::I); return; }
+            if (Player.GetReadyItem() != Type)
             {
-                const int32 Slot = Player.GetCarriedItems().Find(Type);
-                APlayerController* Controller = Player.GetController<APlayerController>();
-                ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
-                if (Slot != INDEX_NONE && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
-                {
-                    // Without a canvas the HUD has no hit targets. Use its inventory handlers directly.
-                    Player.ClickInventorySlot(Slot);
-                    Player.ClickInventorySlot(INDEX_NONE);
-                }
-                else if (Hud && Slot != INDEX_NONE)
-                {
-                    Hud->ClickHUD(Hud->InventorySlotCenter(Slot));
-                    Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
-                }
+                const int32 Slot = FindReviewItemSlot(Player, Type);
+                if (!SelectReviewBagItem(Player, Slot)) { return; }
+                if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi"))) { Player.ClickInventorySlot(INDEX_NONE); }
+                else { ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter()); }
             }
             Press(Player, EKeys::I);
         }
@@ -7148,8 +7245,11 @@ namespace
                     return true;
                 }
                 const bool bRefreshL61Arrival = CampaignRoute->Map == 61 && NextPoint == 0 && !bL61ArrivalConcealmentUsed;
+                // Keep the original three/two/one uses on L71/L70/L61 and reserve
+                // one earned scroll for L40's flight through the restored dragons.
+                const int32 ReservedInvisibility = CampaignRoute->Map == 71 ? 4 : CampaignRoute->Map == 70 ? 2 : 1;
                 if ((Player.GetStatusPower(NativeWadRules::InvisibleStatus) == 0 || bRefreshL61Arrival)
-                    && Player.GetItemCount(361) > (CampaignRoute->Map == 71 ? 3 : 0))
+                    && Player.GetItemCount(361) > ReservedInvisibility)
                 {
                     Stop(Player);
                     if (Player.GetReadyItem() != 361 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 361); }
@@ -7185,6 +7285,73 @@ namespace
                 return true;
             }
             TConstArrayView<FCampaignAction> Actions = CampaignRoute->Actions;
+            // This prelude leaves Campaign40 and all its action indices intact.
+            // Start the purchased concealment at the supplies platform, rather
+            // than consuming its duration during the two preliminary lift puzzles.
+            if (CampaignRoute->Map == 40 && Actions.IsValidIndex(NextPoint)
+                && Actions[NextPoint].Action == ECampaignAction::UseFlightItem
+                && Actions[NextPoint].Index == NativeWadRules::FlyingPotion && !bL40InvisibilityUsed)
+            {
+                Stop(Player);
+                if (L40InvisibilityBefore == INDEX_NONE)
+                {
+                    L40InvisibilityBefore = Player.GetItemCount(361);
+                    if (L40InvisibilityBefore < 1)
+                    { return Finish(&Player, TEXT("the L40 flight requires its reserved earned invisibility scroll")); }
+                    int32 Dragons = 0, Hydras = 0, Mommas = 0;
+                    for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                    {
+                        const int32 Type = Enemy->GetSourceType();
+                        if (Type != 1021 && Type != 1022 && Type != 1037) { continue; }
+                        if (Enemy->IsHidden() || Enemy->IsDefeated())
+                        { return Finish(&Player, TEXT("the L40 concealment route requires its original live dragon and Hydra encounters")); }
+                        Dragons += Type == 1021;
+                        Hydras += Type == 1022;
+                        Mommas += Type == 1037;
+                    }
+                    if (Dragons != 4 || Hydras != 6 || Mommas != 1)
+                    { return Finish(&Player, TEXT("the L40 concealment route is missing restored source creatures")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L40 retains four live Orange Dragons, six live Hydras, and one live Momma Dragon before using earned concealment."));
+                }
+                if (L40InvisibilityUseAt >= 0.0)
+                {
+                    if (Player.GetItemCount(361) == L40InvisibilityBefore - 1
+                        && Player.GetStatusPower(NativeWadRules::InvisibleStatus) > 0)
+                    {
+                        bL40InvisibilityUsed = true;
+                        UE_LOG(LogTemp, Display, TEXT("Verified exactly one purchased invisibility scroll was consumed through the normal ready/use controls before L40's first flight."));
+                    }
+                    else if (Player.GetItemCount(361) != L40InvisibilityBefore
+                        || Current.GetTimeSeconds() - L40InvisibilityUseAt > 2.0)
+                    { return Finish(&Player, TEXT("the L40 concealment use did not consume exactly one earned scroll and apply its source effect")); }
+                }
+                else if (Player.GetReadyItem() != 361 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 361); }
+                else
+                {
+                    Press(Player, EKeys::LeftControl);
+                    L40InvisibilityUseAt = Current.GetTimeSeconds(); // Send one use; verify its result instead of pressing repeatedly.
+                }
+                CampaignStepTime = -1.0;
+                return true;
+            }
+            if (CampaignRoute->Map == 40 && bL40InvisibilityUsed && !bCampaignConcealmentVerified
+                && Player.IsConcealed() && !Player.GetVelocity().IsNearlyZero())
+            {
+                int32 HiddenFrom = 0;
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                {
+                    const int32 Type = Enemy->GetSourceType();
+                    if ((Type == 1021 || Type == 1022 || Type == 1037) && !Enemy->IsHidden() && !Enemy->IsDefeated())
+                    {
+                        if (Enemy->CanSeePlayer(Player))
+                        { return Finish(&Player, TEXT("a live L40 creature could see the concealed moving campaign character")); }
+                        ++HiddenFrom;
+                    }
+                }
+                if (HiddenFrom != 11) { return Finish(&Player, TEXT("the L40 concealment check lost an original live encounter")); }
+                bCampaignConcealmentVerified = true;
+                UE_LOG(LogTemp, Display, TEXT("Verified the original invisibility effect conceals the moving L40 character from all eleven live dragon/Hydra encounters; creatures remain active."));
+            }
             if (NextPoint == 0 && CampaignRoute->Map == 73 && !bCampaignArrivedInRun)
             {
                 const FString Slot(Current.URL.GetOption(TEXT("WadLoad="), TEXT("")));
@@ -7215,6 +7382,9 @@ namespace
             }
             if (NextPoint == Actions.Num() - 1 && !bCampaignExitRecorded)
             {
+                if (CampaignRoute->Map == 40 && (!bL40InvisibilityUsed || !bCampaignConcealmentVerified
+                    || Player.GetItemCount(361) != L40InvisibilityBefore - 1))
+                { return Finish(&Player, TEXT("the L40 route did not retain its verified single-scroll earned concealment tactic")); }
                 const FAAWadNativeLevelLink* Link = Level->GetLevelLinks().FindByPredicate([&](const auto& Entry)
                 {
                     return Entry.SourceThing == CampaignRoute->ExitThing;
@@ -7740,14 +7910,14 @@ namespace
                 Click(Point.X, Point.Y);
             };
             const auto CloseService = [&]() { Click(200, 9); };
-            const auto StowItem = [&]() { Click(220, 22); };
+            const auto StowItem = [&]() { return StowReviewMouseHand(Player, true); };
             if (TownReview == ETownReview::ServicesLoadout || bCampaignShop)
             {
                 const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
                 const int32 Melee = Player.CanUseWadItem(IronLongSword) ? IronLongSword
                     : Player.CanUseWadItem(NativeWadRules::IronMace) ? Progress.ShopTier >= 4 ? 28873 : NativeWadRules::IronMace : 202;
                 const bool bBuyMelee = Player.GetItemCount(Melee) == 0;
-                const int64 Before = Progress.GetWalletCopper();
+                int64 Before = Progress.GetWalletCopper();
                 const auto ItemPrice = [&](int32 Type)
                 {
                     const FWadInventoryDetails* Item = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
@@ -7755,11 +7925,22 @@ namespace
                 };
                 const bool bBeforeElmore = bCampaignShop && Progress.ResultQuest == 1;
                 const bool bBeforeDestruction = bCampaignShop && Progress.ResultQuest == 5;
-                const int32 AttackScrolls = bBeforeDestruction ? FMath::Max(0, 3 - Player.GetItemCount(370)) : 0;
-                const int32 InvisibleScrolls = bBeforeDestruction ? FMath::Max(0, 6 - Player.GetItemCount(361)) : 0;
+                const int32 AttackScrolls = bBeforeDestruction ? FMath::Max(0, 2 - Player.GetItemCount(370)) : 0;
+                const int32 InvisibleScrolls = bBeforeDestruction ? FMath::Max(0, 7 - Player.GetItemCount(361)) : 0;
                 const int32 LavaPotions = bBeforeDestruction ? FMath::Max(0, 3 - Player.GetItemCount(813)) : 0;
                 const bool bBuyMana = bBeforeDestruction && Player.GetItemCount(362) == 0;
                 const int32 WeaponPrice = (bBuyMelee ? ItemPrice(Melee) : 0) + AttackScrolls * ItemPrice(370) + InvisibleScrolls * ItemPrice(361) + LavaPotions * ItemPrice(813) + (bBuyMana ? ItemPrice(362) : 0);
+                while (bBeforeDestruction && Progress.bSucceeded && Before < WeaponPrice && Player.GetItemCount(807) > 1)
+                {
+                    const int32 Cures = Player.GetItemCount(807);
+                    const int32 Slot = Player.GetCarriedItems().Find(807);
+                    if (!StowItem() || !Player.TakeInventoryItem(Slot) || !Player.TradeWadTownItem(Slot, true, false)
+                        || Player.GetItemCount(807) != Cures - 1 || Progress.GetWalletCopper() <= Before)
+                    { return Finish(&Player, TEXT("the normal sale of one surplus earned cure failed")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified normal Store sale of one surplus earned cure 807 for %lld copper; %d cures retained to fund the final concealment supply."),
+                        Progress.GetWalletCopper() - Before, Player.GetItemCount(807));
+                    Before = Progress.GetWalletCopper();
+                }
                 const int32 PotionLimit = bBeforeElmore || Progress.ResultQuest == 2 ? 6 : 18;
                 const int32 BuyCount = int32(FMath::Clamp<int64>((Before - WeaponPrice) / 300, 0, PotionLimit));
                 const int32 Price = WeaponPrice + 300 * BuyCount;
@@ -7767,17 +7948,24 @@ namespace
                 if ((Progress.ResultQuest < 2 && !bBeforeElmore) || !Progress.bSucceeded
                     || (!bCampaignShop && BuyCount < 6) || Before < Price)
                 {
-                    return Finish(&Player, TEXT("the provisioned combat run needs the previous reward and enough earned gold"));
+                    return Finish(&Player, *FString::Printf(TEXT("the provisioned combat run needs the previous reward and enough earned gold: result=%d success=%d wallet=%lld mandatory=%d total=%d healing=%d"),
+                        Progress.ResultQuest, Progress.bSucceeded, Before, WeaponPrice, Price, BuyCount));
                 }
                 const auto Buy = [&](int32 Type, int32 Count)
                 {
                     if (bHeadlessShop)
                     {
-                        for (int32 Index = 0; Index < Count; ++Index) { Player.TradeWadTownItem(Type, false, false); }
+                        for (int32 Index = 0; Index < Count; ++Index)
+                        {
+                            StowItem();
+                            Player.TradeWadTownItem(Type, false, false);
+                            StowItem();
+                        }
                     }
                     else
                     {
                         Click(122, 24);
+                        StowItem();
                         const FVector2D Point = StockItem(Type);
                         for (int32 Index = 0; Index < Count; ++Index)
                         {
@@ -7807,7 +7995,7 @@ namespace
                 }
                 if (Progress.GetWalletCopper() != Before - Price || Player.GetItemCount(Melee) == 0
                     || Player.GetItemCount(GreaterHealingPotion) != PotionsBefore + BuyCount
-                    || (bBeforeDestruction && (Player.GetItemCount(370) < 3 || Player.GetItemCount(361) < 6 || Player.GetItemCount(813) < 3 || Player.GetItemCount(362) == 0))
+                    || (bBeforeDestruction && (Player.GetItemCount(370) < 2 || Player.GetItemCount(361) < 7 || Player.GetItemCount(813) < 3 || Player.GetItemCount(362) == 0))
                     || !Player.SaveWadCheckpoint(bBeforeElmore ? TEXT("NativeWadElmoreProvisionedTown")
                         : Progress.ResultQuest == 2 ? TEXT("NativeWadUndeadProvisionedTown") : TEXT("NativeWadProvisionedTownReview")))
                 {
@@ -7816,7 +8004,7 @@ namespace
                 UE_LOG(LogTemp, Display, TEXT("Verified earned-gold purchases of permitted weapon %d and %d healing potions."), Melee, BuyCount);
                 if (bBeforeDestruction)
                 {
-                    UE_LOG(LogTemp, Display, TEXT("Verified the earned Destruction loadout includes three electric-attack scrolls, six invisibility scrolls (three reserved for L70), three Lava Walking potions (two reserved for L70), and mana recovery."));
+                    UE_LOG(LogTemp, Display, TEXT("Verified the earned Destruction loadout includes two electric-attack scrolls, seven invisibility scrolls (three for L71, two for L70, one for L61, one for L40), three Lava Walking potions (two reserved for L70), and mana recovery."));
                 }
                 if (bCampaignShop)
                 {
@@ -8108,21 +8296,11 @@ namespace
                 }
                 return false;
             }
-            const int32 Slot = Player.GetCarriedItems().Find(Type);
-            auto* Controller = Cast<APlayerController>(Player.GetController());
-            auto* HUD = Controller ? Cast<ANativeWadHUD>(Controller->GetHUD()) : nullptr;
-            if (HUD && Slot != INDEX_NONE)
+            const int32 Slot = FindReviewItemSlot(Player, Type);
+            if (SelectReviewBagItem(Player, Slot))
             {
-                const int32 Button = Player.GetSelectedInventorySlot() == Slot ? INDEX_NONE : Slot;
-                // Drive the same screen-space hit test used by a mouse click, including in offscreen runs.
-                if (bWholeCampaign && FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
-                {
-                    Player.ClickInventorySlot(Button);
-                }
-                else
-                {
-                    HUD->ClickHUD(HUD->InventorySlotCenter(Button));
-                }
+                if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi"))) { Player.ClickInventorySlot(INDEX_NONE); }
+                else { ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter()); }
             }
             return false;
         }
@@ -9542,7 +9720,7 @@ namespace
                 const auto Click = [Hud, Origin, Scale](double X, double Y) { Hud->ClickAction(Origin + FVector2D(X, Y) * Scale); };
                 Click(168, 24);
                 Click(18, 88);
-                Click(220, 22);
+                if (!StowReviewMouseHand(Player, true)) { return Finish(&Player, TEXT("could not place the bought Bank ring into the bag")); }
                 Click(200, 9);
                 if (Progress.GetWalletCopper() != 0 || Player.GetItemCount(WaterWalkRing) != 1)
                 {
@@ -10099,8 +10277,13 @@ namespace
                 for (const int32 Type : {204, Crossbow, 708, 704})
                 {
                     Player.CollectItem(Type);
-                    Player.ClickInventorySlot(Player.GetCarriedItems().Find(Type));
-                    Player.ClickInventorySlot(INDEX_NONE);
+                    if (!SelectReviewBagItem(Player, Player.GetCarriedItems().Find(Type)))
+                    { return Finish(&Player, TEXT("could not take the class-check object from the bag")); }
+                    const auto* Catalog = UNativeWadHudData::LoadCatalog();
+                    const auto* Rules = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
+                    if (Rules && Rules->ArmorSlot != INDEX_NONE) { PlaceReviewArmor(Player, Rules->ArmorSlot); }
+                    else if (FParse::Param(FCommandLine::Get(), TEXT("nullrhi"))) { Player.ClickInventorySlot(INDEX_NONE); }
+                    else { ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter()); }
                 }
                 ++NextPoint;
                 return true;
@@ -11162,8 +11345,7 @@ namespace
                         { Slot = Index; break; }
                     }
                     if (Slot == INDEX_NONE) { return Finish(&Player, TEXT("the controlled jewelry item is missing")); }
-                    Click({13, 161});
-                    Player.ClickInventorySlot(Slot);
+                    if (!SelectReviewBagItem(Player, Slot)) { return Finish(&Player, TEXT("could not take the jewelry object through the original bag")); }
                     Click({30, 161});
                     Click(JewelryReviewLocation == NeckSlot ? FVector2D(299, 26) : FVector2D(299, 40 + (JewelryReviewLocation - Ring1Slot) * 12));
                     const int32 Worn = Player.GetJewelryInventorySlot(JewelryReviewLocation);
@@ -11192,6 +11374,220 @@ namespace
                 { return Finish(&Player, TEXT("could not save the weapon and five worn jewelry locations")); }
                 UE_LOG(LogTemp, Display, TEXT("Verified original Equipment necklace/four-ring placement, independent passive owners, remove/replace, ready weapon retention%s, and checkpoint save."), bJewelryReload ? TEXT(", fresh-process restoration") : TEXT(""));
                 return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickRetainedHand(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            auto* Controller = Player.GetController<APlayerController>();
+            auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            const auto* Catalog = UNativeWadHudData::LoadCatalog();
+            if (!Controller || !Hud || !Catalog || !Hud->HasClassicHud()
+                || FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+            { return Finish(&Player, TEXT("retained mouse-hand review requires the rendered classic HUD")); }
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy) { Enemy->SetActorTickEnabled(false); }
+            if (bRetainedHandReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            const auto CountObjects = [&]
+            {
+                int32 Count = 0;
+                for (int32 Type : Player.GetCarriedItems()) { Count += !IsRuneItem(Type); }
+                return Count;
+            };
+            const auto HeldState = [&]
+            {
+                return Player.GetMouseHandItem() == 417 && Player.GetReadyItem() == IronMace
+                    && Player.GetStatusPower(SpellShieldStatus) == 0 && !Player.HasEquippedItem(417)
+                    && Player.GetItemCount(417) == 1 && Player.GetItemCount(IronMace) == 1
+                    && Player.GetItemCount(806) == 1 && Player.GetItemCount(350) == 0 && CountObjects() == 3
+                    && Player.HasIdentifiedItemType(417) && Player.HasIdentifiedItemType(350)
+                    && !Player.HasIdentifiedItemType(806) && !Player.HasIdentifiedItemType(IronMace);
+            };
+            const auto CursorAt = [&](FVector2D Point)
+            {
+                int32 Width = 0, Height = 0;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                const FVector2D Pixel = (FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale;
+                Controller->SetMouseLocation(FMath::RoundToInt(Pixel.X), FMath::RoundToInt(Pixel.Y));
+                return Pixel;
+            };
+            const auto Capture = [&](const TCHAR* Name)
+            {
+                bool bSaved = false;
+                if (!CaptureTownFrame(Name, bSaved)) { return 0; }
+                return bSaved ? 1 : -1;
+            };
+            if (bRetainedHandReload)
+            {
+                if (NextPoint == 0)
+                {
+                    if (!HeldState()) { return Finish(&Player, TEXT("held object, ready weapon, discovery scopes or object counts failed to restore")); }
+                    if (Player.IsMouseLook()) { Press(Player, EKeys::Tab); return true; }
+                    ++NextPoint;
+                }
+                if (NextPoint == 1)
+                {
+                    CursorAt({180, 105});
+                    const int32 Image = Capture(TEXT("held-reloaded"));
+                    if (!Image) { return true; }
+                    if (Image < 0 || !HeldState()) { return Finish(&Player, TEXT("could not capture the restored held source object")); }
+                    if (!StowReviewMouseHand(Player) || Player.GetMouseHandSlot() != INDEX_NONE)
+                    { return Finish(&Player, TEXT("a normal empty bag cell did not accept the restored hand")); }
+                    const NativeWadInventoryView::FView Bag(Player, *Catalog, true, Player.GetMouseHandSlot());
+                    if (Bag.CellForSlot(Player.GetCarriedItems().Find(417)) == INDEX_NONE
+                        || !SelectReviewBagItem(Player, Player.GetCarriedItems().Find(417)))
+                    { return Finish(&Player, TEXT("the stored source ring was not available through the normal bag")); }
+                    ClickReviewPoint(Player, {30, 161});
+                    ClickReviewPoint(Player, NativeWadInventoryView::JewelryBoxes[Ring1Slot].GetCenter());
+                    if (Player.GetMouseHandSlot() != INDEX_NONE || Player.GetReadyItem() != IronMace
+                        || Player.GetStatusPower(SpellShieldStatus) != 15 || Player.GetItemCount(417) != 1 || CountObjects() != 3)
+                    { return Finish(&Player, TEXT("post-restart source equipment placement duplicated an object or passive")); }
+                    ++NextPoint;
+                }
+                if (NextPoint == 2)
+                {
+                    const int32 Image = Capture(TEXT("equipped-reloaded"));
+                    if (!Image) { return true; }
+                    if (Image < 0 || !Player.HasIdentifiedItemType(417) || Player.HasIdentifiedItemType(806)
+                        || Player.HasIdentifiedItemType(IronMace))
+                    { return Finish(&Player, TEXT("post-restart source bag/equipment actions changed discovery scopes")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified retained mouse hand and ready weapon in another process, original cursor image, normal empty-cell storage and one source equipment owner without object duplication."));
+                    return Finish(&Player);
+                }
+                return true;
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                if (Player.IsMouseLook()) { Press(Player, EKeys::Tab); return true; }
+                if (CountObjects() != 0) { return Finish(&Player, TEXT("retained-hand fixture requires a fresh character without carried objects")); }
+                Player.InitializeItemIdentification(false);
+                for (int32 Type : {IronMace, 417, 806, 350}) { Player.CollectItem(Type); }
+                ClickReviewPoint(Player, {13, 161});
+                if (!SelectReviewBagItem(Player, Player.GetCarriedItems().Find(IronMace)))
+                { return Finish(&Player, TEXT("could not take the source mace from the original bag")); }
+                ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter());
+                if (!SelectReviewBagItem(Player, Player.GetCarriedItems().Find(417)))
+                { return Finish(&Player, TEXT("could not take the unknown ring from the original bag")); }
+                ClickReviewPoint(Player, {310, 9});
+                ++NextPoint;
+                return true;
+            case 1:
+            {
+                if (Player.IsInventoryOpen() || Player.IsMouseLook() || Player.GetMouseHandItem() != 417
+                    || Player.GetReadyItem() != IronMace || Player.GetStatusPower(SpellShieldStatus)
+                    || Player.HasIdentifiedItemType(417) || CountObjects() != 4)
+                { return Finish(&Player, TEXT("closing the bag lost the unknown held object or applied a worn passive")); }
+                CursorAt({180, 105});
+                const int32 Image = Capture(TEXT("held-exploring"));
+                if (!Image) { return true; }
+                if (Image < 0) { return Finish(&Player, TEXT("could not capture the natural source cursor with banners closed")); }
+                Press(Player, EKeys::F1);
+                ++NextPoint;
+                return true;
+            }
+            case 2:
+            {
+                if (!Hud->IsControlsOpen() || Player.GetMouseHandItem() != 417 || Player.GetReadyItem() != IronMace)
+                { return Finish(&Player, TEXT("normal F1 Controls discarded or aliased the held item")); }
+                CursorAt({180, 105});
+                const int32 Image = Capture(TEXT("held-controls"));
+                if (!Image) { return true; }
+                if (Image < 0) { return Finish(&Player, TEXT("could not capture the retained cursor over Controls")); }
+                ClickReviewPoint(Player, {310, 9});
+                ClickReviewPoint(Player, {30, 189});
+                ++NextPoint;
+                return true;
+            }
+            case 3:
+            {
+                if (!Hud->IsNotesOpen() || Player.GetMouseHandItem() != 417 || Player.HasIdentifiedItemType(417))
+                { return Finish(&Player, TEXT("original Notes form changed mouse-hand ownership or identification")); }
+                CursorAt({180, 105});
+                const int32 Image = Capture(TEXT("held-notes"));
+                if (!Image) { return true; }
+                if (Image < 0) { return Finish(&Player, TEXT("could not capture the retained cursor over Notes")); }
+                ClickReviewPoint(Player, {310, 9});
+                ClickReviewPoint(Player, {13, 161});
+                ++NextPoint;
+                return true;
+            }
+            case 4:
+            {
+                const NativeWadInventoryView::FView Bag(Player, *Catalog, true, Player.GetMouseHandSlot());
+                if (!Player.IsInventoryOpen() || Player.GetMouseHandItem() != 417 || Player.GetReadyItem() != IronMace
+                    || Bag.CellForSlot(Player.GetMouseHandSlot()) != INDEX_NONE || Bag.CellForSlot(Player.GetReadySlot()) != INDEX_NONE)
+                { return Finish(&Player, TEXT("reopening the bag showed a held or readied object as another bag copy")); }
+                CursorAt({180, 105});
+                const int32 Image = Capture(TEXT("held-inventory"));
+                if (!Image) { return true; }
+                if (Image < 0) { return Finish(&Player, TEXT("could not capture the source inventory and retained hand")); }
+                ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter());
+                if (Player.GetReadyItem() != 417 || Player.GetMouseHandItem() != IronMace || Player.GetStatusPower(SpellShieldStatus) != 15)
+                { return Finish(&Player, TEXT("source Ready swap did not transfer the two exact objects and one effect owner")); }
+                CursorAt(NativeWadInventoryView::Ready.GetCenter());
+                Press(Player, EKeys::RightMouseButton);
+                ++NextPoint;
+                return true;
+            }
+            case 5:
+            {
+                const auto* Ring = Catalog->ItemDetails.Find(417);
+                if (!Ring || Player.GetInteractionMessage() != Ring->UnidentifiedDescription || Player.HasIdentifiedItemType(417))
+                { return Finish(&Player, TEXT("normal cursor examination did not display the unidentified source ring description")); }
+                ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter());
+                ClickReviewPoint(Player, {30, 161});
+                ClickReviewPoint(Player, NativeWadInventoryView::JewelryBoxes[Ring1Slot].GetCenter());
+                if (Player.GetMouseHandItem() || Player.GetReadyItem() != IronMace || Player.GetStatusPower(SpellShieldStatus) != 15)
+                { return Finish(&Player, TEXT("source Equipment placement failed to move the hand into a single worn owner")); }
+                ClickReviewPoint(Player, NativeWadInventoryView::JewelryBoxes[Ring1Slot].GetCenter());
+                if (Player.GetMouseHandItem() != 417 || Player.GetStatusPower(SpellShieldStatus))
+                { return Finish(&Player, TEXT("source Equipment removal did not move the object back to the mouse hand")); }
+                if (!StowReviewMouseHand(Player) || !SelectReviewBagItem(Player, Player.GetCarriedItems().Find(350)))
+                { return Finish(&Player, TEXT("could not take the original identification scroll after returning the held ring")); }
+                ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter());
+                if (!StowReviewMouseHand(Player) || !SelectReviewBagItem(Player, Player.GetCarriedItems().Find(417)))
+                { return Finish(&Player, TEXT("could not retain the unknown ring beside the readied source scroll")); }
+                ClickReviewPoint(Player, {310, 9});
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                return true;
+            }
+            case 6:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (Player.GetItemCount(350) || Player.GetMouseHandItem() != 417 || Player.GetReadyItem()
+                    || !Player.HasIdentifiedItemType(417) || !Player.HasIdentifiedItemType(350)
+                    || Player.HasIdentifiedItemType(806) || Player.HasIdentifiedItemType(IronMace))
+                { return Finish(&Player, TEXT("normal Identify Readied use lost the retained hand, consumed the wrong object or revealed bag-only types")); }
+                if (!StowReviewMouseHand(Player) || !SelectReviewBagItem(Player, Player.GetCarriedItems().Find(IronMace)))
+                { return Finish(&Player, TEXT("could not ready the source weapon after consuming the identification scroll")); }
+                ClickReviewPoint(Player, NativeWadInventoryView::Ready.GetCenter());
+                if (!SelectReviewBagItem(Player, Player.GetCarriedItems().Find(417)))
+                { return Finish(&Player, TEXT("could not retain the learned ring for travel")); }
+                ClickReviewPoint(Player, {310, 9});
+                if (!HeldState()) { return Finish(&Player, TEXT("the prepared source hand/weapon state has duplicate or misplaced objects")); }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadRetainedHandL30Review")))
+                { return Finish(&Player, TEXT("could not save the retained hand in L30")); }
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                ++NextPoint;
+                return true;
+            case 7:
+            {
+                if (!Current.GetMapName().EndsWith(TEXT("L301")) || !Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!Player.HasItemIdentificationState()) { return true; } // Normal visited-level restoration runs on the arriving pawn's first tick.
+                if (!HeldState()) { return Finish(&Player, TEXT("normal map travel lost the exact held object, ready weapon, counts or knowledge")); }
+                if (Player.IsMouseLook()) { Press(Player, EKeys::Tab); return true; }
+                CursorAt({180, 105});
+                const int32 Image = Capture(TEXT("held-arrival"));
+                if (!Image) { return true; }
+                if (Image < 0 || !Player.SaveWadCheckpoint(TEXT("NativeWadRetainedHandReview")))
+                { return Finish(&Player, TEXT("could not capture and save the retained hand after L301 travel")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified controlled source mouse-hand/Ready/Equipment swaps, normal unknown-item examination, F1/Notes/banner retention, original cursor rendering, Identify Readied scope and exact L30 to L301 save/travel state."));
+                return Finish(&Player);
+            }
             }
             return true;
         }
@@ -12934,6 +13330,7 @@ namespace
             if (bJewelryReview) { return TickJewelry(*Current, *Player); }
             if (bOptionsReview) { return TickOptions(*Current, *Player); }
             if (bItemOwnersReview) { return TickItemOwners(*Current, *Player); }
+            if (bRetainedHandReview) { return TickRetainedHand(*Current, *Player); }
             if (bNotesReview) { return TickNotes(*Current, *Player); }
             if (bPoisonCureReview) { return TickPoisonCures(*Player); }
             if (bFinalCampaignReload)
@@ -13450,6 +13847,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bNotes = Mode == TEXT("notes") || Mode == TEXT("notesreload");
     const bool bOptions = Mode == TEXT("options") || Mode == TEXT("optionsreload");
     const bool bItemOwners = Mode == TEXT("itemowners") || Mode == TEXT("itemownersreload") || Mode == TEXT("itemownerscompletereload");
+    const bool bRetainedHand = Mode == TEXT("retainedhand") || Mode == TEXT("retainedhandreload");
     const bool bJewelry = Mode == TEXT("wornjewelry") || Mode == TEXT("wornjewelryreload");
     const bool bLook = Mode == TEXT("creaturelook");
     const bool bDoorMagic = Mode == TEXT("doormagic") || Mode == TEXT("doormagicreload") || Mode == TEXT("doormagiccompletereload");
@@ -13487,6 +13885,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bEconomyReload ? TEXT("L301")
         : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
+        : bRetainedHand ? (Mode == TEXT("retainedhand") ? TEXT("L30") : TEXT("L301"))
         : bItemOwners ? (Mode == TEXT("itemowners") ? TEXT("L30") : TEXT("L301"))
         : bNotes ? (Mode == TEXT("notesreload") ? TEXT("L301") : TEXT("L30"))
         : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bPoisonCure || bOptions || bJewelry || bLook || bRevive || bMusic || bCharacter
@@ -13527,6 +13926,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bNotesReload = Mode == TEXT("notesreload");
     Review->bOptionsReview = bOptions;
     Review->bOptionsReload = Mode == TEXT("optionsreload");
+    Review->bRetainedHandReview = bRetainedHand;
+    Review->bRetainedHandReload = Mode == TEXT("retainedhandreload");
     Review->bItemOwnersReview = bItemOwners;
     Review->bItemOwnersReload = Mode == TEXT("itemownersreload");
     Review->bItemOwnersCompleteReload = Mode == TEXT("itemownerscompletereload");

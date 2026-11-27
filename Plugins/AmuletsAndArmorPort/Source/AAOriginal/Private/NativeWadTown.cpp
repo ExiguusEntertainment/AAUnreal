@@ -1,6 +1,7 @@
 #include "NativeWadTown.h"
 
 #include "CanvasItem.h"
+#include "Misc/ScopeExit.h"
 #include "Engine/Canvas.h"
 #include "Engine/GameInstance.h"
 #include "Engine/Texture2D.h"
@@ -588,6 +589,7 @@ bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBa
         ShowInteractionMessage(FString::Printf(TEXT("Sold for %s"), *FormatMoney(Price)));
         return true;
     }
+    if (GetMouseHandItem() != 0) { return false; }
     const int32* Tier = (bBank ? Content->BankStock : Content->StoreStock).Find(Type);
     if (!Tier || Progress.ShopTier < *Tier || Rules->ValueCopper < 0)
     {
@@ -598,7 +600,7 @@ bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBa
         ShowInteractionMessage(TEXT("You need more coins in your purse."));
         return false;
     }
-    CarriedItems.Add(Type);
+    SelectedInventorySlot = CarriedItems.Add(Type);
     Progress.SetWalletCopper(Progress.GetWalletCopper() - Rules->ValueCopper);
     // STORE.C identifies the exact purchased type after the transaction succeeds.
     IdentifyItemType(Type);
@@ -737,7 +739,6 @@ void ANativeWadTownHUD::CancelAction()
         return;
     }
     Service = NAME_None;
-    HeldSlot = INDEX_NONE;
     if (bDialogue)
     {
         bDialogue = false;
@@ -784,7 +785,6 @@ void ANativeWadTownHUD::OpenService(FName Name)
         {
             Service = Name;
             StockPage = BagPage = 0;
-            HeldSlot = INDEX_NONE;
             ServiceBanner = EServiceBanner::Bag;
             Player->ShowInteractionMessage(Name == TEXT("Bank") ? TEXT("Welcome to the bank!")
                 : Name == TEXT("Inn") ? TEXT("Welcome to the inn!") : TEXT("Welcome to the store!"));
@@ -881,7 +881,7 @@ FVector2D ANativeWadTownHUD::ServiceBagItemCenter(int32 Slot) const
     {
         return FVector2D(-1, -1);
     }
-    const FView View(*Player, *Catalog, true, HeldSlot);
+    const FView View(*Player, *Catalog, true, Player->GetMouseHandSlot());
     const int32 Cell = View.CellForSlot(Slot);
     return Cell >= 0 && Cell / SlotsPerPage == BagPage ? SlotBox(Cell).GetCenter() : FVector2D(-1, -1);
 }
@@ -891,6 +891,7 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
     using namespace NativeWadInventoryView;
     auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     if (!Player) { return; }
+    int32& HeldSlot = Player->SelectedInventorySlot;
 
     const auto Clicked = [&](const FTownButton& Button) { return ContainsButton(Content, Point, Button); };
     if (Clicked(ServiceClose)) { CancelAction(); return; }
@@ -925,41 +926,23 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
         return;
     }
 
-    if (Ready.IsInside(Point))
-    {
-        if (Player->GetCarriedItems().IsValidIndex(HeldSlot))
-        {
-            const int32 Type = Player->GetCarriedItems()[HeldSlot];
-            if (!Player->CanUseWadItem(Type)) { Player->ShowInteractionMessage(TEXT("Your class can't use this item.")); return; }
-            const int32 Previous = Player->ReadySlot;
-            Player->ReadySlot = HeldSlot;
-            HeldSlot = Previous;
-            if (Type == NativeWadRules::FlyingAmulet) { Player->bReadiedFlightSuppressed = false; }
-        }
-        else
-        {
-            HeldSlot = Player->ReadySlot;
-            Player->ReadySlot = INDEX_NONE;
-        }
-        if (!Player->HasEquippedItem(NativeWadRules::FlyingAmulet)) { Player->bReadiedFlightSuppressed = false; }
-        return;
-    }
+    if (Ready.IsInside(Point)) { Player->SwapMouseAndReady(); return; }
     if (ServiceBanner == EServiceBanner::Equipment)
     {
-        for (int32 Location = 0; Location < NativeWadRules::JewelrySlotCount; ++Location)
+        // INVENTOR.C infers an armor's body location anywhere in the equipment window;
+        // the cursor chooses the side only for a pair of bracings.
+        const auto* HeldRules = Player->GetItemRules(Player->GetMouseHandItem());
+        if (FBox2D({213, 16}, {315, 128}).IsInside(Point) && HeldRules && HeldRules->ArmorSlot != INDEX_NONE)
         {
-            if (!JewelryBoxes[Location].IsInside(Point)) { continue; }
-            const int32 Previous = Player->GetJewelryInventorySlot(Location);
-            const bool bPlacing = Player->GetCarriedItems().IsValidIndex(HeldSlot);
-            const int32 Slot = bPlacing ? HeldSlot : Previous;
-            if (Player->GetCarriedItems().IsValidIndex(Slot))
-            {
-                if (const FWadInventoryDetails* Rules = Player->GetItemRules(Player->GetCarriedItems()[Slot]);
-                    Rules && Player->EquipJewelry(Slot, *Rules, bPlacing ? Location : INDEX_NONE))
-                { HeldSlot = bPlacing ? Previous : Slot; }
-            }
+            const int32 Location = HeldRules->ArmorSlot == NativeWadRules::LeftArmSlot && Point.X > 248
+                ? NativeWadRules::RightArmSlot : HeldRules->ArmorSlot;
+            Player->ClickArmorSlot(Location);
             return;
         }
+        for (int32 Location = 0; Location < UE_ARRAY_COUNT(ArmorBoxes); ++Location)
+        { if (ArmorBoxes[Location].IsInside(Point)) { Player->ClickArmorSlot(Location); return; } }
+        for (int32 Location = 0; Location < UE_ARRAY_COUNT(JewelryBoxes); ++Location)
+        { if (JewelryBoxes[Location].IsInside(Point)) { Player->ClickJewelrySlot(Location); return; } }
     }
 
     const bool bBank = IsBankOpen();
@@ -996,10 +979,7 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
     {
         if (Player->GetCarriedItems().IsValidIndex(HeldSlot))
         {
-            if (Player->TradeWadTownItem(HeldSlot, true, bBank))
-            {
-                HeldSlot = INDEX_NONE;
-            }
+            Player->TradeWadTownItem(HeldSlot, true, bBank);
             return;
         }
         const int32 Cell = int32(Point.X - 10) / SlotWidth + int32(Point.Y - Top) / SlotHeight * ShopColumns;
@@ -1007,8 +987,7 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
         const int32 Index = StockPage * ShopColumns * Rows + Cell;
         if (Types.IsValidIndex(Index) && Player->TradeWadTownItem(Types[Index], false, bBank))
         {
-            // The object is owned immediately. The mouse hand only controls where it is displayed.
-            HeldSlot = Player->GetCarriedItems().Num() - 1;
+            // The successful transaction places its newly owned object in the shared mouse hand.
         }
         return;
     }
@@ -1018,7 +997,7 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
     {
         return;
     }
-    const FView View(*Player, *Catalog, true, HeldSlot);
+    const FView View(*Player, *Catalog, true, Player->GetMouseHandSlot());
     if (Clicked(BagPrevious)) { BagPage = FMath::Max(0, BagPage - 1); return; }
     if (Clicked(BagNext)) { BagPage = FMath::Min(BagPage + 1, FMath::Max(5, View.PageCount()) - 1); return; }
     if (Point.X < Bag.Min.X || Point.X >= Bag.Max.X || Point.Y < Bag.Min.Y || Point.Y >= Bag.Max.Y)
@@ -1026,22 +1005,16 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
         return;
     }
 
-    if (HeldSlot != INDEX_NONE)
-    {
-        HeldSlot = INDEX_NONE;
-        return;
-    }
     const int32 Cell = BagPage * SlotsPerPage + int32(Point.Y - Bag.Min.Y) / SlotHeight * Columns
         + int32(Point.X - Bag.Min.X) / SlotWidth;
-    if (View.Cells.IsValidIndex(Cell))
-    {
-        HeldSlot = View.Cells[Cell].FirstSlot;
-    }
+    if (View.Cells.IsValidIndex(Cell)) { Player->ClickInventorySlot(View.Cells[Cell].FirstSlot); }
+    else { Player->StoreMouseHandInInventory(); }
 }
 
 void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWadQuestProgress& Progress, const ANativeWadPlayer& Player)
 {
     using namespace NativeWadInventoryView;
+    const int32 HeldSlot = Player.GetMouseHandSlot();
     const FTownCanvas Screen{*Canvas, Content, FTownLayout(Canvas->ClipX, Canvas->ClipY)};
     if (Service == TEXT("Inn"))
     {
@@ -1172,10 +1145,6 @@ void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWa
                 if (Price > 0) { Message += TEXT("  ") + FormatMoney(Price); }
             }
         }
-        if (Cursor.X >= 0 && Cursor.X < ScreenWidth && Cursor.Y >= 0 && Cursor.Y < ScreenHeight)
-        {
-            DrawItem(Type, {Cursor - FVector2D(9, 8), Cursor + FVector2D(9, 8)});
-        }
     }
     else if (Message.IsEmpty())
     {
@@ -1219,6 +1188,12 @@ void DrawWadBitmapText(UCanvas& Canvas, const FWadTownFont& Font, TConstArrayVie
     }
 }
 
+void ANativeWadTownHUD::EndPlay(const EEndPlayReason::Type Reason)
+{
+    if (auto* Controller = GetOwningPlayerController()) { Controller->CurrentMouseCursor = EMouseCursor::Default; }
+    Super::EndPlay(Reason);
+}
+
 void ANativeWadTownHUD::DrawHUD()
 {
     Super::DrawHUD();
@@ -1234,6 +1209,13 @@ void ANativeWadTownHUD::DrawHUD()
         return;
     }
     const FTownCanvas Screen{*Canvas, *Content, FTownLayout(Canvas->ClipX, Canvas->ClipY)};
+    ON_SCOPE_EXIT
+    {
+        const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+        const auto* Catalog = UNativeWadHudData::LoadCatalog();
+        if (auto* Controller = GetOwningPlayerController(); Player && Catalog && Controller)
+        { NativeWadInventoryView::DrawMouseHand(*Canvas, *Player, *Controller, *Catalog, Screen.Layout.Origin, Screen.Layout.Scale); }
+    };
     const FWadQuestProgress& Progress = Travel->Quest;
     const FWadTownQuest& Quest = Content->Quests[Progress.Selected];
     Screen.Picture(TEXT("MAINBACK"), 0, 0);

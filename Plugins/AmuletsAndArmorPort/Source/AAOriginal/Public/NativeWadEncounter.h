@@ -19,12 +19,36 @@ struct FWadCreatureTreasure
     int32 AmmoQuantity = 0;
 };
 
-// CRELOGIC.C chooses these ordinary drops from the low bit of its 16-bit random value.
+// CRELOGIC.C CreatureDropTreasure's ordinary, single-item drops. These are full
+// source identities: Elymas 50158 must not become Orange Wizard 1006. Quest
+// objects remain separate DefeatPickups, so bosses release only their extra ring here.
+// The helper reproduces branch/table selection, not the original global RNG sequence.
 inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 Roll)
 {
-    if (SourceType == 1018) { return (Roll & 1) ? FWadCreatureTreasure{144, 0, 6} : FWadCreatureTreasure{100}; }
-    if (SourceType == 1019) { return FWadCreatureTreasure{(Roll & 1) ? 202 : 822}; }
-    return {};
+    static constexpr int32 BadKnight[12] = {204, 204, 204, 204, 204, 204, 818, 204, 708, 709, 710, 711};
+    static constexpr int32 EvilKnight[12] = {102, 102, 102, 204, 204, 204, 102, 204, 708, 709, 710, 711};
+    static constexpr int32 Trojan[12] = {37067, 37067, 37067, 104, 104, 104, 105, 12492, 12996, 12997, 12998, 12999};
+    switch (SourceType)
+    {
+    case 1002: return {(Roll & 1) ? 102 : 362};
+    case 1008: return {147, 2, 6};
+    case 1009: return {144, 0, 12};
+    case 1011: return {Trojan[Roll % 12]};
+    case 1014: return {145, 3, 6}; // Source "fire" quiver; retain the established banner-to-ammo mapping.
+    case 1018: return (Roll & 1) ? FWadCreatureTreasure{144, 0, 6} : FWadCreatureTreasure{100};
+    case 1019: return {(Roll & 1) ? 202 : 822};
+    case 1032: return {416};
+    case 1035: return {BadKnight[Roll % 12]};
+    case 1036: return {106};
+    case 3000: case 3003: return {101};
+    case 3001: case 3002: return {102};
+    case 4080: return {EvilKnight[Roll % 12]};
+    case 50158: return {417};
+    // Orange Wizard 1006 needs journal item 373's AccData/GET effect before its
+    // table can be enabled. Mighty Hunter has no unstolen ordinary-death case;
+    // Momma Dragon's key is commented out. Packed-family restoration is separate.
+    default: return {};
+    }
 }
 
 enum class EWadBoltEffect : uint8

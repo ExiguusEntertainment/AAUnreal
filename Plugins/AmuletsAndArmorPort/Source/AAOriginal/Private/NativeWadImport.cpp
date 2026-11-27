@@ -3280,10 +3280,16 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     TSet<int32> Types;
     Types.Add(NativeWadRules::StartingWaterGourd);
     Types.Add(234); // Original electric mace, also used by the ready/unready review.
-    for (const int32 Type : {100, 144, 202, 822}) { Types.Add(Type); } // Original Elf Archer and Druid defeat treasure.
+    // Every branch of the restored ordinary creature treasure tables needs saved
+    // rules and world art, including full packed equipment identities absent from shops.
+    const TSet<int32> OrdinaryTreasureTypes{100, 101, 102, 104, 105, 106, 144, 145, 147, 202, 204, 362,
+        416, 417, 708, 709, 710, 711, 818, 822, 12492, 12996, 12997, 12998, 12999, 37067};
+    for (const int32 Type : OrdinaryTreasureTypes) { Types.Add(Type); }
     for (const int32 Type : {350, 351}) { Types.Add(Type); } // Both source identification scrolls, including the common starter.
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
-    for (const int32 Type : {411, 417, 418, 419, 604, 610, 614, 615, 712, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
+    const TSet<int32> CreatedItemTypes{833, 298, 822}; // SPL00086/87/90 ordinary created inventory objects.
+    Types.Append(CreatedItemTypes);
+    for (const int32 Type : {411, 417, 418, 419, 604, 610, 612, 614, 615, 712, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
     for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
     {
         Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
@@ -3399,10 +3405,11 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
         FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
         const FString MaterialPackage = Item.WorldMaterialPackage();
         const FString MaterialPath = MaterialPackage + TEXT(".") + FPackageName::GetShortName(MaterialPackage);
-        if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351) && !FindObject<UMaterialInterface>(nullptr, *MaterialPath)
+        if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351 || OrdinaryTreasureTypes.Contains(Type) || CreatedItemTypes.Contains(Type))
+            && !FindObject<UMaterialInterface>(nullptr, *MaterialPath)
             && !FPackageName::DoesPackageExist(MaterialPackage) && !Import.SpriteMaterial(Item.AssetName(), Item.Picture))
         {
-            Output.Logf(TEXT("Could not import the world art for coin %d."), Type);
+            Output.Logf(TEXT("Could not import the world art for source item %d."), Type);
             return false;
         }
         if (FindObject<UMaterialInterface>(nullptr, *MaterialPath) || FPackageName::DoesPackageExist(MaterialPackage))

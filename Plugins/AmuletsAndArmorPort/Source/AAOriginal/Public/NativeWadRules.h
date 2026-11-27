@@ -45,7 +45,21 @@ namespace NativeWadRules
         FireAttackStatus, ElectricityAttackStatus, AcidAttackStatus, PoisonAttackStatus, PiercingAttackStatus, ManaDrainAttackStatus,
         FireResistStatus, AcidResistStatus, PoisonResistStatus, ElectricityResistStatus, PiercingResistStatus, ManaDrainResistStatus, SpeedStatus,
         AccuracyStatus, StealthStatus, MagicStatus, HealthRegenStatus, ManaRegenStatus,
-        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, ItemStatusCount };
+        FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, ItemStatusCount };
+    // OBJMOVE.C's main falling step adds ZV<<4 to a 16.16 position at 70 Hz.
+    // These continuous units preserve that main scale, not its old per-frame
+    // gravity-before-position rounding or the extra ZV*delta/8 position term.
+    inline constexpr double SourceNormalGravity = 1024.0;
+    constexpr double SourceVerticalSpeed(int32 Power) { return Power * double(TicksPerSecond) / 4096.0; }
+    constexpr double SourceGravityAcceleration(double Gravity) { return Gravity * double(TicksPerSecond) * double(TicksPerSecond) / 4096.0; }
+    inline int32 SourceJumpPower(int32 Class, int32 Modifier)
+    { return int32(FMath::Clamp(int64(Class == RogueClass ? 28800 : 19200) + Modifier, int64(0), int64(60000))); }
+    inline uint16 SourceLeapPower(int32 JumpPower, int32 Extra)
+    {
+        // EFFECT.C adds the leap power after StatsGetJumpPower's clamp;
+        // PlayerJump's word16 parameter preserves the original extreme overflow.
+        return uint16(JumpPower + Extra);
+    }
     // STATS.C keeps permanent attributes separate from these effective values.
     inline int32 EffectiveAttribute(int32 Base, int32 Modifier) { return FMath::Clamp(Base + Modifier, 10, 120); }
     inline int32 MeleeBaseDamage(int32 StrengthValue, int32 WeaponDamage, int32 Class)
@@ -69,7 +83,7 @@ namespace NativeWadRules
         return FMath::Max(FMath::Clamp(Stealth, 10, 120) / 2, bInvisible ? 190 : bTranslucent ? 100 : 0);
     }
     enum class ESpellSchool : uint8 { Arcane, Mage, Cleric };
-    enum class ESpellEffect : uint8 { WaterWalk, FeatherFall, Shield, Projectile, Flight, Heal, PurifyBlood, EternalNourishment, Status, IdentifyEquipped, IdentifyAll };
+    enum class ESpellEffect : uint8 { WaterWalk, FeatherFall, Shield, Projectile, Flight, Heal, PurifyBlood, EternalNourishment, Status, IdentifyEquipped, IdentifyAll, Leap, Blink, CreateObject };
     struct FWadSpell
     {
         const TCHAR* Runes;
@@ -166,6 +180,15 @@ namespace NativeWadRules
         {TEXT("958"), TEXT("Identify Equipped"), ESpellSchool::Mage, ESpellEffect::IdentifyEquipped, 4000, -20, 0, 1, INDEX_NONE, 105}, // SPL00105
         {TEXT("47"), TEXT("Identify Equipped"), ESpellSchool::Cleric, ESpellEffect::IdentifyEquipped, 1000, 10, 0, 1, INDEX_NONE, 106}, // SPL00106
         {TEXT("417"), TEXT("Identify All"), ESpellSchool::Cleric, ESpellEffect::IdentifyAll, 3500, -30, 0, 1, INDEX_NONE, 107}, // SPL00107
+        {TEXT("84"), TEXT("Leap"), ESpellSchool::Mage, ESpellEffect::Leap, 800, 20, 0, 8000, INDEX_NONE, 8}, // SPL00008
+        {TEXT("724"), TEXT("Leap"), ESpellSchool::Arcane, ESpellEffect::Leap, 800, 20, 0, 8000, INDEX_NONE, 50}, // SPL00050
+        {TEXT("16"), TEXT("Blink"), ESpellSchool::Mage, ESpellEffect::Blink, 1000, 0, 0, 600, INDEX_NONE, 19}, // SPL00019
+        {TEXT("1245"), TEXT("Blink"), ESpellSchool::Arcane, ESpellEffect::Blink, 2000, -15, 0, 500, INDEX_NONE, 58}, // SPL00058
+        {TEXT("167"), TEXT("Resist Gravity"), ESpellSchool::Arcane, ESpellEffect::Status, 1000, -15, 2100, 1, INDEX_NONE, 62, LowGravityStatus}, // SPL00062
+        {TEXT("213"), TEXT("Resist Gravity"), ESpellSchool::Cleric, ESpellEffect::Status, 1000, -15, 2100, 1, INDEX_NONE, 91, LowGravityStatus}, // SPL00091
+        {TEXT("85"), TEXT("Life Water"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 4000, -5, 0, 833, INDEX_NONE, 86}, // SPL00086
+        {TEXT("817"), TEXT("Holy Bread"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 1000, -5, 0, 298, INDEX_NONE, 87}, // SPL00087
+        {TEXT("837"), TEXT("Holy Water"), ESpellSchool::Cleric, ESpellEffect::CreateObject, 1000, -10, 0, 822, INDEX_NONE, 90}, // SPL00090
     };
     // SPELLS.C clamps negative difficulty to zero before comparing rand()%100. A zero roll can still succeed.
     constexpr int32 SpellCastingThreshold(int32 MagicAttributeValue, int32 Hardness, int32 Level)
@@ -249,7 +272,7 @@ namespace NativeWadRules
     inline constexpr int32 ShieldPotionFirst = 808;
     inline constexpr int32 ShieldPotionLast = 811;
     inline constexpr double ShieldPotionSeconds = 10000.0 / TicksPerSecond;
-    inline constexpr double FeatherfallSpeed = 15000.0 * TicksPerSecond / 65536.0;
+    inline constexpr double FeatherfallSpeed = SourceVerticalSpeed(15000);
 
     constexpr int32 CoinValueCopper(int32 Type)
     {

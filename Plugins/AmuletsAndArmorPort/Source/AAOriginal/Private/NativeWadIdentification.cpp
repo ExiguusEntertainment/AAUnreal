@@ -64,15 +64,13 @@ bool ANativeWadPlayer::IdentifyItemType(int32 Type)
 void ANativeWadPlayer::IdentifyEquippedItems()
 {
     if (!bItemIdentificationInitialized) { InitializeItemIdentification(true); }
-    // EQUIP.H includes the mouse hand, ready hand, six armor locations, necklace, and four rings.
-    // The current selected-slot UI can represent a held item while open; persistence of a mouse-hand
-    // location through closing forms remains separate inventory work.
+    // EQUIP.H includes the retained mouse hand, ready hand, six armor locations, and five jewelry locations.
     const auto IdentifySlot = [&](int32 Slot)
     {
         if (CarriedItems.IsValidIndex(Slot) && NativeWadIdentification::ValidType(CarriedItems[Slot]))
         { IdentifiedItemTypes.Add(CarriedItems[Slot]); }
     };
-    IdentifySlot(SelectedInventorySlot);
+    IdentifySlot(GetMouseHandSlot());
     IdentifySlot(ReadySlot);
     for (int32 Slot : WornSlots) { IdentifySlot(Slot); }
     for (int32 Slot : JewelrySlots) { IdentifySlot(Slot); }

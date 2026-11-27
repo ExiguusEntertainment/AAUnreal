@@ -38,6 +38,7 @@ bool FAAOriginalWornJewelry::RunTest(const FString& Parameters)
     const auto SelectForReady = [&](int32 Slot)
     {
         if (!Press(TEXT("I"))) { return false; }
+        Player->StoreMouseHandInInventory();
         Player->ClickInventorySlot(Slot);
         Player->ClickInventorySlot(INDEX_NONE);
         return Press(TEXT("I"));
@@ -50,12 +51,14 @@ bool FAAOriginalWornJewelry::RunTest(const FString& Parameters)
     const auto Wear = [&](int32 Slot, int32 Location)
     {
         if (!Press(TEXT("I"))) { return false; }
+        Player->StoreMouseHandInInventory();
         Player->ClickInventorySlot(Slot);
         Player->ClickJewelrySlot(Location);
         return Press(TEXT("I"));
     };
     const auto Remove = [&](int32 Location)
     {
+        Player->StoreMouseHandInInventory();
         if (!Press(TEXT("I"))) { return false; }
         Player->ClickJewelrySlot(Location);
         return Press(TEXT("I"));
@@ -81,6 +84,7 @@ bool FAAOriginalWornJewelry::RunTest(const FString& Parameters)
     const int32 FirstRing = Player->GetJewelryInventorySlot(Ring1Slot);
     Player->CollectItem(407);
     Press(TEXT("I"));
+    Player->StoreMouseHandInInventory();
     Player->ClickInventorySlot(Player->GetCarriedItems().Num() - 1);
     Player->ClickJewelrySlot(Ring1Slot);
     TestEqual(TEXT("A fifth ring swaps with an occupied location instead of adding a fifth worn owner"), Player->GetStatusPower(StrengthStatus), 35);
@@ -200,6 +204,7 @@ bool FAAOriginalBankPassiveEffects::RunTest(const FString& Parameters)
     {
         Player->CollectItem(Type);
         Press(TEXT("I"));
+        Player->StoreMouseHandInInventory();
         Player->ClickInventorySlot(Player->GetCarriedItems().Num() - 1);
         Player->ClickJewelrySlot(Location);
         Press(TEXT("I"));
@@ -209,7 +214,8 @@ bool FAAOriginalBankPassiveEffects::RunTest(const FString& Parameters)
         Press(TEXT("I"));
         for (int32 Location = 0; Location < JewelrySlotCount; ++Location)
         {
-            // Closing and reopening puts the selected displaced object back in the bag.
+            // Return each removed object explicitly; closing banners preserves the mouse hand.
+            Player->StoreMouseHandInInventory();
             Player->ClickJewelrySlot(Location);
             Press(TEXT("I"));
             Press(TEXT("I"));

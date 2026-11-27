@@ -28,6 +28,10 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     virtual FVector GetPawnViewLocation() const override;
     virtual void Jump() override;
+    int32 GetWadJumpPower() const;
+    bool TryWadLeap(int32 ExtraPower);
+    bool BlinkWadForward(int32 Distance);
+    bool HasLowGravity() const { return !CanFly() && GetStatusPower(NativeWadRules::LowGravityStatus) > 0; }
 
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
     bool Use();
@@ -79,6 +83,14 @@ public:
     const TSet<int32>& GetIdentifiedItemTypes() const { return IdentifiedItemTypes; }
     bool HasItemIdentificationState() const { return bItemIdentificationInitialized; }
     int32 GetSelectedInventorySlot() const { return SelectedInventorySlot; }
+    // One owned object may live in the mouse hand even when every banner is closed.
+    int32 GetMouseHandSlot() const { return SelectedInventorySlot; }
+    int32 GetMouseHandItem() const { return CarriedItems.IsValidIndex(SelectedInventorySlot) ? CarriedItems[SelectedInventorySlot] : 0; }
+    bool TakeInventoryItem(int32 Slot);
+    bool CreateWadItemInMouseHand(int32 Type);
+    void StoreMouseHandInInventory();
+    bool SwapMouseAndReady();
+    void ClickArmorSlot(int32 Location);
     bool IsInventoryOpen() const { return bInventoryOpen; }
     bool IsMouseLook() const { return bMouseLook; }
     void ClickInventorySlot(int32 Slot);

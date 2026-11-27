@@ -29,12 +29,14 @@ namespace
         {
             Player.CollectItem(Type);
             Press(TEXT("I"));
+            Player.StoreMouseHandInInventory();
             Player.ClickInventorySlot(Player.GetCarriedItems().Num() - 1);
             Player.ClickJewelrySlot(Location);
             Press(TEXT("I"));
         }
         void Remove(int32 Location) const
         {
+            Player.StoreMouseHandInInventory();
             Press(TEXT("I"));
             Player.ClickJewelrySlot(Location);
             Press(TEXT("I"));
@@ -42,6 +44,7 @@ namespace
         void Use(int32 Type) const
         {
             Press(TEXT("I"));
+            Player.StoreMouseHandInInventory();
             Player.ClickInventorySlot(Player.GetCarriedItems().Find(Type));
             Player.ClickInventorySlot(INDEX_NONE);
             Press(TEXT("I"));

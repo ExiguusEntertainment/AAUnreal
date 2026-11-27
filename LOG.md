@@ -125,3 +125,37 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Material-only fallback refresh passes all30 maps:169 missing-name surface bindings,67,629 preserved component states,11,325 unchanged mesh asset hashes. The first Python pass found a non-reflected overlap getter; the corrected reflected property pass completed. No geometry was rebuilt.
 - Rendered native L30 door147 opens in1.5sec, clears the capsule, reverses above the obstruction and recloses after its3.5sec hold. Inspected opening/open captures: original DRK42 brick fallback covers the raised wall bands correctly.
 - Updated PLAN milestones229–233 and the remaining source gaps. Parallel MouseHand, Movement and Treasure patches are ready in Saved/AgentWork, still unintegrated/unverified. The separate L40 earned-tactic patch preserves every route action index and has not been run.
+
+
+## 2026-11-27 14:58 CST — verified checkpoint pushed; next integration started
+
+- Committed and pushed9180c850, including221 files and188 LFS objects (about82MB). Source-owner/identification/Options/fallback changes and their saved content are online.
+- Integrated the reviewed isolated mouse-hand, six-movement-spell and ordinary-treasure patches. Added explicit jump amulet612 import. The next Editor build is running with two compiler workers after confirming about25GB physical/18GB virtual memory available. New features are pending build/runtime verification.
+- Dedicated retained-hand rendered/travel/restart reviews and normal-input fixture updates are being finished separately. Creation spells are being implemented in another isolated copy against the now-combined runtime.
+- Palette audit corrected a visual assumption: L30 intentionally selects the purple2BACK01 backdrop; FART3/GRASS2 are authored mottled art. Confirmed remaining differences are GAME.PAL versus standard VIEW00.PAL for first224 view colors, and missing source minification/mips. Preserve the authored art; no guessed blue sky or new textures.
+
+
+
+## 2026-11-27 15:04 CST — next core build and regressions
+
+- Retained-hand/movement/treasure Editor build succeeds in166seconds with two workers; memory remained available. Imported source rules/art for373 types.
+-54/55regressions pass, including full-page retained-hand placement, held restore/exclusivity, all6 movement rune casts, real jump/apex/landing and swept thin-wall Blink, exhaustive treasure tables and actualcollection. OnlyOrdinaryTreasureLives fails: its EasternArcher fixture used normal damage against that family's source normal-damage resistance. Correcting the fixture to prove resistance before legitimate elemental defeat; gameplay remains unchanged.
+- Integrated the separate normal-input fixture/rendered hand review and earnedL40tactic patches. Three creation spells are now integrated pending the next build, with source paid occupied-hand refusal and focused casting/use/checkpoint tests.
+- Tightened new saved held-slot parsing so malformed or overflowing numeric tokens cannot alias slot0; regression coverage added. Source spell catalog is90/108 in pending code, not yet a verified completion claim.
+
+
+
+## 2026-11-27 15:16 CST — 57 regressions and rendered hand state verified
+
+- All57WAD tests pass in Saved/Logs/PlayableLoops-HandMovementCreationTreasure-Automation.log;375source itemrules saved. Both rendered RetainedHand processes pass actual Ready/Equipment swaps, unknown-item rightmouse examination, F1/Notes/banner retention, identification scope, L30-to-L301 travel, restart, normalbagstorage and one equippedshieldowner withoutduplication.
+- Inspected held-inventory and equipped-reloaded screenshots. The tiny7x6heldring blendswithauthoredtrees, so independent pixelcomparison checked originalRING17.CPC+GAME.PAL atviewportcenter360,210: all24opaque sourcepixels andall96scaledrenderedpixels match exactly. A repeatable QA script is being added.
+- The earnedDestruction retry restored the legitimate Town5 save but stopped before shopping: the seventhinvisibility replacement costs50extra copper beyond its fixed budget. No campaigncompletionclaimed. Nextreview sellsone ofthree surplus earned fullcures807 through the normalStore, retainingtwo, before buyingrequiredsupplies; no addedfunds oritems.
+- Invulnerability/Orb954 and sourcefallingdamage/Shock are separate isolated nextpatches; journalpickupmetadata/sharedfinishedpages are still being implemented in isolation. None is shipped yet.
+
+
+
+## 2026-11-27 15:22 CST — earned shopping passes; new L32 encounter blocks replay
+
+- Verified normal Store sales of two surplus earned807 cures for200copper each, retainingone. Actual source-price mandatorysupplies cost7850copper; oldTown5purse7600could not fundthem. The sales fundnormal twoelectric/seveninvisibility/threeLavaWalking/manarecovery purchases without item/currencygrants.
+- The actual carried Priest enters L32 with restored OrangeWizard/Gargoyle placements. At routepoint17, CreatureThing177's1000rawdamage missile defeats the player. Evidence: Saved/Logs/PlayableLoops-Destruction-RestoredEncounters-EarnedBudgetedSurplusSale.log. This precedesL71/L40; the earlier campaign replays lacked those L32placements. Loop5remainsopen. Futuretactic needs real L32combat/cover or another earnedconcealment allocation; no disabledenemies/freehealth workaround.
+- Core retained-hand/movement/creation/treasure milestone is verified separately by57tests andtwo renderedtravel/restartprocesses. Preparingits checkpoint now; pending invulnerability/fall/journalpatches remain excluded.

@@ -33,6 +33,7 @@ namespace
         bool Ready(int32 Type)
         {
             if (!Press(EKeys::I)) { return false; }
+            Player->StoreMouseHandInInventory();
             Player->ClickInventorySlot(Player->GetCarriedItems().Find(Type));
             Player->ClickInventorySlot(INDEX_NONE);
             return Press(EKeys::I) && Player->GetReadyItem() == Type;

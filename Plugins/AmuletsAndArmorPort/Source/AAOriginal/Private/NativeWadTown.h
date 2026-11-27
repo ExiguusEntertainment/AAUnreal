@@ -119,6 +119,7 @@ class ANativeWadTownHUD : public AHUD
 
 public:
     virtual void DrawHUD() override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     void SelectQuest(int32 Direction);
     void OpenQuest();
     void OpenCharacterPicker();
@@ -140,7 +141,6 @@ private:
     FName Service;
     int32 StockPage = 0;
     int32 BagPage = 0;
-    int32 HeldSlot = INDEX_NONE;
     EServiceBanner ServiceBanner = EServiceBanner::Bag;
     bool bDialogue = false;
     bool bCharacterPicker = false;

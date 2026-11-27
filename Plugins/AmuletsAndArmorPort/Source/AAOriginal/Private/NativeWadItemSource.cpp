@@ -150,6 +150,7 @@ namespace
                     : SubEffect == TEXT("ACCURACY MOD") ? AccuracyStatus
                     : SubEffect == TEXT("STEALTH MOD") ? StealthStatus
                     : SubEffect == TEXT("MAGIC MOD") ? MagicStatus
+                    : SubEffect == TEXT("MOD JUMP POWER") ? JumpStatus
                     : SubEffect == TEXT("HEALTH REGEN MOD") ? HealthRegenStatus
                     : SubEffect == TEXT("MANA REGEN MOD") ? ManaRegenStatus
                     : SubEffect == TEXT("FOOD CONSERVATION") ? FoodConservationStatus
@@ -176,7 +177,7 @@ namespace
                     Details.StatusTicks = Ticks;
                     Details.StatusPower = Status == StrengthStatus || Status == SpeedStatus || Status == SpellShieldStatus
                         || Status == AccuracyStatus || Status == StealthStatus || Status == MagicStatus
-                        || Status == HealthRegenStatus || Status == ManaRegenStatus ? Power : 1;
+                        || Status == HealthRegenStatus || Status == ManaRegenStatus || Status == JumpStatus ? Power : 1;
                 }
                 else if (Trigger == TEXT("USE"))
                 {

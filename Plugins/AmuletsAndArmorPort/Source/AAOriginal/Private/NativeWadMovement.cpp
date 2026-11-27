@@ -4,6 +4,15 @@
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 
+float UNativeWadMovement::GetGravityZ() const
+{
+    const auto* Player = Cast<ANativeWadPlayer>(CharacterOwner);
+    const double Multiplier = Player && Player->HasLowGravity() ? 0.5 : 1.0;
+    // Source sector gravity defaults to 1024. Custom sector gravity import and
+    // its animation changes remain separate terrain work.
+    return float(-NativeWadRules::SourceGravityAcceleration(NativeWadRules::SourceNormalGravity) * Multiplier);
+}
+
 FVector UNativeWadMovement::NewFallVelocity(const FVector& InitialVelocity, const FVector& Gravity, float DeltaTime) const
 {
     FVector Result = Super::NewFallVelocity(InitialVelocity, Gravity, DeltaTime);
