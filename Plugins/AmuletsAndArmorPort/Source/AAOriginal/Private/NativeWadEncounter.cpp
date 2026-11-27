@@ -430,7 +430,9 @@ void ANativeWadGuardian::ApplyControlMovement()
 {
     if (IsDefeated()) { return; }
     UCharacterMovementComponent* Movement = GetCharacterMovement();
-    const float MoveSpeed = SlowSeconds > 0.0 ? 2.0f * TicksPerSecond / 8.0f : Profile.WalkSpeed;
+    // Flyers use source maxVelocity=2; walking steps run half as often (update*3 versus update*1.5).
+    const float MoveSpeed = SlowSeconds > 0.0
+        ? Profile.bCanFly ? 2.0f * TicksPerSecond / 8.0f : Profile.WalkSpeed * 0.5f : Profile.WalkSpeed;
     Movement->MaxWalkSpeed = Movement->MaxFlySpeed = MoveSpeed;
     if (Profile.bCanFly)
     {

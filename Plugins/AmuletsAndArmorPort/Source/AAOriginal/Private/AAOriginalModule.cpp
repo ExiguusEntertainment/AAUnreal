@@ -1133,6 +1133,7 @@ public:
                     || Review == TEXT("rangedandtimed") || Review == TEXT("timeditemreload") || Review == TEXT("wandcombat")
                     || Review == TEXT("wandfireball")
                     || (Review == TEXT("boulderrail") || Review == TEXT("boulderrail75")) || Review == TEXT("specialammo") || Review == TEXT("specialammoreload")
+                    || Review == TEXT("dispeleffects") || Review == TEXT("dispeleffectsreload")
                     || Review == TEXT("controlwands") || Review == TEXT("controlwandsreload")
                     || Review == TEXT("runeprojectiles") || Review == TEXT("runeprojectilesreload")
                     || Review == TEXT("confusionwand") || Review == TEXT("confusionwandreload")

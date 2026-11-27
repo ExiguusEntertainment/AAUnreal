@@ -1980,6 +1980,9 @@ namespace
         FVector PresentationPlayerStart = FVector::ZeroVector;
         bool bAmmoReview = false;
         bool bAmmoBannerReview = false;
+        int32 DispelEffectsBefore = 0;
+        bool bDispelReview = false;
+        bool bDispelReload = false;
         bool bControlWandReview = false;
         bool bControlWandReload = false;
         bool bRuneProjectileReview = false;
@@ -10462,31 +10465,92 @@ namespace
             return true;
         }
 
+        bool LaunchIncomingReviewMissile(ANativeWadPlayer& Player, uint8 DamageMask)
+        {
+            UWorld& Current = *Player.GetWorld();
+            const FVector End = Player.GetActorLocation();
+            for (int32 Angle = 0; Angle < 8; ++Angle)
+            {
+                const FVector Offset = FRotator(0, Angle * 45, 0).Vector() * 40.0;
+                const FVector Start = End + Offset;
+                FHitResult Hit;
+                if (!Current.SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility,
+                    FCollisionShape::MakeSphere(5.0f), FCollisionQueryParams(SCENE_QUERY_STAT(ControlWandIncoming), true))
+                    || Hit.GetActor() != &Player) { continue; }
+                ANativeWadBolt* Bolt = Current.SpawnActor<ANativeWadBolt>(Start, FRotator::ZeroRotator);
+                if (!Bolt) { return false; }
+                Bolt->Launch(nullptr, nullptr, -Offset.GetSafeNormal() * 2000, 100);
+                Bolt->SetDamageMask(DamageMask);
+                return true;
+            }
+            return false;
+        }
+
+        bool TickDispelEffects(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            UWorld& Current = *Player.GetWorld();
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            const auto Count = [&]()
+            {
+                return int32(Player.GetStatusPower(InvisibleStatus) != 0) + int32(Player.GetStatusPower(StrengthStatus) != 0)
+                    + int32(Player.GetStatusPower(AcidResistStatus) != 0);
+            };
+            const auto Protected = [&]()
+            {
+                return Player.GetReadyItem() == 606 && (Player.GetResistanceMask() & DamageFlag(EProjectileDamage::Poison)) != 0;
+            };
+            if (bDispelReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                if (Count() != 0 || !Protected() || Player.GetItemCount(606) != 1 || Player.GetHealth() != 30000 || Player.GetMana() != 10000)
+                { return Finish(&Player, TEXT("dispelled effects or the protected equipped effect failed to reload")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified removed temporary magic stays removed and equipped protection survives Dispel across a process restart."));
+                return Finish(&Player);
+            }
+            switch (NextPoint)
+            {
+            case 0:
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                { Enemy->SetActorTickEnabled(false); Enemy->GetCharacterMovement()->DisableMovement(); }
+                if (Count() != 3) { return Finish(&Player, TEXT("the Dispel fixture requires three supplied temporary effects")); }
+                HealthBeforeCast = Player.GetHealth();
+                ExperienceBeforeTravel = Player.GetExperience();
+                ++NextPoint;
+                break;
+            case 1:
+                if (Player.GetReadyItem() != 606 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 606); break; }
+                DispelEffectsBefore = Count();
+                if (!Protected() || !LaunchIncomingReviewMissile(Player, SpecialDamageFlag(ESpecialDamage::Dispel)))
+                { return Finish(&Player, TEXT("could not launch Dispel at the protected player")); }
+                StageTime = Current.GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 2:
+                if (Current.GetTimeSeconds() - StageTime < 0.15) { break; }
+                if (Count() != FMath::Max(0, DispelEffectsBefore - 1) || !Protected() || Player.GetHealth() != HealthBeforeCast
+                    || Player.GetMana() != 10000 || Player.GetExperience() != ExperienceBeforeTravel || Player.GetItemCount(606) != 1)
+                { return Finish(&Player, TEXT("Dispel did not remove exactly one temporary effect while preserving equipped protection, vitals, and XP")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified incoming Dispel reduces temporary effect count %d to %d while preserving equipped poison protection."), DispelEffectsBefore, Count());
+                if (DispelEffectsBefore > 0) { NextPoint = 1; break; }
+                ++NextPoint;
+                break;
+            case 3:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadDispelEffectsReview")))
+                { return Finish(&Player, TEXT("could not save the Dispel result")); }
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool TickControlWands(ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
             UWorld& Current = *Player.GetWorld();
             if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
             ANativeWadGuardian* Target = ElementalTarget.Get();
-            const auto Incoming = [&](ESpecialDamage Effect)
-            {
-                const FVector End = Player.GetActorLocation();
-                for (int32 Angle = 0; Angle < 8; ++Angle)
-                {
-                    const FVector Offset = FRotator(0, Angle * 45, 0).Vector() * 40.0;
-                    const FVector Start = End + Offset;
-                    FHitResult Hit;
-                    if (!Current.SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility,
-                        FCollisionShape::MakeSphere(5.0f), FCollisionQueryParams(SCENE_QUERY_STAT(ControlWandIncoming), true))
-                        || Hit.GetActor() != &Player) { continue; }
-                    ANativeWadBolt* Bolt = Current.SpawnActor<ANativeWadBolt>(Start, FRotator::ZeroRotator);
-                    if (!Bolt) { return false; }
-                    Bolt->Launch(nullptr, nullptr, -Offset.GetSafeNormal() * 2000, 100);
-                    Bolt->SetDamageMask(SpecialDamageFlag(Effect));
-                    return true;
-                }
-                return false;
-            };
+            const auto Incoming = [&](ESpecialDamage Effect) { return LaunchIncomingReviewMissile(Player, SpecialDamageFlag(Effect)); };
             if (NextPoint == 0)
             {
                 for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
@@ -11572,7 +11636,7 @@ namespace
         bool TickProjectileWands(ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
-            constexpr int32 Types[] = {900, 901, 902, 903, 904, 905, 906, 907, 908, 912, 915, 916, 918};
+            constexpr int32 Types[] = {900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 912, 915, 916, 918};
             if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
             const bool bReload = Player.GetWorld()->URL.HasOption(TEXT("WadLoad"));
             if (bReload)
@@ -11583,7 +11647,7 @@ namespace
                     if (Player.GetItemCount(Type) != 1) { return Finish(&Player, TEXT("a projectile wand failed to persist")); }
                 }
                 if (Player.GetReadyItem() != WandOfDisintegration) { return Finish(&Player, TEXT("the last wand's ready hand failed to reload")); }
-                UE_LOG(LogTemp, Display, TEXT("Verified eleven damage wands, Push, Pull, and the selected ready hand across a process restart."));
+                UE_LOG(LogTemp, Display, TEXT("Verified eleven damage wands, both Dispel wands, Push, Pull, and the selected ready hand across a process restart."));
                 return Finish(&Player);
             }
             const int32 Type = Types[ProjectileWandIndex];
@@ -11630,7 +11694,7 @@ namespace
                 if (Now < StageTime) { break; }
                 Target->RestoreEncounterHealth(10000);
                 Target->RestorePoison(0, 0);
-                Target->RestoreControlEffects(0, 0);
+                Target->RestoreControlEffects(Type == 909 || Type == 910 ? 60 : 0, 0);
                 Player.RestoreWadVital(9, Player.GetMaxHealth());
                 Player.RestoreWadVital(10, 2 * Item->WandManaCost - Player.GetMana());
                 if (Player.GetItemCount(Type) == 0) { Player.CollectItem(Type); }
@@ -11669,6 +11733,8 @@ namespace
                     { return Finish(&Player, *FString::Printf(TEXT("force wand %d moved the live target %.3f units in the wrong direction"), Type, Travel)); }
                     UE_LOG(LogTemp, Display, TEXT("Verified force wand %d moves the live target %.3f units without health damage or XP."), Type, Travel);
                 }
+                if ((Type == 909 || Type == 910) && Target->GetSlowSeconds() <= 0.0)
+                { return Finish(&Player, TEXT("Dispel removed a creature effect, contrary to the source")); }
                 Press(Player, EKeys::LeftControl);
                 ++NextPoint;
                 break;
@@ -11951,6 +12017,7 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bDispelReview) { return TickDispelEffects(*Player); }
             if (bControlWandReview) { return TickControlWands(*Player); }
             if (bRuneProjectileReview) { return TickRuneProjectiles(*Player); }
             if (bConfusionWandReview) { return TickConfusionWand(*Player); }
@@ -12408,6 +12475,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bBoulder = Mode == TEXT("boulderrail") || Mode == TEXT("boulderrail75");
     const bool bAmmo = Mode == TEXT("specialammo") || Mode == TEXT("specialammoreload");
     const bool bAmmoBanner = Mode == TEXT("ammobanner");
+    const bool bDispel = Mode == TEXT("dispeleffects") || Mode == TEXT("dispeleffectsreload");
     const bool bControlWands = Mode == TEXT("controlwands") || Mode == TEXT("controlwandsreload");
     const bool bRuneProjectile = Mode == TEXT("runeprojectiles") || Mode == TEXT("runeprojectilesreload");
     const bool bConfusion = Mode == TEXT("confusionwand") || Mode == TEXT("confusionwandreload");
@@ -12440,7 +12508,7 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bEconomyReload ? TEXT("L301")
         : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
-        : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bRuneProjectile || bConfusion || bResistance || bUtility || bRevive || bMusic || bCharacter
+        : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bRevive || bMusic || bCharacter
             || Mode == TEXT("classequipment") || Mode == TEXT("elementalmelee") || Mode == TEXT("projectilewands") || Mode == TEXT("runeownership") || Mode == TEXT("runelegacy") ? TEXT("L30")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
@@ -12469,6 +12537,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bElymasPresentationReview = Mode == TEXT("elymaspresentation");
     Review->bAmmoReview = bAmmo;
     Review->bAmmoBannerReview = bAmmoBanner;
+    Review->bDispelReview = bDispel;
+    Review->bDispelReload = Mode == TEXT("dispeleffectsreload");
     Review->bControlWandReview = bControlWands;
     Review->bControlWandReload = Mode == TEXT("controlwandsreload");
     Review->bRuneProjectileReview = bRuneProjectile;

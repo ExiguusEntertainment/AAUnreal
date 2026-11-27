@@ -1453,6 +1453,13 @@ bool FAAOriginalPlayerElementalDamage::RunTest(const FString& Parameters)
     TestEqual(TEXT("The live player loses health from a mixed creature hit"), Player->GetHealth(), BeforeHealth - 400);
     TestEqual(TEXT("The same live hit applies its poison component"), Player->GetPoisonLevel(), 40);
     TestEqual(TEXT("The same live hit also drains mana"), Player->GetMana(), BeforeMana - 400);
+    Player->ReceiveTypedHit(100, SpecialDamageFlag(ESpecialDamage::Slow));
+    TestEqual(TEXT("Incoming source Slow applies its negative modifier"), Player->GetStatusPower(SpeedStatus), -20);
+    Player->ReceiveTypedHit(100, SpecialDamageFlag(ESpecialDamage::Dispel));
+    TestEqual(TEXT("Dispel removes the sole temporary effect"), Player->GetStatusPower(SpeedStatus), 0);
+    Player->ReceiveTypedHit(100, SpecialDamageFlag(ESpecialDamage::Dispel));
+    TestEqual(TEXT("Dispel with no temporary effects does not inflict health damage"), Player->GetHealth(), BeforeHealth - 400);
+    TestEqual(TEXT("Control and Dispel do not change mana"), Player->GetMana(), BeforeMana - 400);
     return true;
 }
 
@@ -1521,5 +1528,7 @@ bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
     TestEqual(TEXT("Source Gargoyle remains grounded despite its wings"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Walking);
     Creature->TakeHit(100, Player, NativeWadRules::SpecialDamageFlag(NativeWadRules::ESpecialDamage::Earthbind));
     TestEqual(TEXT("Earthbind has no effect on a source-grounded creature"), Creature->GetEarthboundSeconds(), 0.0);
+    Creature->TakeHit(100, Player, NativeWadRules::SpecialDamageFlag(NativeWadRules::ESpecialDamage::Slow));
+    TestEqual(TEXT("Source grounded Slow halves walking step frequency rather than applying the flyer velocity cap"), Creature->GetCharacterMovement()->MaxWalkSpeed, 52.5f);
     return true;
 }

@@ -688,7 +688,20 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
     if (Health <= 0 || Damage <= 0) { return; }
     if (DamageMask & SpecialDamage)
     {
-        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind))
+        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Dispel))
+        {
+            // EFFECT.C removes one random temporary effect after excluding equipped effects.
+            TArray<double*> Effects;
+            const auto Add = [&Effects](double& Seconds) { if (Seconds > 0.0) { Effects.Add(&Seconds); } };
+            Add(FlightSeconds);
+            Add(WaterWalkSeconds);
+            Add(FeatherfallSeconds);
+            Add(ParalysisSeconds);
+            for (double& Seconds : ShieldSeconds) { Add(Seconds); }
+            for (double& Seconds : ItemStatusSeconds) { Add(Seconds); }
+            if (!Effects.IsEmpty()) { *Effects[FMath::RandRange(0, Effects.Num() - 1)] = 0.0; }
+        }
+        else if (DamageMask == SpecialDamageFlag(ESpecialDamage::Earthbind))
         {
             FlightSeconds = 0.0;
             bReadiedFlightSuppressed = GetReadyItem() == FlyingAmulet;
