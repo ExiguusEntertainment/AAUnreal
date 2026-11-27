@@ -154,7 +154,10 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     }
     for (TActorIterator<ANativeWadGuardian> Encounter(GetWorld()); Encounter; ++Encounter)
     {
-        if (!Encounter->IsHidden() && !Encounter->Tags.IsEmpty())
+        // A source Hydra disappears after its sink death; retain that defeated
+        // life so restoring the map cannot bring the hidden corpse back alive.
+        if ((!Encounter->IsHidden() || (Encounter->IsDefeated() && Encounter->GetSourceType() == 1022))
+            && !Encounter->Tags.IsEmpty())
         {
             const ANativeWadGuardian* Target = Encounter->GetBerserkTarget();
             const FName TargetTag = Target && !Target->Tags.IsEmpty() ? Target->Tags[0] : NAME_None;
@@ -465,6 +468,7 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
         Save->CompletedLevels = Travel->CompletedLevels;
         Save->Quest = Travel->Quest;
         Save->JournalPages = Travel->JournalPages;
+        Save->PlayerNotes = Travel->PlayerNotes.Left(999);
     }
     if (!UGameplayStatics::SaveGameToSlot(Save, Slot.IsEmpty() ? UNativeWadCheckpoint::Slot : Slot, 0))
     {
@@ -523,6 +527,7 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
         Travel->CompletedLevels = Save->CompletedLevels;
         Travel->Quest = Save->Quest;
         Travel->JournalPages = Save->JournalPages;
+        Travel->PlayerNotes = Save->PlayerNotes.Left(999);
         Travel->ArrivingFromMap = 0;
     }
     if (!SavedURL.HasOption(TEXT("WadPhysicalCoins")))

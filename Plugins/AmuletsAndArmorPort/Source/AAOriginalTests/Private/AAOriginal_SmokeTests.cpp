@@ -6,10 +6,14 @@
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadEncounter.h"
+#include "../../AAOriginal/Private/NativeWadCheckpoint.h"
 #include "NativeWadRules.h"
 #include "SectorMeshBuilderActor.h"
 #include "Camera/CameraTypes.h"
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
@@ -1490,7 +1494,7 @@ bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
     Creature->GetCharacterMovement()->MaxFlySpeed = 600.0f;
     Creature->DispatchBeginPlay();
     TestEqual(TEXT("Existing map actors restore the source walking speed on startup"), Creature->GetCharacterMovement()->MaxWalkSpeed, 105.0f);
-    TestEqual(TEXT("Existing map actors restore the source flying speed on startup"), Creature->GetCharacterMovement()->MaxFlySpeed, 105.0f);
+    TestEqual(TEXT("Existing map actors restore the independent source flying cap on startup"), Creature->GetCharacterMovement()->MaxFlySpeed, 131.25f);
     TestEqual(TEXT("Source Griffon uses collision-aware flying physics"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
     for (int32 Frame = 0; Frame < 60; ++Frame)
     {
@@ -1515,7 +1519,7 @@ bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
     Creature->RestoreControlEffects(0.01, 0.01);
     Creature->Tick(0.02f);
     TestEqual(TEXT("Control expiry restores flight"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
-    TestEqual(TEXT("Control expiry restores source speed"), Creature->GetCharacterMovement()->MaxFlySpeed, 105.0f);
+    TestEqual(TEXT("Control expiry restores the source flying cap"), Creature->GetCharacterMovement()->MaxFlySpeed, 131.25f);
     Creature->RestoreControlEffects(30, 30);
     Creature->RestoreEncounterHealth(0);
     Creature->ResetForGenerator();
@@ -1531,6 +1535,172 @@ bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
     TestEqual(TEXT("Earthbind has no effect on a source-grounded creature"), Creature->GetEarthboundSeconds(), 0.0);
     Creature->TakeHit(100, Player, NativeWadRules::SpecialDamageFlag(NativeWadRules::ESpecialDamage::Slow));
     TestEqual(TEXT("Source grounded Slow halves walking step frequency rather than applying the flyer velocity cap"), Creature->GetCharacterMovement()->MaxWalkSpeed, 52.5f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalDestructionCreatures, "AAOriginal.WAD.Gameplay.DestructionCreatures",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalDestructionCreatures::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for Destruction creature behavior"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>(FVector(500, 0, 100), FRotator::ZeroRotator);
+    APlayerController* Controller = World->SpawnActor<APlayerController>();
+    ANativeWadGuardian* Creature = World->SpawnActor<ANativeWadGuardian>(FVector(0, 0, 66), FRotator::ZeroRotator);
+    if (!Player || !Controller || !Creature) { return false; }
+    World->AddController(Controller);
+    Controller->Possess(Player);
+    const FStructProperty* Property = FindFProperty<FStructProperty>(ANativeWadGuardian::StaticClass(), TEXT("Profile"));
+    if (!TestNotNull(TEXT("Saved source profile"), Property)) { return false; }
+    const auto& Resolved = *Property->ContainerPtrToValuePtr<FWadEncounterProfile>(Creature);
+    auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+    auto* Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/DefaultMaterial.DefaultMaterial"));
+    if (!Plane || !Material) { return false; }
+    FWadEncounterProfile Profile;
+    Profile.SourceType = 1021;
+    Profile.MaxHealth = 20000;
+    Profile.RetreatHealth = 0;
+    Profile.MeleeDamage = 1000;
+    Profile.MeleeRange = 90;
+    Profile.CollisionRadius = 50;
+    Profile.CollisionHalfHeight = 66;
+    Profile.WalkSpeed = 49;
+    Creature->Configure(Plane, Material, Material, Material, Material, Material, Profile);
+    Creature->RestoreEncounterHealth(20000);
+    TestEqual(TEXT("Orange Dragon uses source fire missile 4005"), Resolved.SourceMissileType, 4005);
+    TestTrue(TEXT("Orange Dragon flies and approaches while shooting"), Resolved.bCanFly && Resolved.bApproachWhileFiring);
+    TestEqual(TEXT("Orange Dragon uses source maxVelocity 25 independently of its walking step"), Creature->GetCharacterMovement()->MaxFlySpeed, 218.75f);
+    TestEqual(TEXT("The flying cap correction preserves walking speed"), Creature->GetCharacterMovement()->MaxWalkSpeed, 49.0f);
+    Creature->Tick(0.02f);
+    TestTrue(TEXT("Dragon advances inside its missile range instead of standing still"), Creature->GetPendingMovementInputVector().X > 0.0);
+    for (int32 Frame = 0; Frame < 60; ++Frame) { Creature->Tick(1.0f / 60.0f); }
+    TestTrue(TEXT("Dragon fires its actual projectile during the approach"), Creature->GetBoltsFired() > 0);
+    Creature->TakeHit(1000, nullptr, DamageFlag(EProjectileDamage::Fire));
+    TestEqual(TEXT("Dragon fully resists a pure fire hit"), Creature->GetEncounterHealth(), 20000);
+    Creature->TakeHit(1000, nullptr, NormalDamage);
+    Creature->Tick(0.15f);
+    TestEqual(TEXT("Orange Dragon regenerates eight HP per source update"), Creature->GetEncounterHealth(), 19008);
+    Profile.SourceType = 1037;
+    Profile.MaxHealth = 30000;
+    Creature->Configure(Plane, Material, Material, Material, Material, Material, Profile);
+    TestEqual(TEXT("Momma Dragon has its distinct regeneration"), Resolved.RegenPerUpdate, 20);
+    TestEqual(TEXT("Momma Dragon uses source maxVelocity 20"), Creature->GetCharacterMovement()->MaxFlySpeed, 175.0f);
+    TestEqual(TEXT("Momma Dragon retains piercing melee"), Resolved.MeleeDamageMask, uint8(NormalDamage | DamageFlag(EProjectileDamage::Piercing)));
+    for (const int32 Type : {1003, 1010})
+    {
+        Profile.SourceType = Type;
+        Creature->Configure(Plane, Material, Material, Material, Material, Material, Profile);
+        TestEqual(TEXT("Existing source flyers derive their own velocity cap"), Creature->GetCharacterMovement()->MaxFlySpeed,
+            Type == 1003 ? 175.0f : 262.5f);
+    }
+    Profile.SourceType = 1005;
+    Profile.MaxHealth = 16000;
+    Creature->Configure(Plane, Material, Material, Material, Material, Material, Profile);
+    Creature->ResetForGenerator();
+    TestFalse(TEXT("Wyvern is grounded despite the shared dragon name"), Resolved.bCanFly);
+    TestEqual(TEXT("Wyvern reset stays grounded"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Walking);
+    TestEqual(TEXT("Wyvern uses source acid missile"), Resolved.SourceMissileType, 4004);
+    TestEqual(TEXT("Wyvern's large source regeneration is retained"), Resolved.RegenPerUpdate, 100);
+    TestEqual(TEXT("Wyvern's update time differs from the dragons"), Resolved.UpdateTicks, 12);
+    Creature->RestoreEncounterHealth(16000);
+    Creature->TakeHit(500, nullptr, DamageFlag(EProjectileDamage::Acid));
+    TestEqual(TEXT("Wyvern resists pure acid"), Creature->GetEncounterHealth(), 16000);
+    Creature->TakeHit(100, Player, SpecialDamageFlag(ESpecialDamage::Earthbind));
+    TestEqual(TEXT("Earthbind does not affect the grounded Wyvern"), Creature->GetEarthboundSeconds(), 0.0);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalHydraDipper, "AAOriginal.WAD.Gameplay.HydraDipper",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalHydraDipper::RunTest(const FString& Parameters)
+{
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for Hydra dip, emergence, and shoreline behavior"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadLevel* Level = World->SpawnActor<ANativeWadLevel>();
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>(FVector(-300, 0, 26), FRotator::ZeroRotator);
+    APlayerController* Controller = World->SpawnActor<APlayerController>();
+    ANativeWadGuardian* Hydra = World->SpawnActor<ANativeWadGuardian>(FVector(0, 0, 48), FRotator::ZeroRotator);
+    if (!Level || !Player || !Controller || !Hydra) { return false; }
+    World->AddController(Controller);
+    Controller->Possess(Player);
+    const FArrayProperty* SectorsProperty = FindFProperty<FArrayProperty>(ANativeWadLevel::StaticClass(), TEXT("Sectors"));
+    if (!TestNotNull(TEXT("Native sectors for source terrain fixture"), SectorsProperty)) { return false; }
+    auto& Sectors = *SectorsProperty->ContainerPtrToValuePtr<TArray<FAAWadNativeSector>>(Level);
+    FAAWadNativeSector& Water = Sectors.AddDefaulted_GetRef();
+    Water.bWater = true;
+    Water.RepairedBoundaryPoints = {{-500, -500}, {500, -500}, {500, -500}, {500, 500},
+        {500, 500}, {-500, 500}, {-500, 500}, {-500, -500}};
+    Water.Floor = NewObject<UStaticMeshComponent>(Level);
+    Water.Ceiling = NewObject<UStaticMeshComponent>(Level);
+    Water.Floor->SetupAttachment(Level->GetRootComponent());
+    Water.Ceiling->SetupAttachment(Level->GetRootComponent());
+    Water.Ceiling->SetRelativeLocation(FVector(0, 0, 256));
+    Water.Floor->RegisterComponent();
+    Water.Ceiling->RegisterComponent();
+    Level->SetSectorFloorZ(0, 0); // Initializes the same topology cache used in an imported level.
+    FWadEncounterProfile Profile;
+    Profile.SourceType = 1022;
+    Profile.MaxHealth = 8000;
+    Profile.RetreatHealth = 500;
+    Profile.MeleeDamage = 450;
+    Profile.MeleeRange = 72;
+    Profile.CollisionRadius = 42;
+    Profile.CollisionHalfHeight = 46;
+    Profile.WalkSpeed = 70;
+    Hydra->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    Hydra->RestoreEncounterHealth(8000);
+    for (int32 Frame = 0; Frame < 120; ++Frame) { Hydra->Tick(1.0f / 60.0f); }
+    TestFalse(TEXT("Hydra does not acquire a player behind its source field of view"), Hydra->HasAcquiredTarget());
+    TestTrue(TEXT("Unaware Hydra leaves exactly 34 source pixels above the floor"), FMath::IsNearlyEqual(Hydra->GetDipDepth(), 58.0, 0.01));
+    TestEqual(TEXT("A submerged Hydra stays still"), Hydra->GetCharacterMovement()->MovementMode.GetValue(), MOVE_None);
+    const FTransform Dipped = Hydra->GetActorTransform();
+    Hydra->SetActorLocation(FVector(0, 0, 48));
+    Hydra->SetActorTransform(Dipped); // The existing saved encounter transform contains the entire dip height.
+    Hydra->Tick(0.0f);
+    TestTrue(TEXT("Restored dipped transform retains its exact height"), FMath::IsNearlyEqual(Hydra->GetDipDepth(), 58.0, 0.01));
+    Player->SetActorLocation(FVector(300, 0, 26));
+    Hydra->Tick(1.0f / 60.0f);
+    TestTrue(TEXT("Hydra can scan from its exposed head while submerged"), Hydra->HasAcquiredTarget());
+    TestTrue(TEXT("Hydra cannot move horizontally before full emergence"), Hydra->GetPendingMovementInputVector().IsNearlyZero());
+    for (int32 Frame = 0; Frame < 120; ++Frame) { Hydra->Tick(1.0f / 60.0f); }
+    TestEqual(TEXT("An emerged Hydra uses grounded movement"), Hydra->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Walking);
+    TestEqual(TEXT("Emergence restores wall and floor collision"), Hydra->GetCapsuleComponent()->GetCollisionResponseToChannel(ECC_WorldStatic), ECR_Block);
+    TestTrue(TEXT("Healthy emerged Hydra approaches its target within the water"), Hydra->GetPendingMovementInputVector().X > 0.0);
+    Hydra->ConsumeMovementInputVector();
+    Hydra->SetActorLocation(FVector(450, 0, 48));
+    Player->SetActorLocation(FVector(700, 0, 26));
+    Hydra->Tick(0.5f);
+    TestTrue(TEXT("Hydra will not move its footprint onto dry land"), Hydra->GetPendingMovementInputVector().IsNearlyZero());
+    Hydra->RestoreEncounterHealth(0);
+    for (int32 Frame = 0; Frame < 120; ++Frame) { Hydra->Tick(1.0f / 60.0f); }
+    TestTrue(TEXT("Defeated Hydra follows source sink death"), FMath::IsNearlyEqual(Hydra->GetDipDepth(), 58.0, 0.01));
+    TestTrue(TEXT("Completed source sink death removes the visible body"), Hydra->IsHidden());
+    Hydra->Tags.Add(TEXT("HydraSinkFixture"));
+    FWadLevelCheckpoint SunkenCheckpoint;
+    TestTrue(TEXT("A completed sink death can be archived"), Level->WriteCheckpoint(SunkenCheckpoint));
+    const FWadSavedEncounter* SunkenLife = SunkenCheckpoint.Encounters.Find(TEXT("HydraSinkFixture"));
+    if (!TestNotNull(TEXT("The hidden defeated Hydra remains in the checkpoint"), SunkenLife)) { return false; }
+    TestEqual(TEXT("The hidden archived life is defeated"), SunkenLife->Health, 0);
+    const FTransform Dead = Hydra->GetActorTransform();
+    Hydra->SetActorLocation(FVector(0, 0, 48));
+    Hydra->ResetForGenerator();
+    Hydra->SetSpawned(true);
+    TestFalse(TEXT("Generator reuse makes a sunken Hydra visible again"), Hydra->IsHidden());
+    TestEqual(TEXT("Generator reuse restores Hydra wall collision"), Hydra->GetCapsuleComponent()->GetCollisionResponseToChannel(ECC_WorldStatic), ECR_Block);
+    TestFalse(TEXT("Generator reuse drops its previous target"), Hydra->HasAcquiredTarget());
+    Hydra->SetActorTransform(Dead);
+    Hydra->RestoreEncounterHealth(0);
+    TestTrue(TEXT("Restoring a completed sink transform and zero health keeps the body absent"), Hydra->IsHidden());
+    Hydra->ResetForGenerator();
+    Hydra->SetSpawned(true);
+    Hydra->SetActorLocation(FVector(0, 0, 48));
+    TestTrue(TEXT("The complete level checkpoint restores the sunken life"), Level->RestoreCheckpoint(SunkenCheckpoint));
+    TestTrue(TEXT("Level restoration does not resurrect the hidden defeated Hydra"), Hydra->IsDefeated() && Hydra->IsHidden());
     return true;
 }
 

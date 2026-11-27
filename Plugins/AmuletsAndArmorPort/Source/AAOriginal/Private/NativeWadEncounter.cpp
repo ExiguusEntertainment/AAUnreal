@@ -45,6 +45,21 @@ namespace
         return Offset.SizeSquared2D() <= FMath::Square(Radius + Capsule->GetScaledCapsuleRadius())
             && FMath::Abs(Offset.Z) <= Radius + Capsule->GetScaledCapsuleHalfHeight();
     }
+
+    float SourceFlightSpeed(const FWadEncounterProfile& Profile)
+    {
+        // CREDATA.H maxVelocity is independent of stepSize. OBJMOVE.C advances XY by XV*ticks/8.
+        float Velocity;
+        switch (Profile.SourceType)
+        {
+        case 1003: case 1037: Velocity = 20.0f; break;
+        case 1010: Velocity = 30.0f; break;
+        case 1021: Velocity = 25.0f; break;
+        case 1023: Velocity = 15.0f; break;
+        default: return Profile.WalkSpeed;
+        }
+        return Velocity * TicksPerSecond / 8.0f;
+    }
 }
 
 ANativeWadGuardian::ANativeWadGuardian()
@@ -96,7 +111,38 @@ void FWadEncounterProfile::ApplySourceRules()
     case 1032: ChanceContinueAttack = 5; break;
     default: break;
     }
-    if (SourceType == 1003 || SourceType == 1010 || SourceType == 1023) { bCanFly = true; }
+    if (SourceType == 1003 || SourceType == 1010 || SourceType == 1023 || SourceType == 1021 || SourceType == 1037) { bCanFly = true; }
+    if (SourceType == 1005 || SourceType == 1022)
+    {
+        bCanFly = false;
+        MeleeDelayUpdates = 10;
+        RangedDelayUpdates = SourceType == 1005 ? 20 : 50;
+        RegenPerUpdate = SourceType == 1005 ? 100 : 1;
+        UpdateTicks = SourceType == 1005 ? 12 : 7;
+        MeleeDamageMask = SourceType == 1005 ? NormalDamage | DamageFlag(EProjectileDamage::Acid) : NormalDamage;
+        ResistanceMask = DamageFlag(SourceType == 1005 ? EProjectileDamage::Acid : EProjectileDamage::Poison);
+        SourceMissileType = SourceType == 1005 ? 4004 : 4015;
+        BoltDamage = SourceType == 1005 ? 500 : 250;
+        MinBoltRange = SourceType == 1005 ? 250.0f : 200.0f;
+        BoltRange = SourceType == 1005 ? 2000 : 10000;
+        VisionHalfAngle = SourceType == 1005 ? 135.0f : 45.0f;
+        bDipper = SourceType == 1022;
+    }
+    if (SourceType == 1021 || SourceType == 1037)
+    {
+        MeleeDelayUpdates = 10;
+        RangedDelayUpdates = 20;
+        RegenPerUpdate = SourceType == 1021 ? 8 : 20;
+        UpdateTicks = 7;
+        MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::Piercing);
+        ResistanceMask = DamageFlag(EProjectileDamage::Fire);
+        SourceMissileType = 4005;
+        BoltDamage = 750;
+        MinBoltRange = 0.0f;
+        BoltRange = 10000;
+        VisionHalfAngle = 135.0f;
+        bApproachWhileFiring = true;
+    }
     if (SourceType == 1023)
     {
         // CREDATA.H Griffon: flying berserker, 6-update melee delay, 3 HP regeneration.
@@ -129,8 +175,13 @@ void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Stand
     Profile = InProfile;
     Profile.ApplySourceRules();
     GetCapsuleComponent()->SetCapsuleSize(Profile.CollisionRadius, Profile.CollisionHalfHeight);
+    if (Profile.bDipper)
+    {
+        GetCapsuleComponent()->SetCollisionResponseToChannel(ANativeWadLevel::WaterSurfaceChannel, ECR_Ignore);
+        GetCapsuleComponent()->SetCollisionResponseToChannel(ANativeWadLevel::LavaSurfaceChannel, ECR_Ignore);
+    }
     GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
-    GetCharacterMovement()->MaxFlySpeed = Profile.WalkSpeed;
+    GetCharacterMovement()->MaxFlySpeed = SourceFlightSpeed(Profile);
     if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
     if (Profile.SpriteSize.X > 0 && Profile.SpriteSize.Y > 0)
     {
@@ -144,7 +195,7 @@ void ANativeWadGuardian::BeginPlay()
     Profile.ApplySourceRules();
     // Existing maps serialized the engine's default MaxFlySpeed before source flight was restored.
     GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
-    GetCharacterMovement()->MaxFlySpeed = Profile.WalkSpeed;
+    GetCharacterMovement()->MaxFlySpeed = SourceFlightSpeed(Profile);
     Health = Profile.MaxHealth;
     if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
     if (Profile.RailStart != Profile.RailEnd)
@@ -177,7 +228,18 @@ bool ANativeWadGuardian::CanSeeTarget(const AActor& Target) const
     if (const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(&Target); Player && Player->IsConcealed()) { return false; }
     FHitResult Hit;
     const FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeWadGuardianSight), true, this);
-    return !GetWorld()->LineTraceSingleByChannel(Hit, GetActorLocation(), Target.GetActorLocation(), ECC_Visibility, Query)
+    FVector SightOrigin = GetActorLocation();
+    if (Profile.bDipper && DipperLevel.IsValid())
+    {
+        const ANativeWadLevel* Level = DipperLevel.Get();
+        const int32 Sector = Level->FindWadSector(FVector2D(SightOrigin));
+        if (Sector != INDEX_NONE)
+        {
+            // The source leaves 34 pixels visible while dipped. Scan from that exposed portion.
+            SightOrigin.Z = FMath::Max(SightOrigin.Z, Level->GetActorLocation().Z + Level->GetWalkingHeight(Sector) + 17.0);
+        }
+    }
+    return !GetWorld()->LineTraceSingleByChannel(Hit, SightOrigin, Target.GetActorLocation(), ECC_Visibility, Query)
         || Hit.GetActor() == &Target;
 }
 
@@ -206,11 +268,12 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerCharacter(this, 0));
     if (IsDefeated())
     {
+        if (Profile.bDipper) { TickDipper(DeltaSeconds, false); }
         return;
     }
 
     LogicTime += DeltaSeconds;
-    const bool bRetreat = Health < Profile.RetreatHealth;
+    const bool bRetreat = Profile.bDipper ? Health <= Profile.RetreatHealth : Health < Profile.RetreatHealth;
     // CRELOGIC.C extends the table's update by half and shortens the fleeing update by a quarter.
     const int32 UpdateTicks = SlowSeconds > 0.0 ? Profile.UpdateTicks * 3 : Profile.UpdateTicks + (Profile.UpdateTicks >> 1);
     const double Interval = (bRetreat ? UpdateTicks - (UpdateTicks >> 2) : UpdateTicks) / TicksPerSecond;
@@ -247,7 +310,22 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         Sprite->SetMaterial(0, Pose);
     }
     const bool bVisible = (Enemy || (Player && Player->GetHealth() > 0)) && CanSeeTarget(*Target);
-    const bool bMelee = bVisible && Distance < Profile.MeleeRange && FMath::Abs(Offset.Z) <= 26.0;
+    // INavDipper first sinks while scanning, then fully emerges before guard navigation.
+    const bool bDipperReady = !Profile.bDipper || TickDipper(DeltaSeconds, bHasTarget);
+    bool bMeleeHeight = FMath::Abs(Offset.Z) <= 26.0;
+    if (Profile.SourceType == 1005 || Profile.SourceType == 1021 || Profile.SourceType == 1022 || Profile.SourceType == 1037)
+    {
+        if (const ACharacter* Character = Cast<ACharacter>(Target))
+        {
+            const double Height = GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 2.0;
+            const double Feet = GetActorLocation().Z - Height * 0.5;
+            const double TargetHalfHeight = Character->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+            // ITargetStandardHitOrShoot attacks from the bottom quarter through the creature's full height.
+            bMeleeHeight = Feet + Height >= Target->GetActorLocation().Z - TargetHalfHeight
+                && Feet + Height * 0.25 <= Target->GetActorLocation().Z + TargetHalfHeight;
+        }
+    }
+    const bool bMelee = bVisible && Distance < Profile.MeleeRange && bMeleeHeight;
     if (HitTime > 0.0 && Now >= HitTime)
     {
         HitTime = 0.0;
@@ -279,11 +357,14 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     {
         return;
     }
+    if (!bDipperReady) { return; }
     const bool bHasMissile = Profile.BoltDamage > 0 && BoltMaterial;
-    if (bRetreat || bCloseRetreat || (!bMelee && (!bHasMissile
+    if (bRetreat || bCloseRetreat || (!bMelee && (Profile.bApproachWhileFiring || Profile.bDipper || !bHasMissile
         || Distance > Profile.BoltRange || Distance <= Profile.MinBoltRange)))
     {
-        AddMovementInput(bRetreat || bCloseRetreat ? -TowardPlayer : TowardPlayer, 1.0f, true);
+        const FVector Direction = bRetreat || bCloseRetreat ? -TowardPlayer : TowardPlayer;
+        if (!Profile.bDipper || CanMoveOnLiquid(Direction, DeltaSeconds)) { AddMovementInput(Direction, 1.0f, true); }
+        else { GetCharacterMovement()->StopMovementImmediately(); ConsumeMovementInputVector(); }
     }
     if (Updates == 0)
     {
@@ -296,12 +377,86 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         AttackPoseUntil = Now + 20 / TicksPerSecond;
     }
     else if (bHasMissile && !bMelee && Distance <= Profile.BoltRange
+        && (!Profile.bDipper || bRetreat)
         && (Profile.bKeepsBoltDistance || Distance > Profile.MinBoltRange || bRetreat) && BoltDelay == 0)
     {
         BoltDelay = Profile.RangedDelayUpdates;
         AttackPoseUntil = Now + 20 / TicksPerSecond;
         FireBolt(*Target);
     }
+}
+
+double ANativeWadGuardian::GetDipDepth() const
+{
+    const ANativeWadLevel* Level = DipperLevel.Get();
+    if (!Profile.bDipper || !Level) { return 0.0; }
+    const int32 Sector = Level->FindWadSector(FVector2D(GetActorLocation()));
+    if (Sector == INDEX_NONE) { return 0.0; }
+    const double Floor = Level->GetActorLocation().Z + Level->GetWalkingHeight(Sector);
+    return FMath::Max(0.0, Floor + GetCapsuleComponent()->GetScaledCapsuleHalfHeight() - GetActorLocation().Z);
+}
+
+bool ANativeWadGuardian::TickDipper(float DeltaSeconds, bool bRise)
+{
+    if (!DipperLevel.IsValid())
+    {
+        const TActorIterator<ANativeWadLevel> Level(GetWorld());
+        DipperLevel = Level ? *Level : nullptr;
+    }
+    const ANativeWadLevel* Level = DipperLevel.Get();
+    if (!Level) { return false; }
+    const int32 Sector = Level->FindWadSector(FVector2D(GetActorLocation()));
+    if (Sector == INDEX_NONE) { return false; }
+    const double HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+    const double Floor = Level->GetActorLocation().Z + Level->GetWalkingHeight(Sector);
+    const double TargetZ = Floor + (bRise ? HalfHeight + 2.0 : 34.0 - HalfHeight);
+    DipperTime += DeltaSeconds;
+    const int32 UpdateTicks = SlowSeconds > 0.0 ? Profile.UpdateTicks * 3 : Profile.UpdateTicks + (Profile.UpdateTicks >> 1);
+    const double Interval = UpdateTicks / TicksPerSecond;
+    const int32 Updates = FMath::FloorToInt(DipperTime / Interval);
+    DipperTime -= Updates * Interval;
+    const double Step = Profile.WalkSpeed * 10.0 / TicksPerSecond * Updates;
+    FVector Position = GetActorLocation();
+    Position.Z = FMath::FInterpConstantTo(Position.Z, TargetZ, 1.0, Step);
+    const bool bFullyUp = bRise && FMath::IsNearlyEqual(Position.Z, TargetZ, 0.01);
+    if (!bFullyUp)
+    {
+        // No horizontal moves occur while submerged. Preserve the source body height below the floor.
+        GetCharacterMovement()->DisableMovement();
+        GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Ignore);
+        ConsumeMovementInputVector();
+    }
+    SetActorLocation(Position, false, nullptr, ETeleportType::TeleportPhysics);
+    if (bFullyUp)
+    {
+        GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+        if (!GetCharacterMovement()->IsMovingOnGround()) { GetCharacterMovement()->SetMovementMode(MOVE_Walking); }
+    }
+    else if (!bRise && IsDefeated() && FMath::IsNearlyEqual(Position.Z, TargetZ, 0.01))
+    {
+        // IDeathSink marks the object for destruction once it reaches the dipped height.
+        // Retain the actor for checkpoints and generator pooling, but remove it from play.
+        SetActorHiddenInGame(true);
+        SetActorTickEnabled(false);
+    }
+    return bFullyUp;
+}
+
+bool ANativeWadGuardian::CanMoveOnLiquid(const FVector& Direction, float DeltaSeconds) const
+{
+    const ANativeWadLevel* Level = DipperLevel.Get();
+    if (!Level) { return false; }
+    const FVector Position = GetActorLocation() + Direction * FMath::Max(double(Profile.WalkSpeed * DeltaSeconds), 2.0);
+    const double Radius = GetCapsuleComponent()->GetScaledCapsuleRadius();
+    // Match the source stayOnSector rule over the moving object's footprint, not only its center.
+    for (const FVector2D Offset : {FVector2D::ZeroVector, FVector2D(Radius, 0), FVector2D(-Radius, 0), FVector2D(0, Radius), FVector2D(0, -Radius)})
+    {
+        const int32 Sector = Level->FindWadSector(FVector2D(Position) + Offset);
+        if (!Level->GetSectors().IsValidIndex(Sector)) { return false; }
+        const FAAWadNativeSector& Entry = Level->GetSectors()[Sector];
+        if (!Entry.bWater && !Entry.bLava) { return false; }
+    }
+    return true;
 }
 
 void ANativeWadGuardian::TickRailHazard(float DeltaSeconds)
@@ -466,6 +621,7 @@ void ANativeWadGuardian::RestoreEncounterHealth(int32 SavedHealth)
         GetCharacterMovement()->DisableMovement();
         GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         Sprite->SetMaterial(0, DownedMaterial);
+        if (Profile.bDipper) { TickDipper(0.0f, false); }
     }
     if (IsValid(DefeatPickup))
     {
@@ -491,7 +647,8 @@ void ANativeWadGuardian::ApplyControlMovement()
     // Flyers use source maxVelocity=2; walking steps run half as often (update*3 versus update*1.5).
     const float MoveSpeed = SlowSeconds > 0.0
         ? Profile.bCanFly ? 2.0f * TicksPerSecond / 8.0f : Profile.WalkSpeed * 0.5f : Profile.WalkSpeed;
-    Movement->MaxWalkSpeed = Movement->MaxFlySpeed = MoveSpeed;
+    Movement->MaxWalkSpeed = MoveSpeed;
+    Movement->MaxFlySpeed = SlowSeconds > 0.0 ? MoveSpeed : SourceFlightSpeed(Profile);
     if (Profile.bCanFly)
     {
         if (EarthboundSeconds == 0.0 && !Movement->IsFlying()) { Movement->SetMovementMode(MOVE_Flying); }
@@ -547,12 +704,15 @@ void ANativeWadGuardian::ResetForGenerator()
     PoisonLevel = BoltsFired = MeleeHits = RegeneratedHealth = 0;
     PoisonTime = 5.0;
     SlowSeconds = EarthboundSeconds = 0.0;
-    GetCharacterMovement()->MaxWalkSpeed = GetCharacterMovement()->MaxFlySpeed = Profile.WalkSpeed;
+    GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
+    GetCharacterMovement()->MaxFlySpeed = SourceFlightSpeed(Profile);
     MeleeDelay = BoltDelay = 5;
     HitTime = HurtUntil = AttackPoseUntil = LogicTime = 0.0;
+    DipperTime = 0.0;
     bHasTarget = false;
     Sprite->SetMaterial(0, StandingMaterial);
     GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
     GetCharacterMovement()->StopMovementImmediately();
     GetCharacterMovement()->SetMovementMode(Profile.bCanFly ? MOVE_Flying : MOVE_Walking);
 }
@@ -568,6 +728,17 @@ void ANativeWadGuardian::FireBolt(AActor& Target)
     {
         Bolt->Launch(Sprite->GetStaticMesh(), BoltMaterial, Direction * (30 * TicksPerSecond), Profile.BoltDamage);
         Bolt->SetDamageType(EProjectileDamage(Profile.BoltElement));
+        if (Profile.SourceMissileType != 0)
+        {
+            for (const auto& Missile : WandProjectiles)
+            {
+                if (Missile.Type != Profile.SourceMissileType) { continue; }
+                Bolt->SetBlastRadius(Missile.Radius);
+                Bolt->SetDamageMask(Missile.DamageMask);
+                Bolt->SetLifeSpan(FMath::Max(2.0f, Profile.BoltRange / (30.0f * TicksPerSecond) + 1.0f));
+                break;
+            }
+        }
         const int32 HomingType = Profile.bHomingPlasma ? 4017 : Profile.HomingMissileType;
         if (const FWadWandProjectile* Homing = FindHomingMissile(HomingType))
         {

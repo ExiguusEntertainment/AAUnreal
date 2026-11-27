@@ -16,6 +16,8 @@
 #include "GenericPlatform/GenericPlatformInputDeviceMapper.h"
 #include "HAL/FileManager.h"
 #include "InputKeyEventArgs.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Input/Events.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -1982,6 +1984,13 @@ namespace
         bool bAmmoBannerReview = false;
         bool bScriptDoorLockReload = false;
         bool bFinalCampaignReload = false;
+        bool bPoisonCureReview = false;
+        bool bPoisonCureReload = false;
+        bool bPoisonCureCompleteReload = false;
+        int32 CureWaterBefore = 0;
+        bool bNotesReview = false;
+        bool bNotesReload = false;
+        int32 NotesScrollBefore = 0;
         bool bDoorMagicReview = false;
         bool bDoorMagicReload = false;
         bool bDoorMagicCompleteReload = false;
@@ -4501,7 +4510,7 @@ namespace
                 {
                     return Finish(&Player, TEXT("could not save the original L64 arrival"));
                 }
-                ClickFormButton({30, 189});
+                ClickFormButton({47, 189});
                 if (!Player.IsInventoryOpen())
                 {
                     return Finish(&Player, TEXT("the classic journal button did not open the authored note page"));
@@ -10992,6 +11001,168 @@ namespace
             return true;
         }
 
+        bool TickNotes(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            auto* Controller = Player.GetController<APlayerController>();
+            auto* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Travel || !Hud || !Hud->HasClassicHud() || !FSlateApplication::IsInitialized())
+            { return Finish(&Player, TEXT("the Notes review needs the classic HUD and keyboard input")); }
+            FString Expected(TEXT("Gate 41\nuse electric attacks!\tOK\n"));
+            for (int32 Line = 1; Line <= 30; ++Line) { Expected += FString::Printf(TEXT("Step %02d\n"), Line); }
+            const auto Click = [&](FVector2D Point)
+            {
+                int32 Width, Height;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Point * Scale);
+            };
+            const auto Type = [](const FString& Text)
+            {
+                for (const TCHAR Ch : Text)
+                { FSlateApplication::Get().ProcessKeyCharEvent(FCharacterEvent(Ch, FModifierKeysState(), uint32(0), false)); }
+            };
+            const auto Key = [](const FKey& Code, bool bControl = false)
+            {
+                const FModifierKeysState Modifiers(false, false, bControl, false, false, false, false, false, false);
+                const FKeyEvent Event(Code, Modifiers, uint32(0), false, 0, 0);
+                FSlateApplication::Get().ProcessKeyDownEvent(Event);
+                FSlateApplication::Get().ProcessKeyUpEvent(Event);
+            };
+            if (bNotesReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (NextPoint == 0)
+            {
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy) { Enemy->SetActorTickEnabled(false); }
+                if (bNotesReload)
+                {
+                    if (Travel->PlayerNotes != Expected || !Travel->JournalPages.Contains(423))
+                    { return Finish(&Player, TEXT("player-written Notes or the separate authored Journal did not reload")); }
+                }
+                else
+                {
+                    if (!Travel->PlayerNotes.IsEmpty()) { return Finish(&Player, TEXT("the Notes fixture requires an empty profile")); }
+                    // Supply an existing original page solely to exercise the Journal switch.
+                    Travel->JournalPages.Add(423, TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/Maps/L64_Assets/Journal/T_NOTE0423.T_NOTE0423"))));
+                }
+                Click({30, 189});
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 1)
+            {
+                if (!Hud->IsNotesOpen() || !Player.IsInventoryOpen() || Player.IsMouseLook())
+                { return Finish(&Player, TEXT("the original Notes button did not open and focus its field")); }
+                if (!bNotesReload)
+                {
+                    Type(TEXT("Gate 41\nUse electric attacks."));
+                    Key(EKeys::Home); Key(EKeys::Delete); Type(TEXT("u"));
+                    Key(EKeys::End); Key(EKeys::BackSpace); Type(TEXT("!\tOK\n"));
+                    for (int32 Line = 1; Line <= 30; ++Line) { Type(FString::Printf(TEXT("Step %02d\n"), Line)); }
+                }
+                else { Key(EKeys::End, true); }
+                if (Travel->PlayerNotes != Expected || Hud->GetNotesScroll() <= 0)
+                { return Finish(&Player, TEXT("normal character input, editing, newline, tab, or Notes scrolling failed")); }
+                NotesScrollBefore = Hud->GetNotesScroll();
+                Click({311, 20});
+                if (Hud->GetNotesScroll() >= NotesScrollBefore)
+                { return Finish(&Player, TEXT("the original Notes scroll-up button did not scroll")); }
+                ++NextPoint;
+            }
+            if (NextPoint == 2)
+            {
+                bool bSaved = false;
+                if (!FParse::Param(FCommandLine::Get(), TEXT("nullrhi")))
+                {
+                    if (!CaptureTownFrame(TEXT("notes"), bSaved)) { return true; }
+                    if (!bSaved) { return Finish(&Player, TEXT("could not capture the original Notes form")); }
+                }
+                Click({250, 145});
+                if (Hud->IsNotesOpen() || !Player.IsInventoryOpen())
+                { return Finish(&Player, TEXT("the original Notes-to-Journal button did not switch forms")); }
+                Click({250, 145});
+                if (!Hud->IsNotesOpen() || Travel->PlayerNotes != Expected)
+                { return Finish(&Player, TEXT("the Journal-to-Notes button lost the written text")); }
+                Key(EKeys::Escape);
+                if (Hud->IsNotesOpen() || Player.IsInventoryOpen() || !Player.IsMouseLook())
+                { return Finish(&Player, TEXT("closing Notes did not return keyboard and mouse-look control")); }
+                if (bNotesReload)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified source Notes editing, scrolling, Journal switching, travel, and fresh-process restoration with separate authored journal pages."));
+                    return Finish(&Player);
+                }
+                Click({47, 189});
+                if (!Player.IsInventoryOpen() || Hud->IsNotesOpen())
+                { return Finish(&Player, TEXT("the corrected original Journal button did not open Journal")); }
+                Click({310, 9});
+                if (Player.IsInventoryOpen()) { return Finish(&Player, TEXT("the Journal close button did not restore play")); }
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 3 && Current.GetMapName().EndsWith(TEXT("L301")))
+            {
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (Travel->PlayerNotes != Expected || !Travel->JournalPages.Contains(423)
+                    || !Player.SaveWadCheckpoint(TEXT("NativeWadNotesReview")))
+                { return Finish(&Player, TEXT("written Notes did not survive map travel or save")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified original Notes/Journal buttons, normal character editing and scrolling, focus return, and character Notes persistence into L301; saved for restart."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickPoisonCures(ANativeWadPlayer& Player)
+        {
+            if ((bPoisonCureReload || bPoisonCureCompleteReload) && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (NextPoint == 0)
+            {
+                for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                { Enemy->SetActorTickEnabled(false); }
+                if (bPoisonCureCompleteReload)
+                {
+                    if (Player.GetPoisonLevel() || Player.GetItemCount(806) || Player.GetItemCount(807)
+                        || Player.GetItemCount(NativeWadRules::Berry) != 1)
+                    { return Finish(&Player, TEXT("the completed cure or consumed potions did not survive restart")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified fully cured poison and both consumed source potions after a second restart."));
+                    return Finish(&Player);
+                }
+                if (bPoisonCureReload)
+                {
+                    if (Player.GetPoisonLevel() != 3 || Player.GetItemCount(806) || Player.GetItemCount(807) != 1)
+                    { return Finish(&Player, TEXT("the partial cure or unused full cure did not survive restart")); }
+                }
+                else
+                {
+                    Player.ReceiveTrapPoison(50);
+                    if (Player.GetPoisonLevel() != 5) { return Finish(&Player, TEXT("the cure fixture did not receive source poison")); }
+                    Player.CollectItem(806);
+                    Player.CollectItem(807);
+                    Player.CollectItem(NativeWadRules::Berry);
+                }
+                HealthBeforeTravel = Player.GetHealth();
+                ManaBeforeTravel = Player.GetMana();
+                CureWaterBefore = Player.GetWater();
+                ++NextPoint;
+            }
+            const int32 Potion = bPoisonCureReload ? 807 : 806;
+            if (NextPoint == 1)
+            {
+                if (Player.GetReadyItem() != Potion || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, Potion); return true; }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                return true;
+            }
+            if (Player.GetPoisonLevel() != (bPoisonCureReload ? 0 : 3) || Player.GetItemCount(Potion)
+                || Player.GetHealth() != HealthBeforeTravel || Player.GetMana() != ManaBeforeTravel
+                || Player.GetWater() != FMath::Max(0, CureWaterBefore - 200) || Player.GetItemCount(NativeWadRules::Berry) != 1)
+            { return Finish(&Player, TEXT("the source poison cure changed the wrong vitals, rounding, or inventory")); }
+            if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+            if (!Player.SaveWadCheckpoint(bPoisonCureReload ? TEXT("NativeWadPoisonCureCompleteReview") : TEXT("NativeWadPoisonCureReview")))
+            { return Finish(&Player, TEXT("could not save the normal ready-hand poison cure")); }
+            UE_LOG(LogTemp, Display, TEXT("Verified source potion %d through normal inventory and Ctrl: poison %d, exactly one consumed, water minus 200, unchanged health/mana/other item, saved for restart."), Potion, Player.GetPoisonLevel());
+            return Finish(&Player);
+        }
+
         bool TickRuneProjectiles(ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
@@ -12334,6 +12505,8 @@ namespace
             {
                 return TickAmmoBanner(*Current, *Player);
             }
+            if (bNotesReview) { return TickNotes(*Current, *Player); }
+            if (bPoisonCureReview) { return TickPoisonCures(*Player); }
             if (bFinalCampaignReload)
             {
                 if (!Player->HasRestoredWadCheckpoint()) { return true; }
@@ -12844,6 +13017,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bAmmo = Mode == TEXT("specialammo") || Mode == TEXT("specialammoreload");
     const bool bAmmoBanner = Mode == TEXT("ammobanner");
     const bool bScriptDoorLockReload = Mode == TEXT("scriptdoorlockreload");
+    const bool bPoisonCure = Mode == TEXT("poisoncures") || Mode == TEXT("poisoncuresreload") || Mode == TEXT("poisoncurescompletereload");
+    const bool bNotes = Mode == TEXT("notes") || Mode == TEXT("notesreload");
     const bool bDoorMagic = Mode == TEXT("doormagic") || Mode == TEXT("doormagicreload") || Mode == TEXT("doormagiccompletereload");
     const bool bBerserk = Mode == TEXT("berserkwand") || Mode == TEXT("berserkwandreload");
     const bool bDispel = Mode == TEXT("dispeleffects") || Mode == TEXT("dispeleffectsreload");
@@ -12879,7 +13054,8 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bEconomyReload ? TEXT("L301")
         : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
-        : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bRevive || bMusic || bCharacter
+        : bNotes ? (Mode == TEXT("notesreload") ? TEXT("L301") : TEXT("L30"))
+        : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bDispel || bRuneProjectile || bConfusion || bResistance || bUtility || bPoisonCure || bRevive || bMusic || bCharacter
             || Mode == TEXT("classequipment") || Mode == TEXT("elementalmelee") || Mode == TEXT("projectilewands") || Mode == TEXT("runeownership") || Mode == TEXT("runelegacy") ? TEXT("L30")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
@@ -12910,6 +13086,11 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bAmmoBannerReview = bAmmoBanner;
     Review->bScriptDoorLockReload = bScriptDoorLockReload;
     Review->bFinalCampaignReload = Mode == TEXT("finalcampaignreload");
+    Review->bPoisonCureReview = bPoisonCure;
+    Review->bPoisonCureReload = Mode == TEXT("poisoncuresreload");
+    Review->bPoisonCureCompleteReload = Mode == TEXT("poisoncurescompletereload");
+    Review->bNotesReview = bNotes;
+    Review->bNotesReload = Mode == TEXT("notesreload");
     Review->bDoorMagicReview = bDoorMagic;
     Review->bDoorMagicReload = Mode == TEXT("doormagicreload");
     Review->bDoorMagicCompleteReload = Mode == TEXT("doormagiccompletereload");

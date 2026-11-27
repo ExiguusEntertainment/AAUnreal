@@ -265,6 +265,9 @@ public:
     TMap<int32, TSoftObjectPtr<UTexture2D>> JournalPages;
 
     UPROPERTY()
+    FString PlayerNotes;
+
+    UPROPERTY()
     bool bTown = false;
 };
 
@@ -281,6 +284,7 @@ public:
     TSet<FString> CompletedLevels;
     FWadQuestProgress Quest;
     TMap<int32, TSoftObjectPtr<UTexture2D>> JournalPages;
+    FString PlayerNotes;
     int32 ArrivingFromMap = 0;
 
 private:

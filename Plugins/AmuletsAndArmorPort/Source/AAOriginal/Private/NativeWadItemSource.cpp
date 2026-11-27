@@ -174,7 +174,10 @@ namespace
                 else if (Name == TEXT("MOD PLAYER FOOD")) { Details.Food += Power; }
                 else if (Name == TEXT("MOD PLAYER WATER")) { Details.Water += Power; }
                 else if (Name == TEXT("HALVE PLAYER POISON LEVEL")) { Details.PoisonDivisor = 2; }
-                else if (Name == TEXT("REMOVE PLAYER POISON")) { Details.PoisonDivisor = MAX_int32; }
+                // DES00807 uses SET PLAYER POISON LEVEL with the default power of zero.
+                // Reuse the existing clear representation; unsupported nonzero setters stay unusable.
+                else if (Name == TEXT("REMOVE PLAYER POISON") || (Name == TEXT("SET PLAYER POISON LEVEL") && Power == 0))
+                { Details.PoisonDivisor = MAX_int32; }
                 else if (Name != TEXT("DISPLAY CANNED MESSAGE") && Name != TEXT("PLAY LOCAL SOUND")) { bUnknownUse = true; }
             }
             else if (Type == TEXT("WEAPON") && Trigger == TEXT("READY") && Name == TEXT("READY WEAPON"))

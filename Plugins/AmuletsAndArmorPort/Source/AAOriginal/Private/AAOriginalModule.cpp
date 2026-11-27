@@ -1135,6 +1135,8 @@ public:
                     || (Review == TEXT("boulderrail") || Review == TEXT("boulderrail75")) || Review == TEXT("specialammo") || Review == TEXT("specialammoreload")
                     || Review == TEXT("scriptdoorlockreload")
                     || Review == TEXT("finalcampaignreload")
+                    || Review == TEXT("poisoncures") || Review == TEXT("poisoncuresreload") || Review == TEXT("poisoncurescompletereload")
+                    || Review == TEXT("notes") || Review == TEXT("notesreload")
                     || Review == TEXT("doormagic") || Review == TEXT("doormagicreload") || Review == TEXT("doormagiccompletereload")
                     || Review == TEXT("berserkwand") || Review == TEXT("berserkwandreload")
                     || Review == TEXT("dispeleffects") || Review == TEXT("dispeleffectsreload")

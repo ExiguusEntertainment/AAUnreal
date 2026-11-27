@@ -9,6 +9,8 @@
 class UCameraComponent;
 class ANativeWadLevel;
 class UNativeWadHudData;
+class FNativeWadNotesEditor;
+class SWidget;
 struct FWadInventoryDetails;
 
 UCLASS()
@@ -228,16 +230,29 @@ class ANativeWadHUD : public AHUD
 public:
     ANativeWadHUD();
     virtual void BeginPlay() override;
+    virtual void Tick(float DeltaSeconds) override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     virtual void DrawHUD() override;
     void ClickHUD(const FVector2D& Position);
     FVector2D InventorySlotCenter(int32 Slot) const;
     bool HasClassicHud() const { return ClassicData != nullptr; }
+    bool IsNotesOpen() const;
+    void HandleNotesCharacter(TCHAR Character);
+    void HandleNotesKey(const FKey& Key, bool bControl = false, bool bAlt = false);
+    void ScrollNotes(int32 Delta);
+    int32 GetNotesCursor() const;
+    int32 GetNotesScroll() const;
 
 private:
     friend class ANativeWadPlayer;
-    enum class EForm : uint8 { Inventory, Equipment, Statistics, Journal, Ammo, Finances };
+    enum class EForm : uint8 { Inventory, Equipment, Statistics, Journal, Ammo, Finances, Notes };
     void ToggleForm(EForm Requested);
+    void ToggleNotes();
+    void ToggleJournal();
     void ChangeInventoryPage(int32 Offset);
+    void SyncNotesInput();
+    void ReleaseNotesInput(bool bRestoreInput);
+    void StoreNotes();
     void DrawFallbackHUD(const ANativeWadPlayer& Player);
     void ClickFallbackInventory(const FVector2D& Position);
     FVector2D FallbackInventorySlotCenter(int32 Slot) const;
@@ -251,6 +266,8 @@ private:
     EForm Form = EForm::Inventory;
     int32 InventoryPage = 0;
     int32 JournalPage = 0;
+    TSharedPtr<FNativeWadNotesEditor> NotesEditor;
+    TSharedPtr<SWidget> NotesInputWidget;
 };
 
 UCLASS()

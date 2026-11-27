@@ -12,13 +12,13 @@ public class AAOriginal : ModuleRules
         bUseRTTI = false;
 
         PublicDependencyModuleNames.AddRange(new[] { "Core", "CoreUObject", "Engine", "ProceduralMeshComponent" });
-        PrivateDependencyModuleNames.AddRange(new[] { "ApplicationCore", "Projects", "GeometryCore", "ImageWrapper", "InputCore", "Json", "RenderCore" });
+        PrivateDependencyModuleNames.AddRange(new[] { "ApplicationCore", "Projects", "GeometryCore", "ImageWrapper", "InputCore", "Json", "RenderCore", "Slate", "SlateCore" });
 
         // Editor-only helpers for map building UI/actions
         if (Target.bBuildEditor)
         {
             PrivateDependencyModuleNames.AddRange(new[] { "UnrealEd", "MeshDescription", "StaticMeshDescription", "AssetRegistry",
-                "PropertyEditor", "Slate", "SlateCore", "ToolMenus", "ToolWidgets" });
+                "PropertyEditor", "ToolMenus", "ToolWidgets" });
         }
 
         PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));

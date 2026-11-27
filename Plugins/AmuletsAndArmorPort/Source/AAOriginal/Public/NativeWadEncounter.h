@@ -89,6 +89,12 @@ struct FWadEncounterProfile
     UPROPERTY()
     int32 HomingMissileType = 0;
     UPROPERTY()
+    int32 SourceMissileType = 0;
+    UPROPERTY()
+    bool bApproachWhileFiring = false;
+    UPROPERTY()
+    bool bDipper = false;
+    UPROPERTY()
     FVector2D RailStart = FVector2D::ZeroVector;
     UPROPERTY()
     FVector2D RailEnd = FVector2D::ZeroVector;
@@ -132,6 +138,7 @@ public:
     int32 GetBoltsFired() const { return BoltsFired; }
     int32 GetMeleeHits() const { return MeleeHits; }
     int32 GetRegeneratedHealth() const { return RegeneratedHealth; }
+    double GetDipDepth() const;
     bool CanSeePlayer(const ANativeWadPlayer& Player) const;
     const FString& GetEncounterName() const { return Profile.Name; }
     int32 GetSourceType() const { return Profile.SourceType; }
@@ -171,6 +178,10 @@ private:
     int32 CreatureLife = 0;
     int32 BerserkTargetLife = 0;
     void FireBolt(AActor& Target);
+    bool TickDipper(float DeltaSeconds, bool bRise);
+    bool CanMoveOnLiquid(const FVector& Direction, float DeltaSeconds) const;
+    TWeakObjectPtr<ANativeWadLevel> DipperLevel;
+    double DipperTime = 0.0;
     void TickRailHazard(float DeltaSeconds);
     TWeakObjectPtr<ANativeWadLevel> RailLevel;
     int32 Health = NativeWadRules::GuardianHealth;

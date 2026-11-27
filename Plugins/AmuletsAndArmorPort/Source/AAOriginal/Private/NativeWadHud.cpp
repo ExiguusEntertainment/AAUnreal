@@ -2,12 +2,17 @@
 
 #include "Engine/Canvas.h"
 #include "Engine/GameInstance.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "Components/InputComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Framework/Application/SlateApplication.h"
+#include "InputCoreTypes.h"
 #include "NativeWadCheckpoint.h"
 #include "NativeWadHudData.h"
 #include "NativeWadInventoryView.h"
+#include "NativeWadNotes.h"
 #include "TextureResource.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -31,7 +36,11 @@ namespace
     const FBox2D StatisticsButton({39, 155}, {55, 168});
     const FBox2D FinancesButton({39, 169}, {55, 182});
     const FBox2D AmmoButton({5, 183}, {21, 196});
-    const FBox2D JournalButton({22, 183}, {38, 196});
+    const FBox2D NotesButton({22, 183}, {38, 196});
+    const FBox2D JournalButton({39, 183}, {55, 196});
+    const FBox2D NotesField({214, 16}, {306, 136});
+    const FBox2D NotesUp({308, 16}, {315, 25});
+    const FBox2D NotesDown({308, 128}, {315, 137});
     const FBox2D Close({304, 4}, {315, 15});
     const FBox2D PreviousPage({267, 129}, {277, 137});
     const FBox2D NextPage({277, 129}, {287, 137});
@@ -246,6 +255,134 @@ void ANativeWadHUD::BeginPlay()
         // The editor can have loaded this class before regenerating the original art.
         ClassicData = LoadObject<UNativeWadHudData>(nullptr, UNativeWadHudData::ObjectPath);
     }
+    if (ClassicData && GetOwningPlayerController())
+    {
+        EnableInput(GetOwningPlayerController());
+        InputComponent->BindKey(FInputChord(EKeys::NumPadTwo, EModifierKey::Alt), IE_Pressed, this, &ANativeWadHUD::ToggleNotes);
+        InputComponent->BindKey(FInputChord(EKeys::NumPadThree, EModifierKey::Alt), IE_Pressed, this, &ANativeWadHUD::ToggleJournal);
+    }
+}
+
+void ANativeWadHUD::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    SyncNotesInput();
+}
+
+void ANativeWadHUD::EndPlay(const EEndPlayReason::Type Reason)
+{
+    ReleaseNotesInput(false);
+    Super::EndPlay(Reason);
+}
+
+bool ANativeWadHUD::IsNotesOpen() const
+{
+    const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+    return Player && Player->IsInventoryOpen() && Form == EForm::Notes;
+}
+
+int32 ANativeWadHUD::GetNotesCursor() const { return NotesEditor ? NotesEditor->GetCursor() : 0; }
+int32 ANativeWadHUD::GetNotesScroll() const { return NotesEditor ? NotesEditor->GetScroll() : 0; }
+
+void ANativeWadHUD::StoreNotes()
+{
+    if (NotesEditor && GetGameInstance())
+    {
+        if (auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
+        { Travel->PlayerNotes = NotesEditor->GetText(); }
+    }
+}
+
+void ANativeWadHUD::ReleaseNotesInput(bool bRestoreInput)
+{
+    StoreNotes();
+    if (NotesInputWidget)
+    {
+        if (GetGameInstance())
+        {
+            if (auto* Viewport = GetGameInstance()->GetGameViewportClient())
+            { Viewport->RemoveViewportWidgetContent(NotesInputWidget.ToSharedRef()); }
+        }
+        NotesInputWidget.Reset();
+        if (bRestoreInput)
+        {
+            if (auto* Controller = GetOwningPlayerController())
+            {
+                Controller->FlushPressedKeys();
+                const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+                if (Player && Player->IsMouseLook())
+                {
+                    FInputModeGameOnly Input;
+                    Input.SetConsumeCaptureMouseDown(false);
+                    Controller->SetInputMode(Input);
+                }
+                else
+                {
+                    FInputModeGameAndUI Input;
+                    Input.SetHideCursorDuringCapture(false);
+                    Input.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+                    Controller->SetInputMode(Input);
+                }
+            }
+            if (FSlateApplication::IsInitialized()) { FSlateApplication::Get().SetAllUserFocusToGameViewport(); }
+        }
+    }
+    NotesEditor.Reset();
+}
+
+void ANativeWadHUD::SyncNotesInput()
+{
+    if (!IsNotesOpen())
+    {
+        if (NotesEditor || NotesInputWidget) { ReleaseNotesInput(true); }
+        return;
+    }
+    if (!NotesEditor && ClassicData)
+    {
+        const auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+        NotesEditor = MakeShared<FNativeWadNotesEditor>(ClassicData->Tiny, Travel ? Travel->PlayerNotes : FString());
+        StoreNotes();
+    }
+    if (NotesEditor && !NotesInputWidget && FSlateApplication::IsInitialized())
+    {
+        if (auto* Viewport = GetGameInstance()->GetGameViewportClient())
+        {
+            NotesInputWidget = MakeNativeWadNotesInput(*this);
+            Viewport->AddViewportWidgetContent(NotesInputWidget.ToSharedRef(), 20);
+            if (auto* Controller = GetOwningPlayerController())
+            {
+                Controller->FlushPressedKeys();
+                FInputModeGameAndUI Input;
+                Input.SetWidgetToFocus(NotesInputWidget);
+                Input.SetHideCursorDuringCapture(false);
+                Input.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+                Controller->SetInputMode(Input);
+            }
+            FSlateApplication::Get().SetKeyboardFocus(NotesInputWidget);
+        }
+    }
+}
+
+void ANativeWadHUD::HandleNotesCharacter(TCHAR Character)
+{
+    if (IsNotesOpen() && NotesEditor && NotesEditor->Insert(Character)) { StoreNotes(); }
+}
+
+void ANativeWadHUD::HandleNotesKey(const FKey& Key, bool bControl, bool bAlt)
+{
+    if (!IsNotesOpen() || !NotesEditor) { return; }
+    if (Key == EKeys::Escape) { ToggleForm(EForm::Notes); return; }
+    if (bAlt && Key == EKeys::NumPadTwo) { ToggleNotes(); return; }
+    if (bAlt && Key == EKeys::NumPadThree) { ToggleJournal(); return; }
+    if (NotesEditor->Key(Key, bControl)) { StoreNotes(); }
+}
+
+void ANativeWadHUD::ToggleNotes() { ToggleForm(EForm::Notes); }
+void ANativeWadHUD::ToggleJournal() { ToggleForm(EForm::Journal); }
+
+void ANativeWadHUD::ScrollNotes(int32 Delta)
+{
+    if (IsNotesOpen() && NotesEditor) { NotesEditor->ScrollLines(Delta); }
 }
 
 FVector2D ANativeWadHUD::InventorySlotCenter(int32 Slot) const
@@ -261,6 +398,7 @@ FVector2D ANativeWadHUD::InventorySlotCenter(int32 Slot) const
 
 void ANativeWadHUD::ChangeInventoryPage(int32 Offset)
 {
+    if (IsNotesOpen()) { ScrollNotes(Offset * (NotesEditor ? NotesEditor->GetVisibleRows() : 1)); return; }
     const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
     if (ClassicData && Player && Player->IsInventoryOpen() && Form == EForm::Inventory)
     {
@@ -277,6 +415,7 @@ void ANativeWadHUD::ToggleForm(EForm Requested)
             Player->ToggleInventory();
         }
         Form = Player->IsInventoryOpen() ? Requested : EForm::Inventory;
+        SyncNotesInput();
     }
 }
 
@@ -297,12 +436,12 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
     const auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
     const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
     if (InventoryButton.IsInside(Point) || EquipmentButton.IsInside(Point) || StatisticsButton.IsInside(Point)
-        || FinancesButton.IsInside(Point) || AmmoButton.IsInside(Point)
-        || (bHasJournal && JournalButton.IsInside(Point)))
+        || FinancesButton.IsInside(Point) || AmmoButton.IsInside(Point) || NotesButton.IsInside(Point)
+        || JournalButton.IsInside(Point))
     {
         const EForm Requested = InventoryButton.IsInside(Point) ? EForm::Inventory : EquipmentButton.IsInside(Point) ? EForm::Equipment
             : StatisticsButton.IsInside(Point) ? EForm::Statistics : FinancesButton.IsInside(Point) ? EForm::Finances
-            : AmmoButton.IsInside(Point) ? EForm::Ammo : EForm::Journal;
+            : AmmoButton.IsInside(Point) ? EForm::Ammo : NotesButton.IsInside(Point) ? EForm::Notes : EForm::Journal;
         ToggleForm(Requested);
         return;
     }
@@ -332,6 +471,20 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
     if (Close.IsInside(Point))
     {
         Player->ToggleInventory();
+        SyncNotesInput();
+        return;
+    }
+    if ((Form == EForm::Notes || Form == EForm::Journal) && BagEquipmentButton.IsInside(Point))
+    {
+        Form = Form == EForm::Notes ? EForm::Journal : EForm::Notes;
+        SyncNotesInput();
+        return;
+    }
+    if (Form == EForm::Notes)
+    {
+        if (NotesUp.IsInside(Point)) { ScrollNotes(-1); }
+        else if (NotesDown.IsInside(Point)) { ScrollNotes(1); }
+        else if (NotesField.IsInside(Point) && NotesEditor) { NotesEditor->PlaceCursor(Point - NotesField.Min); }
         return;
     }
     if ((Form == EForm::Inventory || Form == EForm::Equipment) && BagEquipmentButton.IsInside(Point))
@@ -514,7 +667,7 @@ void ANativeWadHUD::DrawHUD()
     const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
     for (int32 Index = 1; Index < 9; ++Index)
     {
-        if (Index == 1 || Index == 2 || Index == 5 || Index == 6 || (Index == 7 && bHasJournal))
+        if (Index == 1 || Index == 2 || Index == 5 || Index == 6 || Index == 7 || Index == 8)
         {
             continue;
         }
@@ -523,6 +676,48 @@ void ANativeWadHUD::DrawHUD()
     }
     if (!Player->IsInventoryOpen())
     {
+        return;
+    }
+    if (Form == EForm::Notes)
+    {
+        Screen.Picture(TEXT("NTSBAR"), {209, 0});
+        Screen.Picture(TEXT("NOTESSB"), {308, 26});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        Screen.Picture(TEXT("2JOURNBT"), BagEquipmentButton.Min);
+        Screen.Picture(TEXT("UPARROW"), NotesUp.Min);
+        Screen.Picture(TEXT("DNARROW"), NotesDown.Min);
+        if (NotesEditor)
+        {
+            const auto& Lines = NotesEditor->GetLines();
+            const FString& Text = NotesEditor->GetText();
+            const int32 First = NotesEditor->GetScroll();
+            const int32 End = FMath::Min(Lines.Num(), First + NotesEditor->GetVisibleRows());
+            for (int32 Row = First; Row < End; ++Row)
+            {
+                int32 X = 0;
+                const int32 Y = 16 + (Row - First) * NotesEditor->GetLineHeight();
+                for (int32 Index = Lines[Row].Start; Index < Lines[Row].End; ++Index)
+                {
+                    const TCHAR Ch = Text[Index];
+                    // Draw one literal glyph at a time, so player-entered ^123 is not interpreted as a color escape.
+                    if (Ch != '\t') { Screen.Text(FString::Chr(Ch), 214 + X, Y, 8); }
+                    X += NotesEditor->Advance(Ch, X);
+                }
+            }
+            const int32 CursorRow = NotesEditor->GetCursorLine();
+            if (CursorRow >= First && CursorRow < End && FMath::Fmod(GetWorld()->GetRealTimeSeconds(), 1.0) < 0.6)
+            {
+                const double X = 214 + NotesEditor->CursorX(CursorRow, NotesEditor->GetCursor());
+                const double Y = 16 + (CursorRow - First) * NotesEditor->GetLineHeight();
+                Screen.Rect({{X, Y}, {X + 1, Y + NotesEditor->GetLineHeight()}}, Screen.Color(White));
+            }
+            if (Lines.Num() > NotesEditor->GetVisibleRows())
+            {
+                const double Progress = double(First) / (Lines.Num() - NotesEditor->GetVisibleRows());
+                const double Y = 26 + Progress * 98;
+                Screen.Rect({{309, Y}, {314, Y + 3}}, Screen.Color(White));
+            }
+        }
         return;
     }
     if (Form == EForm::Equipment)
@@ -555,8 +750,16 @@ void ANativeWadHUD::DrawHUD()
         }
         return;
     }
-    if (Form == EForm::Journal && bHasJournal)
+    if (Form == EForm::Journal)
     {
+        Screen.Picture(TEXT("JNLBAR"), {209, 0});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        Screen.Picture(TEXT("2NOTESBT"), BagEquipmentButton.Min);
+        if (!bHasJournal)
+        {
+            Screen.Text(TEXT("NO PAGES"), 234, 129, 60, 1, true);
+            return;
+        }
         TArray<int32, TInlineAllocator<8>> Pages;
         for (const auto& [Id, Image] : Travel->JournalPages)
         {
@@ -569,8 +772,6 @@ void ANativeWadHUD::DrawHUD()
         {
             JournalImage = Page.LoadSynchronous();
         }
-        Screen.Picture(TEXT("JNLBAR"), {209, 0});
-        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
         if (JournalImage)
         {
             const FVector2D Start(214, 16);

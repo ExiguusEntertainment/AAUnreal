@@ -555,10 +555,14 @@ void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
     const int32 Type = GetReadyItem();
     const int32 BeforeHealth = Health;
     const int32 BeforeFood = Food;
+    const int32 BeforePoison = PoisonLevel;
     Mana = FMath::Clamp(Mana + Details.Mana, 0, MaxMana);
     Food = FMath::Clamp(Food + Details.Food, 0, MaxFood);
     Water = FMath::Clamp(Water + Details.Water, 0, MaxFood);
-    PoisonLevel /= FMath::Max(1, Details.PoisonDivisor);
+    // EFFECT.C removes floor(poison / 2), leaving the upper half for an odd level.
+    // In particular, the weaker cure cannot clear the last point of poison.
+    if (Details.PoisonDivisor == 2) { PoisonLevel -= PoisonLevel >> 1; }
+    else { PoisonLevel /= FMath::Max(1, Details.PoisonDivisor); }
     if (Details.Status >= 0 && Details.Status < ItemStatusCount && Details.StatusTicks > 0)
     {
         ItemStatusSeconds[Details.Status] = Details.StatusTicks / double(TicksPerSecond);
@@ -578,7 +582,9 @@ void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
     }
     if (Health > 0)
     {
-        ShowInteractionMessage(Type == Berry ? FString(TEXT("You get berry juice all over your face."))
+        ShowInteractionMessage(BeforePoison > 0 && Details.PoisonDivisor > 1
+            ? PoisonLevel == 0 ? FString(TEXT("Your body is cleansed of all poison.")) : FString(TEXT("The poison in your body is less."))
+            : Type == Berry ? FString(TEXT("You get berry juice all over your face."))
             : FString::Printf(TEXT("Used %s"), *GetInventoryItemDescription(Type)));
     }
     UE_LOG(LogTemp, Display, TEXT("Used WAD item %d. Health %d -> %d, food %d -> %d."), Type, BeforeHealth, Health, BeforeFood, Food);

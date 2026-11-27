@@ -19,6 +19,7 @@ public class AAOriginalTests : ModuleRules
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "Projects",
+            "InputCore",
             "ProceduralMeshComponent"
         });
 
