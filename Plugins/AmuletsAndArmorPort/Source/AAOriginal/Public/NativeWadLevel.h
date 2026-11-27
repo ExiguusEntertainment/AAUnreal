@@ -71,6 +71,8 @@ struct FAAWadNativeSector
     bool bWater = false;
     UPROPERTY()
     bool bLava = false;
+    UPROPERTY()
+    bool bAcid = false;
 
     UPROPERTY()
     FVector2D FlowImpulse = FVector2D::ZeroVector;
@@ -286,6 +288,11 @@ public:
     static constexpr ECollisionChannel LavaSurfaceChannel = ECC_GameTraceChannel3;
     TOptional<double> FindWaterSurfaceZ(const FVector& Position) const;
     TOptional<double> FindLavaSurfaceZ(const FVector& Position) const;
+    TOptional<double> FindAcidSurfaceZ(const FVector& Position) const;
+    UFUNCTION(BlueprintPure, Category="WAD|Terrain")
+    bool IsWadSectorAcid(int32 Sector) const;
+    UFUNCTION(BlueprintPure, Category="WAD|Terrain")
+    int32 GetWadSectorDepth(int32 Sector) const;
     double GetWalkingHeight(int32 Sector) const;
     UFUNCTION(BlueprintPure, Category="WAD|Terrain")
     int32 GetWadSectorFriction(int32 Sector) const;
@@ -333,6 +340,8 @@ private:
     bool HasPendingCreatureGenerators() const;
     void SetSectorHeight(int32 Sector, double Z, bool bCeiling);
     void UpdateLine(int32 Line, bool bPersist);
+    void UpdateLineCollisionOnly(int32 Index);
+    void UpdateLineCollision(int32 Index, FWadWallLine& Wall);
     void ApplyLight(UStaticMeshComponent& Mesh, int32 Light, bool bPersist) const;
     void ApplySectorLight(int32 Sector, int32 Light);
     void RefreshSectorLights();

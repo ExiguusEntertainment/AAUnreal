@@ -536,6 +536,7 @@ struct FAAWadNativeImport
         if (!InstallTerrainFriction(Actor, Map, Output)) { return false; }
         constexpr int32 Water = 1505;
         constexpr int32 Lava = 1506;
+        constexpr int32 Acid = 1543;
         constexpr int32 Depth = 1521;
         constexpr int32 FlowSlow = 1523;
         constexpr int32 FlowFast = 1525;
@@ -580,6 +581,7 @@ struct FAAWadNativeImport
             Sector.FloorDepth = 0;
             Sector.bWater = false;
             Sector.bLava = false;
+            Sector.bAcid = false;
             Sector.FlowImpulse = FVector2D::ZeroVector;
             Sector.FloorScrollRate = FVector2D::ZeroVector;
         }
@@ -591,7 +593,7 @@ struct FAAWadNativeImport
         for (const FWadThing& Thing : Map.Things)
         {
             const FVector2D Position(Thing.X, Thing.Y);
-            if (Thing.Type == Water || Thing.Type == Lava || Thing.Type == Depth
+            if (Thing.Type == Water || Thing.Type == Lava || Thing.Type == Acid || Thing.Type == Depth
                 || (Thing.Type >= FlowSlow && Thing.Type <= FlowFast))
             {
                 const int32 Index = Actor.FindWadSector(Position);
@@ -601,11 +603,12 @@ struct FAAWadNativeImport
                     return false;
                 }
                 FAAWadNativeSector& Sector = Actor.Sectors[Index];
-                if (Thing.Type == Water || Thing.Type == Lava)
+                if (Thing.Type == Water || Thing.Type == Lava || Thing.Type == Acid)
                 {
                     Sector.bWater = Thing.Type == Water;
                     Sector.bLava = Thing.Type == Lava;
-                    Sector.FloorDepth = WaterDepth;
+                    Sector.bAcid = Thing.Type == Acid;
+                    Sector.FloorDepth = Sector.bAcid ? NativeWadRules::SourceAcidDepth : WaterDepth;
                     WaterSectors += Sector.bWater;
                 }
                 else if (Thing.Type == Depth)
@@ -702,6 +705,52 @@ struct FAAWadNativeImport
         return true;
     }
 
+    bool InstallL75AcidEnvironment(ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    {
+        Actor.InitializeTopology(); // Saved editor worlds have not run BeginPlay.
+        constexpr int32 SectorIndex = 166;
+        if (!Map.Things.IsValidIndex(281) || Map.Things[281].Type != 1543
+            || Map.Things[281].X != 960 || Map.Things[281].Y != 392
+            || !Map.Sectors.IsValidIndex(SectorIndex) || Map.Sectors[SectorIndex].FloorHeight != -20
+            || (Map.Sectors[SectorIndex].Trigger & 2) || !Actor.Sectors.IsValidIndex(SectorIndex)
+            || Actor.FindWadSector(FVector2D(Actor.GetActorTransform().TransformPosition(FVector(960,392,0)))) != SectorIndex)
+        { Output.Log(TEXT("L75 acid refresh source marker/sector identity does not match the original map.")); return false; }
+        int32 AcidMarkers = 0;
+        for (const FWadThing& Thing : Map.Things)
+        {
+            AcidMarkers += Thing.Type == 1543 ? 1 : 0;
+            if (Thing.Type == 1521 && Actor.FindWadSector(FVector2D(
+                Actor.GetActorTransform().TransformPosition(FVector(Thing.X,Thing.Y,0)))) == SectorIndex)
+            { Output.Log(TEXT("L75 acid refresh found an unexpected depth override.")); return false; }
+        }
+        FAAWadNativeSector& Sector = Actor.Sectors[SectorIndex];
+        if (AcidMarkers != 1 || !Sector.Floor || !Sector.Floor->GetStaticMesh()) { return false; }
+        Actor.Modify();
+        Sector.bAcid = true;
+        Sector.bWater = Sector.bLava = false;
+        Sector.SourceFriction = 24;
+        Sector.FloorDepth = NativeWadRules::SourceAcidDepth;
+        if (!Sector.WalkingFloor)
+        {
+            Sector.WalkingFloor = AddMesh(Actor, Sector.Floor->GetStaticMesh(), TEXT("WalkingFloor_0166"), true, false);
+            Sector.WalkingFloor->RegisterComponent();
+        }
+        Sector.WalkingFloor->SetVisibility(false);
+        Sector.WalkingFloor->SetCastShadow(false);
+        Sector.WalkingFloor->SetRelativeLocation(Sector.Floor->GetRelativeLocation() - FVector(0,0,Sector.FloorDepth));
+        Sector.Floor->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        // Visible floor/wall meshes and materials stay unchanged. Only the
+        // hidden walking floor and collision spans bordering this sector change.
+        for (int32 Index = 0; Index < Actor.Lines.Num(); ++Index)
+        {
+            const FAAWadNativeLine& Line = Actor.Lines[Index];
+            if (Map.GetSectorForSide(Line.Sides.X) == SectorIndex || Map.GetSectorForSide(Line.Sides.Y) == SectorIndex)
+            { Actor.UpdateLineCollisionOnly(Index); }
+        }
+        Output.Log(TEXT("Installed original L75 acid sector166: depth30, friction24, raw200 Normal|Acid damage; visible geometry retained."));
+        return true;
+    }
+
     static bool InstallAmbientEmitters(ANativeWadLevel& Actor, const FDoomWadMapData& Map, const FString& WadPath,
         FOutputDevice& Output)
     {
@@ -785,6 +834,7 @@ struct FAAWadNativeImport
             || (bUndeadMap && !InstallUndeadQuest(World, Actor, Map, WadPath, MapName, Output))
             || (bTempleMap && !InstallTempleMap(World, Actor, Map, WadPath, MapName, Output))
             || (bLateCampaignMap && !InstallLateCampaignMap(World, Actor, Map, WadPath, MapName, Output))
+            || (!bRetreatMap && !InstallRetreatEncounters(World, Actor, Map, Output, 1033))
             || (MapName == TEXT("L152") && !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("ElmoreKey6"),
                     TEXT("KEY6/KEY6.CPC"), TEXT("L152 Key 6"), Output, FWadLevelCheckpoint::ElmoreKeysRevision))
             || (MapName == TEXT("L153") && (!InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("ElmoreKey3"),
@@ -2041,8 +2091,16 @@ struct FAAWadNativeImport
         return !bAssetError;
     }
 
-    bool InstallRetreatEncounters(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
+    static void InitializeEncounterTopology(ANativeWadLevel& Actor)
     {
+        // The importer is the level's friend; private cache access stays here.
+        Actor.InitializeTopology();
+    }
+
+    bool InstallRetreatEncounters(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output, int32 OnlyType = 0, bool bL151 = false)
+    {
+        // Editor/inactive saved maps have not built the transient footprint cache.
+        Actor.InitializeTopology();
         struct FCreature
         {
             int32 Type;
@@ -2068,6 +2126,16 @@ struct FAAWadNativeImport
             {1033, TEXT("Skeleton Knight"), TEXT("SKELKNT"), TEXT("SWNW01.CPC"), TEXT("SDNW01.CPC"), TEXT("SDNW04.CPC"),
                 TEXT("2SA001.CPC"), 2500, 100, 300, 30, 15, 10, 7, 90, 0, 0, 0},
         };
+        for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
+        {
+            if (Map.Things[Id].Type != 1033) { continue; }
+            const FName Tag(*FString::Printf(TEXT("WAD Creature Thing %d"), Id));
+            int32 Matches = 0;
+            for (TActorIterator<ANativeWadGuardian> Enemy(&World); Enemy; ++Enemy)
+            { Matches += Enemy->ActorHasTag(Tag) ? 1 : 0; }
+            if (Matches > 1)
+            { Output.Logf(TEXT("Ambiguous Skeleton Knight source Thing %d: %d existing tagged actors."), Id, Matches); return false; }
+        }
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         if (!Plane)
         {
@@ -2075,6 +2143,7 @@ struct FAAWadNativeImport
         }
         for (const FCreature& Creature : Creatures)
         {
+            if (OnlyType && Creature.Type != OnlyType) { continue; }
             if (!Map.Things.ContainsByPredicate([&Creature](const FWadThing& Thing) { return Thing.Type == Creature.Type; }))
             {
                 continue;
@@ -2092,6 +2161,7 @@ struct FAAWadNativeImport
             }
             FWadEncounterProfile Profile;
             Profile.Name = Creature.Name;
+            Profile.SourceType = Creature.Type;
             Profile.MaxHealth = Creature.Health;
             Profile.RetreatHealth = Creature.RetreatHealth;
             Profile.MeleeDamage = Creature.MeleeDamage;
@@ -2107,6 +2177,11 @@ struct FAAWadNativeImport
             Profile.UpdateTicks = Creature.UpdateTicks;
             Profile.WalkSpeed = Creature.Step * TicksPerSecond / (Creature.UpdateTicks + (Creature.UpdateTicks >> 1));
             Profile.VisionHalfAngle = Creature.Vision * 0.5f;
+            if (Creature.Type == 1033)
+            {
+                Profile.SourceType = Creature.Type;
+                Profile.ApplySourceRules();
+            }
             int32 Count = 0;
             for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
             {
@@ -2121,14 +2196,20 @@ struct FAAWadNativeImport
                     Output.Logf(TEXT("Creature thing %d (%s) falls outside the authored floor."), Id, Creature.Name);
                     return false;
                 }
-                const FString Tag = FString::Printf(TEXT("WAD Creature Thing %d"), Id);
+                // L151's original slice object is an existing save/checkpoint identity.
+                // Keep its actor and primary tag instead of creating a generic Thing31 duplicate.
+                const bool bSlice = bL151 && Id == 31 && Creature.Type == 3002;
+                const FString Tag = bSlice ? TEXT("L151 Gaiseric Magician")
+                    : FString::Printf(TEXT("WAD Creature Thing %d"), Id);
                 auto* Enemy = ImportSliceThing<ANativeWadGuardian>(World, Map, Id,
                     Actor.GetWalkingHeight(Sector) + Profile.CollisionHalfHeight + 2.0, *Tag);
                 if (!Enemy)
                 {
                     return false;
                 }
-                Enemy->Configure(Plane, Standing, Downed, Attacking, Hurt, Dart, Profile);
+                FWadEncounterProfile PlacementProfile = Profile;
+                if (bSlice) { PlacementProfile.Name = TEXT("Gaiseric Magician"); }
+                Enemy->Configure(Plane, Standing, Downed, Attacking, Hurt, Dart, PlacementProfile);
                 ++Count;
             }
             Output.Logf(TEXT("Imported %d authored %s placements (thing type %d)."), Count, Creature.Name, Creature.Type);
@@ -2676,7 +2757,7 @@ struct FAAWadNativeImport
         Mage->Configure(Plane, Stand, Down, Attack, Hurt, Missile, Profile);
         Item->Configure(Plane, Potion, NativeWadRules::FeatherfallPotion);
         Output.Log(TEXT("Installed the L151 lift, Gaiseric Magician thing 31, and potion thing 224."));
-        return !bAssetError;
+        return !bAssetError && InstallRetreatEncounters(World, Actor, Map, Output, 0, true);
     }
 
     bool InstallDaySky(ANativeWadLevel& Actor, const FString& WadPath, FOutputDevice& Output)
@@ -4174,6 +4255,69 @@ bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Ou
     return true;
 }
 
+bool RefreshNativeWadL151Encounters(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || FPackageName::GetShortName(MapPackage) != TEXT("L151")
+        || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage) || !Map->Things.IsValidIndex(31) || Map->Things[31].Type != 3002)
+    { Output.Log(TEXT("L151 encounter refresh needs its loaded original MAP and saved native L151 package.")); return false; }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    { Output.Log(TEXT("No matching native editor topology for L151 encounter refresh.")); return false; }
+    FAAWadNativeImport::InitializeEncounterTopology(*Level);
+    TMap<FName, ANativeWadGuardian*> Existing;
+    int32 Expected = 0;
+    for (int32 Id = 0; Id < Map->Things.Num(); ++Id)
+    {
+        const FWadThing& Thing = Map->Things[Id];
+        if (Thing.Type != 3001 && Thing.Type != 3002) { continue; }
+        ++Expected;
+        const FName Tag(*(Id == 31 ? FString(TEXT("L151 Gaiseric Magician")) : FString::Printf(TEXT("WAD Creature Thing %d"), Id)));
+        if (Level->FindWadSector(FVector2D(Thing.X, Thing.Y)) == INDEX_NONE)
+        { Output.Logf(TEXT("L151 source creature Thing%d is outside native footprints."), Id); return false; }
+        for (TActorIterator<ANativeWadGuardian> Enemy(World); Enemy; ++Enemy)
+        {
+            if (!Enemy->ActorHasTag(Tag)) { continue; }
+            if (Existing.Contains(Tag) || (Enemy->GetLookSourceType() != 0 && Enemy->GetLookSourceType() != Thing.Type))
+            { Output.Logf(TEXT("Conflicting existing L151 creature identity %s."), *Tag.ToString()); return false; }
+            Existing.Add(Tag, *Enemy);
+        }
+    }
+    ANativeWadGuardian* Slice = Existing.FindRef(TEXT("L151 Gaiseric Magician"));
+    if (!Slice || Slice->Tags.IsEmpty() || Slice->Tags[0] != FName(TEXT("L151 Gaiseric Magician")))
+    { Output.Log(TEXT("The original L151 slice actor/primary checkpoint tag must be present before the bounded refresh.")); return false; }
+    for (TActorIterator<ANativeWadGuardian> Enemy(World); Enemy; ++Enemy)
+    {
+        if (Enemy->ActorHasTag(TEXT("WAD Creature Thing 31")))
+        { Output.Log(TEXT("A duplicate generic L151 Thing31 exists; refusing an ambiguous identity migration.")); return false; }
+    }
+    const FString SlicePath = Slice->GetPathName();
+    FAAWadNativeImport Import;
+    Import.AssetRoot = MapPackage + TEXT("_Assets");
+    if (!Import.InstallRetreatEncounters(*World, *Level, *Map, Output, 0, true)) { return false; }
+    int32 Actual = 0;
+    for (TActorIterator<ANativeWadGuardian> Enemy(World); Enemy; ++Enemy)
+    {
+        if (Enemy->GetSourceType() == 3001 || Enemy->GetSourceType() == 3002) { ++Actual; }
+    }
+    if (Actual != Expected || Slice->GetPathName() != SlicePath || !Slice->ActorHasTag(TEXT("L151 Gaiseric Magician")))
+    { Output.Log(TEXT("L151 refresh did not preserve exact source counts and the old slice actor identity.")); return false; }
+    for (const auto& [Tag, Enemy] : Existing)
+    {
+        if (!IsValid(Enemy) || !Enemy->ActorHasTag(Tag))
+        { Output.Log(TEXT("L151 refresh replaced an existing tagged creature.")); return false; }
+    }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    { if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension())) { return false; } }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Refreshed %d exact L151 barbarian placements; retained %d existing actor identities including %s. Geometry, scripts, pickups, generators and scenery were not rebuilt."),
+        Actual, Existing.Num(), *SlicePath);
+    return true;
+}
+
 bool RefreshNativeWadTerrainFriction(const FString& MapPackage, FOutputDevice& Output)
 {
     const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
@@ -4189,6 +4333,44 @@ bool RefreshNativeWadTerrainFriction(const FString& MapPackage, FOutputDevice& O
     if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     Output.Logf(TEXT("Refreshed source friction metadata on %d sectors in %s; all geometry/components/materials retained."),
         Map->Sectors.Num(), *MapPackage);
+    return true;
+}
+
+bool RefreshNativeWadSkeletonKnights(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !MapPackage.StartsWith(TEXT("/Game/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage)
+        || !Map->Things.ContainsByPredicate([](const FWadThing& Thing) { return Thing.Type == 1033; }))
+    { Output.Log(TEXT("Skeleton Knight refresh needs a loaded source MAP containing1033 and an existing native map.")); return false; }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    { Output.Logf(TEXT("No matching native editor topology in %s."), *MapPackage); return false; }
+    FAAWadNativeImport Import;
+    Import.AssetRoot = MapPackage + TEXT("_Assets");
+    if (!Import.InstallRetreatEncounters(*World, *Level, *Map, Output, 1033)) { return false; }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (UObject* Asset : Import.AssetsToSave)
+    { if (!SaveAsset(*Asset, *FPackageName::GetAssetPackageExtension())) { return false; } }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Refreshed only source1033 Skeleton Knight actors/art in %s; retained tagged identities, transforms and all native geometry."), *MapPackage);
+    return true;
+}
+
+bool RefreshNativeWadAcidEnvironment(const FString& MapPackage, FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map = UDoomWadLoader::GetLastWadMapData();
+    if (!Map || FPackageName::GetShortName(MapPackage) != TEXT("L75") || !MapPackage.StartsWith(TEXT("/Game/"))
+        || !FPackageName::IsValidLongPackageName(MapPackage) || !FPackageName::DoesPackageExist(MapPackage))
+    { Output.Log(TEXT("Acid environment refresh needs the loaded original L75 MAP and existing /Game/Maps/L75 package.")); return false; }
+    UWorld* World = LoadObject<UWorld>(nullptr, *(MapPackage + TEXT(".") + FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level = World ? FAAWadNativeImport::FindMatchingLevel(*World, *Map) : nullptr;
+    if (!Level || (World->WorldType != EWorldType::Editor && World->WorldType != EWorldType::Inactive))
+    { Output.Log(TEXT("Acid environment refresh found no matching native editor topology.")); return false; }
+    FAAWadNativeImport Import;
+    if (!Import.InstallL75AcidEnvironment(*Level, *Map, Output)) { return false; }
+    if (!SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     return true;
 }
 

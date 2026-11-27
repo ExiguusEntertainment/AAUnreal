@@ -116,6 +116,27 @@ void FWadEncounterProfile::ApplySourceRules()
     default: break;
     }
     if (SourceType == 1003 || SourceType == 1010 || SourceType == 1012 || SourceType == 1023 || SourceType == 1021 || SourceType == 1037) { bCanFly = true; }
+    if (SourceType == 1033)
+    {
+        // CREDATA.H Skeleton Knight, distinct from electric Skeleton1025.
+        bCanFly = false;
+        MaxHealth = 2500;
+        RetreatHealth = 100;
+        MeleeDamage = 300;
+        MeleeDamageMask = NormalDamage;
+        MeleeRange = 30.0f;
+        MeleeDelayUpdates = 10;
+        UpdateTicks = 7;
+        WalkSpeed = 70.0f; // step10 *70/(7+(7>>1)).
+        CollisionRadius = 15.0f; // Original SKELKNT.INF.
+        RegenPerUpdate = 1;
+        ResistanceMask = DamageFlag(EProjectileDamage::Poison);
+        ArmorClass = 0;
+        VisionHalfAngle = 45.0f; // CRELOGIC_DFT_VISION_FIELD=90 degrees.
+        SourceMissileType = 0;
+        BoltDamage = 0;
+        HomingMissileType = 0;
+    }
     if (SourceType == 1012)
     {
         MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::Piercing)
@@ -181,6 +202,28 @@ void FWadEncounterProfile::ApplySourceRules()
         MeleeDelayUpdates = 6;
         UpdateTicks = 7;
         RegenPerUpdate = 3;
+    }
+    if (SourceType == 3001 || SourceType == 3002)
+    {
+        // CREDATA.H1898/1944: existing Black/White Barbarian families, not packed aliases.
+        const bool bBlack = SourceType == 3001;
+        MaxHealth = bBlack ? 3000 : 2500;
+        RetreatHealth = bBlack ? 500 : 1000;
+        MeleeDamage = bBlack ? 400 : 250;
+        MeleeDamageMask = NormalDamage;
+        MeleeDelayUpdates = 10;
+        BoltDamage = 100; // Magic Dart4011 source profile.
+        MinBoltRange = bBlack ? 5000.0f : 250.0f;
+        BoltRange = bBlack ? 5000 : 10000;
+        RangedDelayUpdates = bBlack ? 50 : 25;
+        UpdateTicks = bBlack ? 7 : 5;
+        WalkSpeed = 10.0f * TicksPerSecond / (UpdateTicks + (UpdateTicks >> 1));
+        MeleeRange = 60.0f;
+        VisionHalfAngle = 135.0f;
+        ArmorClass = bBlack ? 1 : 0;
+        RegenPerUpdate = 1;
+        ChanceAttackCreature = ChanceContinueAttack = 75;
+        bCanFly = false;
     }
     if (SourceType == 1014)
     {

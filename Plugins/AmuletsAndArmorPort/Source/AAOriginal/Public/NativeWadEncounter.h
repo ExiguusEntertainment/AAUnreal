@@ -189,6 +189,7 @@ public:
     bool CanSeePlayer(const ANativeWadPlayer& Player) const;
     const FString& GetEncounterName() const { return Profile.Name; }
     int32 GetSourceType() const { return Profile.SourceType; }
+    const FWadEncounterProfile& GetEncounterProfile() const { return Profile; }
     double GetMagicMapRadius() const { return Profile.CollisionRadius; }
 
 private:

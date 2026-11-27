@@ -47,6 +47,9 @@ namespace NativeWadRules
         AccuracyStatus, StealthStatus, MagicStatus, HealthRegenStatus, ManaRegenStatus,
         FoodConservationStatus, WaterConservationStatus, EternalNourishmentStatus, JumpStatus, LowGravityStatus, InvulnerableStatus, ShockAbsorbStatus, DeathWardStatus, StickyFeetStatus, MagicMapStatus, ItemStatusCount };
     inline constexpr int32 SourceNormalFriction = 12;
+    inline constexpr int32 SourceAcidDamage = 200;
+    inline constexpr int32 SourceSectorDamageTicks = 35;
+    inline constexpr int32 SourceAcidDepth = 30;
     // OBJMOVE.C: XV -= (XV >> 8) * friction * ticks. This continuous
     // extension matches one tick without the original integer truncation.
     inline double SourceGroundRetention(int32 Friction, double Seconds)

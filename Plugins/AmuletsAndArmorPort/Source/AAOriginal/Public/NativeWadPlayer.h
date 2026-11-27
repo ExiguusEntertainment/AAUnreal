@@ -226,6 +226,7 @@ private:
     void UpdateWaterWalking(const ANativeWadLevel& Level);
     void TickItemStatuses(float DeltaSeconds);
     void UpdateLavaWalking(const ANativeWadLevel& Level, float DeltaSeconds);
+    void TickAcidTerrain(const ANativeWadLevel& Level, float DeltaSeconds);
     FString MakeTravelOptions() const;
     void RestoreWadCheckpoint();
     bool ArchiveDeparture();
@@ -259,6 +260,9 @@ private:
     bool bOnLavaSurface = false;
     double NextConcealmentRoll = 0.0;
     double LavaDamageTime = 0.0;
+    // VIEW.C checks the sector deadline even on dry ground; leaving acid does
+    // not restart a fresh grace period. Its initial zero deadline is immediately due.
+    double AcidSectorDamageTime = NativeWadRules::SourceSectorDamageTicks / double(NativeWadRules::TicksPerSecond);
     bool bInventoryOpen = false;
     bool bMouseLook = true;
     bool bRestoreLookAfterInventory = true;

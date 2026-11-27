@@ -16,7 +16,10 @@ bool SaveNativeWadGameplay(UWorld* World, const FString& WadPath, FOutputDevice&
 bool SaveNativeWadItems(const FString& MapPackage, FOutputDevice& Output);
 bool SaveNativeWadItemRules(FOutputDevice& Output);
 bool RefreshNativeWadSurfaces(const FString& MapPackage, FOutputDevice& Output);
+bool RefreshNativeWadSkeletonKnights(const FString& MapPackage, FOutputDevice& Output);
+bool RefreshNativeWadL151Encounters(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadTerrainFriction(const FString& MapPackage, FOutputDevice& Output);
+bool RefreshNativeWadAcidEnvironment(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Output);
 bool RefreshNativeWadMissingMaterials(const FString& MapPackage, FOutputDevice& Output);
 #endif

@@ -1044,6 +1044,45 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD surface refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADSKELETONKNIGHTS")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadSkeletonKnights(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadSkeletonKnights failed. Usage: AA.RefreshNativeWadSkeletonKnights <WadPath> <MapName> </Game/MapPackage>"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD Skeleton Knight refresh finished"));
+            return true;
+        }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADL151ENCOUNTERS")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadL151Encounters(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadL151Encounters failed. Usage: AA.RefreshNativeWadL151Encounters <L151.MAP> <MapName> </Game/Maps/L151>"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD L151 encounter refresh finished"));
+            return true;
+        }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADACIDENVIRONMENT")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName != TEXT("L75") || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadAcidEnvironment(Package, Ar))
+            {
+                UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadAcidEnvironment failed. Usage: AA.RefreshNativeWadAcidEnvironment <WadPath> L75 </Game/Maps/L75>"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD acid environment refresh finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADTERRAINFRICTION")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));

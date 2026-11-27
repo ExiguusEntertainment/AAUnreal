@@ -232,3 +232,21 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All86 WAD regressions pass;103/108 original spells verified. Both rendered MagicMap processes passed. Inspected tier4 and actual opened-door frames; line79 stayed unseen behind closed door147, then ordinary E revealed it. Controls/owners/exploration survive L301 travel and process restart. Profile: Saved/MagicMapProcessProfile-20261127-162600.
 - Individual Flying Amulet suppression, legacy migration, index remapping and source Dispel reREADY pass actual save/disk tests alongside Ward/Orb.
 - PLAN243-244 are checked; full roadmap now explicitly distinguishes historical seven-quest archive proof from the current restored encounters. Preparing commit/push before encounter/hazard work.
+
+## 2026-11-27 16:33 CST - next binary built; encounter/hazard content under verification
+
+- Pushed59377afc with verified original MagicMap and flight owners.
+- EncounterCoverage, acid terrain, typed lava and the pure source bag-layout/codec model now compile. MSVC required splitting exported constexpr declarations; unrelated actor proofs now compare numeric transforms. Four-action build stayed bounded with~25GB physical/~20GB commit headroom and completed compilation in118seconds.
+- Targeted L34/L74 Skeleton, L151 Barbarian and L75 acid refresh/reopen proofs are running before the expanded100-test suite. Expected visible geometry remains unchanged; acid may change only its hidden bottom and bordering collision spans. Bag UI integration remains separate and unclaimed.
+
+## 2026-11-27 16:36 CST -100 regressions and saved-content proofs pass
+
+- All100 WAD tests pass, including source20 L151 Barbarians/35 Skeleton Knights acrossL34/L74, actual typed acid/lava behavior, save/revisit and four source bag-layout/order/codec groups.
+- Targeted encounter imports and independent reopen preserve legacy actor identities and geometry. Acid first proof used a zero-padded floor-name assumption; corrected unique sector166 lookup and restored only our modified L75 to committed baseline before rechecking the actual collision change. Both refresh and fresh reopen now pass with visible mesh/material/UV bytes preserved and14 bordering colliders updated.
+- Rechecking real L30 door/walking collision after shared collision-code extraction before checkpoint. NightVision and all334 ambient markers are frozen candidates; inventory HUD/Town adapters continue separately.
+
+## 2026-11-27 16:38 CST - encounter/hazard/model milestone complete
+
+- All100 tests pass. Targeted content refresh and independent reopen pass for L34/L74 Skeletons, all20 L151 Barbarians and L75 acid. Existing identities/visible mesh bytes remain intact.
+- Both real L30 regressions pass after collision refactoring: door147 holds/recloses3.5seconds and player walks original spawn through it with84->160->84 lighting.
+- PLAN245-247 checked, explicitly separating the tested bag model from pending visible UI wiring. Preparing commit/push, then NightVision/ambient/inventory integration.

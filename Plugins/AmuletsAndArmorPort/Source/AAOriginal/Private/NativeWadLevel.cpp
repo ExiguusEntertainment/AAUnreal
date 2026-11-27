@@ -400,6 +400,22 @@ TOptional<double> ANativeWadLevel::FindLavaSurfaceZ(const FVector& Position) con
     return {};
 }
 
+bool ANativeWadLevel::IsWadSectorAcid(int32 Sector) const
+{ return Sectors.IsValidIndex(Sector) && Sectors[Sector].bAcid; }
+
+int32 ANativeWadLevel::GetWadSectorDepth(int32 Sector) const
+{ return Sectors.IsValidIndex(Sector) ? Sectors[Sector].FloorDepth : INDEX_NONE; }
+
+TOptional<double> ANativeWadLevel::FindAcidSurfaceZ(const FVector& Position) const
+{
+    // FindWadSector already converts world XY to the saved level's local coordinates.
+    const int32 Index = FindWadSector(FVector2D(Position));
+    if (const FAAWadNativeSector* Sector = Sectors.IsValidIndex(Index) ? &Sectors[Index] : nullptr;
+        Sector && Sector->bAcid && Sector->Floor)
+    { return Sector->Floor->GetComponentLocation().Z; }
+    return {};
+}
+
 FVector2D ANativeWadLevel::GetCurrentInput(const FVector& Feet, bool bWaterWalking) const
 {
     const FVector Local = GetActorTransform().InverseTransformPosition(Feet);
@@ -803,6 +819,18 @@ void ANativeWadLevel::UpdateLine(int32 Index, bool bPersist)
         Mesh->SetVisibility(true);
     }
 
+    UpdateLineCollision(Index, Wall);
+}
+
+void ANativeWadLevel::UpdateLineCollisionOnly(int32 Index)
+{
+    FWadWallLine Wall;
+    if (GetWallLine(Index, Wall)) { UpdateLineCollision(Index, Wall); }
+}
+
+void ANativeWadLevel::UpdateLineCollision(int32 Index, FWadWallLine& Wall)
+{
+    FAAWadNativeLine& Line = Lines[Index];
     const FVector2D Edge = Wall.To - Wall.From;
     const FVector2D Middle = (Wall.To + Wall.From) * 0.5;
     const FRotator Rotation = FVector(Edge, 0.0).Rotation();

@@ -413,6 +413,7 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         {
             UpdateWaterWalking(*Level);
             UpdateLavaWalking(*Level, DeltaSeconds);
+            if (!IsDefeated()) { TickAcidTerrain(*Level, DeltaSeconds); }
             if (IsDefeated())
             {
                 return;
@@ -972,12 +973,34 @@ void ANativeWadPlayer::UpdateLavaWalking(const ANativeWadLevel& Level, float Del
         if (LavaDamageTime >= 0.5)
         {
             LavaDamageTime -= 0.5;
-            ReceiveEncounterHit(200);
+            // 3D_IO.C lava defaults to200 NORMAL|FIRE; STATS.C applies fire
+            // bonus/resistance before the ordinary armor and health-loss path.
+            ReceiveTypedHit(200, NormalDamage | DamageFlag(EProjectileDamage::Fire));
         }
     }
     else
     {
         LavaDamageTime = 0.0;
+    }
+}
+
+void ANativeWadPlayer::TickAcidTerrain(const ANativeWadLevel& Level, float DeltaSeconds)
+{
+    AcidSectorDamageTime += FMath::Max(0.0f, DeltaSeconds);
+    if (AcidSectorDamageTime <= SourceSectorDamageTicks / double(TicksPerSecond)) { return; }
+    // Source VIEW.C assigns nextTime=time+35, rather than replaying a backlog
+    // of missed damage pulses after a long frame. Tick on dry ground as well.
+    AcidSectorDamageTime = 0.0;
+    const TOptional<double> Surface = Level.FindAcidSurfaceZ(GetActorLocation());
+    const double Feet = GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+    // Original PlayerGetZ16 truncates fixed-point position by a signed right
+    // shift; floor preserves that contact test for both positive/negative maps.
+    if (Surface.IsSet() && FMath::FloorToDouble(Feet) <= Surface.GetValue())
+    {
+        // Neither WaterWalk nor LavaWalk exempts the acid physical type. Use
+        // ordinary typed damage so resistance, armor, Invulnerability and Ward
+        // keep their source ordering. Random acid inventory destruction is separate.
+        ReceiveTypedHit(SourceAcidDamage, NormalDamage | DamageFlag(EProjectileDamage::Acid));
     }
 }
 
