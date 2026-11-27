@@ -5682,6 +5682,18 @@ namespace
                 return false;
             }
             const double Now = Player.GetWorld()->GetTimeSeconds();
+            if (bGriffon && NativeWadRules::SchoolForClass(Player.GetCharacterClass()) == NativeWadRules::ESpellSchool::Cleric
+                && Player.HasRune(1) && Player.HasRune(2) && Player.GetMana() > 2100 && Distance > 140.0)
+            {
+                Stop(Player);
+                SetCombatStrafe(Player, 0);
+                Aim(Player, Target);
+                if (Player.GetRunes().IsEmpty()) { Press(Player, EKeys::NumPadOne); }
+                else if (Player.GetRunes() == TEXT("1")) { Press(Player, EKeys::NumPadTwo); }
+                else if (Player.GetRunes() == TEXT("12")) { Press(Player, EKeys::RightMouseButton); }
+                else { Press(Player, EKeys::BackSpace); }
+                return false;
+            }
             if ((bElymas || bExiguus || bLegionaryOrArcher || bGriffon) && Now >= NextElymasCombatSample)
             {
                 UE_LOG(LogTemp, Display, TEXT("%s combat: boss health %d, player health %d, distance %.1f. Player %s, boss %s, ready item %d, weapon %d."),
@@ -6337,7 +6349,8 @@ namespace
                 }
                 WalkBlockingEnemy.Reset();
                 const bool bElmore = CampaignRoute->Quest == 2;
-                const bool bRangedApproach = CampaignRoute->Map == 41 || CampaignRoute->Map == 70 || CampaignRoute->Map == 71;
+                const bool bRangedApproach = CampaignRoute->Map == 41 || CampaignRoute->Map == 70 || CampaignRoute->Map == 71
+                    || CampaignRoute->Map == 61 || CampaignRoute->Map == 40;
                 const int32 Potion = Player.GetItemCount(GreaterHealingPotion) > 0 ? GreaterHealingPotion : HealingPotion;
                 const int32 HealBelow = CampaignRoute->Map == 73 || CampaignRoute->Map == 51 || CampaignRoute->Map == 44 || bRangedApproach
                     ? FMath::Min(2300, Player.GetMaxHealth() * 3 / 4)

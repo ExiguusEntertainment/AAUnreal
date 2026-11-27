@@ -1478,6 +1478,11 @@ bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
     Profile.BoltDamage = 0;
     Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
     Creature->RestoreEncounterHealth(5000);
+    Creature->GetCharacterMovement()->MaxWalkSpeed = 600.0f;
+    Creature->GetCharacterMovement()->MaxFlySpeed = 600.0f;
+    Creature->DispatchBeginPlay();
+    TestEqual(TEXT("Existing map actors restore the source walking speed on startup"), Creature->GetCharacterMovement()->MaxWalkSpeed, 105.0f);
+    TestEqual(TEXT("Existing map actors restore the source flying speed on startup"), Creature->GetCharacterMovement()->MaxFlySpeed, 105.0f);
     TestEqual(TEXT("Source Griffon uses collision-aware flying physics"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
     for (int32 Frame = 0; Frame < 60; ++Frame)
     {

@@ -116,6 +116,9 @@ void ANativeWadGuardian::BeginPlay()
 {
     Super::BeginPlay();
     Profile.ApplySourceRules();
+    // Existing maps serialized the engine's default MaxFlySpeed before source flight was restored.
+    GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
+    GetCharacterMovement()->MaxFlySpeed = Profile.WalkSpeed;
     Health = Profile.MaxHealth;
     if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
     if (Profile.RailStart != Profile.RailEnd)
