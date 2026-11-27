@@ -5,11 +5,13 @@
 #include "DoomWadWalls.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadEncounter.h"
 #include "NativeWadRules.h"
 #include "SectorMeshBuilderActor.h"
 #include "Camera/CameraTypes.h"
 #include "Components/BoxComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
@@ -1370,5 +1372,128 @@ bool FAAOriginalRejuvenateOutcomes::RunTest(const FString& Parameters)
         ResolveRejuvenate(Health, Mana, MaxHealth, Magic, 1, 0) == ERejuvenateResult::InsufficientMana);
     TestEqual(TEXT("A mana refusal leaves health alone"), Health, 1800);
     TestEqual(TEXT("A mana refusal spends nothing"), Mana, RejuvenateCost);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalElementalDamage, "AAOriginal.WAD.Gameplay.ElementalDamage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalElementalDamage::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for elemental damage"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadGuardian* Target = World->SpawnActor<ANativeWadGuardian>();
+    if (!TestNotNull(TEXT("Elemental damage target"), Target)) { return false; }
+    FWadEncounterProfile Profile;
+    Profile.MaxHealth = 4000;
+    const auto Damage = [&](int32 Base, uint8 Mask, int32 Armor, uint8 Resistance)
+    {
+        Profile.ArmorClass = Armor;
+        Profile.ResistanceMask = Resistance;
+        Target->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+        Target->RestoreEncounterHealth(Profile.MaxHealth);
+        Target->TakeHit(Base, nullptr, Mask);
+        return Profile.MaxHealth - Target->GetEncounterHealth();
+    };
+    const uint8 Fire = DamageFlag(EProjectileDamage::Fire);
+    const uint8 Electric = DamageFlag(EProjectileDamage::Electricity);
+    TestEqual(TEXT("Fire adds a quarter of the original damage, rounded down"), Damage(750, Fire, 0, 0), 937);
+    TestEqual(TEXT("Resisted fire adds no bonus"), Damage(100, NormalDamage | Fire, 0, Fire), 50);
+    TestEqual(TEXT("Chain adds 25 percent electric damage"), Damage(100, Electric, 1, 0), 125);
+    TestEqual(TEXT("Plate adds 50 percent electric damage"), Damage(100, Electric, 2, 0), 150);
+    TestEqual(TEXT("Combined bonuses use the original damage independently"), Damage(100, Fire | Electric, 1, 0), 150);
+    TestEqual(TEXT("The class-permitted mace and electric scroll respect one resisted element"),
+        Damage(75, NormalDamage | Electric, 1, NormalDamage | Fire), 47);
+    FWadEncounterProfile Archer;
+    Archer.SourceType = 1014;
+    Archer.MaxHealth = 4000;
+    Target->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Archer);
+    Target->RestoreEncounterHealth(Archer.MaxHealth);
+    Target->TakeHit(100, nullptr, Electric);
+    TestEqual(TEXT("Eastern Archer uses source chain armor"), 4000 - Target->GetEncounterHealth(), 125);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalPlayerElementalDamage, "AAOriginal.WAD.Gameplay.PlayerElementalDamage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalPlayerElementalDamage::RunTest(const FString& Parameters)
+{
+    using namespace NativeWadRules;
+    const uint8 Fire = DamageFlag(EProjectileDamage::Fire);
+    const uint8 Poison = DamageFlag(EProjectileDamage::Poison);
+    const uint8 Electric = DamageFlag(EProjectileDamage::Electricity);
+    const uint8 Piercing = DamageFlag(EProjectileDamage::Piercing);
+    const uint8 Drain = DamageFlag(EProjectileDamage::ManaDrain);
+    TestEqual(TEXT("Player fire rounds the source quarter bonus down"), ResolvePlayerDamage(750, Fire, 0, 0, 0).Health, 937);
+    TestEqual(TEXT("A single resisted element still inflicts the source 20 percent minimum"), ResolvePlayerDamage(100, Fire, Fire, 0, 0).Health, 20);
+    TestEqual(TEXT("Resistance removes only one component of a mixed hit"), ResolvePlayerDamage(100, NormalDamage | Fire, Fire, 0, 0).Health, 50);
+    TestEqual(TEXT("Normal incoming damage uses half the armor rating"), ResolvePlayerDamage(100, NormalDamage, 0, 0, 60).Health, 70);
+    TestEqual(TEXT("Unresisted piercing bypasses player armor"), ResolvePlayerDamage(100, Piercing, 0, 0, 100).Health, 100);
+    TestEqual(TEXT("Resisting piercing restores armor mitigation after the resistance cap"), ResolvePlayerDamage(100, Piercing, Piercing, 0, 100).Health, 10);
+    TestEqual(TEXT("Player fire and plate-electric bonuses are sequential in STATS.C"), ResolvePlayerDamage(100, Fire | Electric, 0, 2, 0).Health, 187);
+    TestEqual(TEXT("Chain-electric bonus, component resistance, and armor apply in source order"), ResolvePlayerDamage(100, NormalDamage | Fire | Electric, Fire, 1, 40).Health, 66);
+    const FWadPlayerDamage PoisonHit = ResolvePlayerDamage(400, Poison, Poison, 0, 0);
+    TestEqual(TEXT("Poison resistance quarters the status buildup"), PoisonHit.Poison, 10);
+    TestEqual(TEXT("Poison resistance retains minimum health damage"), PoisonHit.Health, 80);
+    const FWadPlayerDamage DrainHit = ResolvePlayerDamage(400, Drain, Drain, 0, 0);
+    TestEqual(TEXT("Drain resistance quarters mana loss before health mitigation"), DrainHit.Mana, 100);
+    TestEqual(TEXT("Drain resistance retains minimum health damage"), DrainHit.Health, 80);
+    TestEqual(TEXT("Special Push is never interpreted as elemental health damage"), ResolvePlayerDamage(5000, 128 | 3, 0, 0, 0).Health, 0);
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for incoming damage"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>();
+    if (!TestNotNull(TEXT("Player receiving a mixed hit"), Player)) { return false; }
+    const int32 BeforeHealth = Player->GetHealth();
+    const int32 BeforeMana = Player->GetMana();
+    Player->ReceiveTypedHit(400, NormalDamage | Poison | Drain);
+    TestEqual(TEXT("The live player loses health from a mixed creature hit"), Player->GetHealth(), BeforeHealth - 400);
+    TestEqual(TEXT("The same live hit applies its poison component"), Player->GetPoisonLevel(), 40);
+    TestEqual(TEXT("The same live hit also drains mana"), Player->GetMana(), BeforeMana - 400);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalFlyingCreature, "AAOriginal.WAD.Gameplay.FlyingCreature",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FAAOriginalFlyingCreature::RunTest(const FString& Parameters)
+{
+    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+    if (!TestNotNull(TEXT("World for flying creature pursuit"), World)) { return false; }
+    ON_SCOPE_EXIT { World->DestroyWorld(false); };
+    ANativeWadPlayer* Player = World->SpawnActor<ANativeWadPlayer>(FVector(300, 0, 200), FRotator::ZeroRotator);
+    APlayerController* Controller = World->SpawnActor<APlayerController>();
+    ANativeWadGuardian* Creature = World->SpawnActor<ANativeWadGuardian>();
+    if (!TestNotNull(TEXT("Airborne target"), Player) || !TestNotNull(TEXT("Player controller"), Controller)
+        || !TestNotNull(TEXT("Flying creature"), Creature)) { return false; }
+    World->AddController(Controller); // The isolated world has not run actor initialization.
+    Controller->Possess(Player);
+    FWadEncounterProfile Profile;
+    Profile.SourceType = 1023;
+    Profile.MaxHealth = 5000;
+    Profile.WalkSpeed = 105;
+    Profile.BoltDamage = 0;
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    Creature->RestoreEncounterHealth(5000);
+    TestEqual(TEXT("Source Griffon uses collision-aware flying physics"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
+    for (int32 Frame = 0; Frame < 60; ++Frame)
+    {
+        Creature->Tick(1.0f / 60.0f);
+        Creature->GetCharacterMovement()->TickComponent(1.0f / 60.0f, LEVELTICK_All, nullptr);
+    }
+    TestTrue(TEXT("A Griffon acquires the player above it"), Creature->HasAcquiredTarget());
+    TestTrue(TEXT("The flying pursuit rises toward the player's height"), Creature->GetActorLocation().Z > 20.0);
+    TestTrue(TEXT("The same pursuit advances horizontally"), Creature->GetActorLocation().X > 30.0);
+    Creature->RestoreEncounterHealth(0);
+    Creature->ResetForGenerator();
+    TestEqual(TEXT("A reused flying generator actor restores flight"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Flying);
+    Profile.SourceType = 1007;
+    Creature->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+    Creature->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+    Creature->ResetForGenerator();
+    TestEqual(TEXT("Source Gargoyle remains grounded despite its wings"), Creature->GetCharacterMovement()->MovementMode.GetValue(), MOVE_Walking);
     return true;
 }

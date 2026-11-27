@@ -121,11 +121,13 @@ public:
     virtual void DrawHUD() override;
     void SelectQuest(int32 Direction);
     void OpenQuest();
+    void OpenCharacterPicker();
     void ConfirmAction();
     void CancelAction();
     void Scroll(int32 Direction);
     int32 GetScrollLine() const { return ScrollLine; }
     void OpenService(FName Name);
+    bool RentRoom(int32 Room);
     void ClickAction(const FVector2D& Position);
     FVector2D ServiceBagItemCenter(int32 Slot) const;
 
@@ -141,6 +143,8 @@ private:
     int32 HeldSlot = INDEX_NONE;
     EServiceBanner ServiceBanner = EServiceBanner::Bag;
     bool bDialogue = false;
+    bool bCharacterPicker = false;
+    int32 ChosenClass = 0;
     int32 ResultPage = 0;
     int32 ScrollLine = 0;
 };

@@ -25,6 +25,8 @@ struct FWadEncounterProfile
 {
     GENERATED_BODY()
 
+    void ApplySourceRules();
+
     UPROPERTY()
     FString Name = TEXT("Elf Guardian");
     UPROPERTY()
@@ -35,6 +37,8 @@ struct FWadEncounterProfile
     int32 RetreatHealth = 500;
     UPROPERTY()
     int32 MeleeDamage = 100;
+    UPROPERTY()
+    uint8 MeleeDamageMask = NativeWadRules::NormalDamage;
     UPROPERTY()
     int32 BoltDamage = 300;
     UPROPERTY()
@@ -53,6 +57,8 @@ struct FWadEncounterProfile
     UPROPERTY()
     float WalkSpeed = 190.0f;
     UPROPERTY()
+    bool bCanFly = false;
+    UPROPERTY()
     int32 UpdateTicks = 5;
     UPROPERTY()
     int32 RegenPerUpdate = 1;
@@ -64,6 +70,24 @@ struct FWadEncounterProfile
     float VisionHalfAngle = 135.0f;
     UPROPERTY()
     bool bKeepsBoltDistance = false;
+    UPROPERTY()
+    bool bResistsFire = false;
+    UPROPERTY()
+    bool bResistsAcidAndPoison = false;
+    UPROPERTY()
+    int32 ArmorClass = 0;
+    UPROPERTY()
+    uint8 ResistanceMask = 0;
+    UPROPERTY()
+    uint8 BoltElement = 0;
+    UPROPERTY()
+    bool bHomingPlasma = false;
+    UPROPERTY()
+    int32 HomingMissileType = 0;
+    UPROPERTY()
+    FVector2D RailStart = FVector2D::ZeroVector;
+    UPROPERTY()
+    FVector2D RailEnd = FVector2D::ZeroVector;
 };
 
 UCLASS()
@@ -77,12 +101,21 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     void Configure(UStaticMesh* Plane, UMaterialInterface* Standing, UMaterialInterface* Downed,
         UMaterialInterface* Attacking, UMaterialInterface* Hurt, UMaterialInterface* Bolt, const FWadEncounterProfile& InProfile);
+    void ConfigureFrom(const ANativeWadGuardian& Example);
+    bool HasAcquiredTarget() const { return bHasTarget; }
+    void ShowSummonPose();
     bool TakeMeleeHit(ANativeWadPlayer& Player, int32 Damage);
+    bool TakeHit(int32 Damage, ANativeWadPlayer* Credit = nullptr,
+        uint8 DamageMask = NativeWadRules::NormalDamage);
     bool IsDefeated() const { return Health == 0; }
     int32 GetEncounterHealth() const { return Health; }
+    int32 GetPoisonLevel() const { return PoisonLevel; }
+    double GetPoisonTime() const { return PoisonTime; }
+    void RestorePoison(int32 Level, double Time);
     void RestoreEncounterHealth(int32 SavedHealth);
     void SetDefeatPickup(class ANativeWadPickup* Pickup);
     void SetSpawned(bool bSpawned);
+    void ResetForGenerator();
     int32 GetBoltsFired() const { return BoltsFired; }
     int32 GetMeleeHits() const { return MeleeHits; }
     int32 GetRegeneratedHealth() const { return RegeneratedHealth; }
@@ -116,7 +149,11 @@ private:
     TObjectPtr<class ANativeWadPickup> DefeatPickup;
 
     void FireBolt(ANativeWadPlayer& Player);
+    void TickRailHazard(float DeltaSeconds);
+    TWeakObjectPtr<ANativeWadLevel> RailLevel;
     int32 Health = NativeWadRules::GuardianHealth;
+    int32 PoisonLevel = 0;
+    double PoisonTime = 5.0;
     int32 BoltsFired = 0;
     int32 MeleeHits = 0;
     int32 RegeneratedHealth = 0;
@@ -138,16 +175,30 @@ public:
     ANativeWadBolt();
     void Launch(UStaticMesh* Plane, UMaterialInterface* Image, const FVector& Velocity, int32 Damage,
         EWadBoltEffect Effect = EWadBoltEffect::Damage, ANativeWadLevel* ScriptLevel = nullptr);
+    void SetHomingTarget(AActor* Target) { HomingTarget = Target; }
+    void SetBlastRadius(float Radius) { BlastRadius = Radius; }
+    void SetDamageType(NativeWadRules::EProjectileDamage Element)
+    {
+        SetDamageMask(NativeWadRules::NormalDamage | NativeWadRules::DamageFlag(Element));
+    }
+    void SetDamageMask(uint8 Mask) { DamageMask = Mask; }
     virtual void Tick(float DeltaSeconds) override;
 
 private:
+    void ApplyBlast(const FVector& Origin);
+    void ApplyForce(ACharacter& Target, const FVector& Origin) const;
+    void DamagePlayer(ANativeWadPlayer& Player) const;
+
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> Sprite;
 
     FVector Velocity = FVector::ZeroVector;
+    float BlastRadius = 0.0f;
+    uint8 DamageMask = NativeWadRules::NormalDamage;
     int32 Damage = 0;
     EWadBoltEffect Effect = EWadBoltEffect::Damage;
     TWeakObjectPtr<ANativeWadLevel> ScriptTrap;
+    TWeakObjectPtr<AActor> HomingTarget;
 };
 
 UCLASS()
@@ -167,6 +218,9 @@ public:
     bool Collect(ANativeWadPlayer& Player);
     int32 GetItemType() const { return ItemType; }
     int32 GetCheckpointRevision() const { return CheckpointRevision; }
+    void SetAuthoredAmmo(int32 Index, int32 Quantity) { AmmoIndex = Index; AmmoQuantity = Quantity; }
+    int32 GetAmmoIndex() const { return AmmoIndex; }
+    int32 GetAmmoQuantity() const { return AmmoQuantity; }
     static constexpr ECollisionChannel InteractionChannel = ECC_GameTraceChannel1;
     static ANativeWadPickup* SpawnDropped(ANativeWadLevel& Level, int32 Type, const FVector& Position);
     bool IsDropped() const { return bDropped; }
@@ -183,6 +237,10 @@ private:
 
     UPROPERTY()
     int32 CheckpointRevision = 0;
+    UPROPERTY()
+    int32 AmmoIndex = INDEX_NONE;
+    UPROPERTY()
+    int32 AmmoQuantity = 0;
     bool bDropped = false;
 
     UPROPERTY()

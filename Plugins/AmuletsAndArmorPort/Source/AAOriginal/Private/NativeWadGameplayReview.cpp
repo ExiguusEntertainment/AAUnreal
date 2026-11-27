@@ -26,14 +26,21 @@
 #include "UnrealClient.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
+#include "NativeWadInventoryView.h"
+#include "WadSurfaceTextures.h"
+#include "Engine/Texture2D.h"
+#include "Misc/FileHelper.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
+#include "Sound/SoundWave.h"
 #if WITH_EDITOR
 #include "AssetCompilingManager.h"
 #endif
 
 namespace
 {
+    const FKey ReviewRuneKeys[] = {EKeys::NumPadOne, EKeys::NumPadTwo, EKeys::NumPadThree, EKeys::NumPadFour, EKeys::NumPadFive,
+        EKeys::NumPadSix, EKeys::NumPadSeven, EKeys::NumPadEight, EKeys::NumPadNine};
     constexpr int32 Door = 147;
     constexpr int32 DarkApproach = 14;
 
@@ -470,12 +477,12 @@ namespace
         {ETrailAction::Walk, {-2568,76,0}},
     };
 
-    enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll, Services, ServicesReload, ServicesLoadout };
+    enum class ETownReview { None, Tour, Failure, Reload, Start, Scroll, Services, ServicesReload, ServicesLoadout, Inn, InnReload };
     enum class EUndeadReview { None, Launch, Castle, Traps, Keep, Boss, Return, Empty };
     enum class ETempleReview { None, Launch, L51, L52, Reload };
     enum class ECampaignAction { Place, Walk, Jump, Use, Floor, Ceiling, OpenDoor, HealthAtLeast, Pickup, Defeat, Frame,
         Rejuvenate, ManaAtLeast, StatueAngle, Checkpoint, Teleport, CeilingAtMost, TouchSector, DefeatCreature,
-        UseFlightItem, Fly, JumpPickup, FlightEnded, CornerJump, UseLockedDoor, CrossDoor };
+        UseFlightItem, Fly, JumpPickup, FlightEnded, CornerJump, UseLockedDoor, CrossDoor, FireWand, WaitBoulder };
 
     struct FCampaignAction
     {
@@ -603,6 +610,27 @@ namespace
     constexpr int32 HealingPotion = 800;
     constexpr int32 GreaterHealingPotion = 801;
     constexpr int32 IronLongSword = 204;
+    constexpr int32 MagicDartsWand = 900;
+
+    int32 BestReviewMeleeWeapon(const ANativeWadPlayer& Player)
+    {
+        const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+        int32 Weapon = 0;
+        int32 Damage = 0;
+        if (Catalog)
+        {
+            for (const int32 Type : Player.GetCarriedItems())
+            {
+                const FWadInventoryDetails* Item = Catalog->ItemDetails.Find(Type);
+                if (Item && Item->HitFrame > 0 && Item->WeaponDamage > Damage && Player.CanUseWadItem(Type))
+                {
+                    Weapon = Type;
+                    Damage = Item->WeaponDamage;
+                }
+            }
+        }
+        return Weapon;
+    }
     constexpr const TCHAR* LighthouseReturnSlot = TEXT("NativeWadCampaignL34ReturnReview");
     const FCampaignAction Campaign60[] = {
         // The three entrance doors lead around to the lower pools.
@@ -884,6 +912,9 @@ namespace
         {ECampaignAction::Fly, {-956, -1040, 282}}, {ECampaignAction::Fly, {-956, -1040, 376}},
         {ECampaignAction::Fly, {-272, -184, 376}, INDEX_NONE, TEXT("L44's first potion reaches the high stairway")},
         {ECampaignAction::Fly, {-272, -184, 586}}, {ECampaignAction::Fly, {-272, 640, 586}},
+        {ECampaignAction::DefeatCreature, {}, 50, TEXT("L44's Electric Skeleton at the high stairway")},
+        {ECampaignAction::DefeatCreature, {}, 35, TEXT("L44's western Electric Skeleton guard")},
+        {ECampaignAction::DefeatCreature, {}, 34, TEXT("L44's eastern Electric Skeleton guard")},
         {ECampaignAction::Fly, {-268, 1046, 580}}, {ECampaignAction::Floor, {0, 0, 512}, 102},
         {ECampaignAction::Defeat, {}, NativeWadRules::ElymasNotes, TEXT("Elymas")},
         {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
@@ -949,15 +980,31 @@ namespace
         {ECampaignAction::Walk, {-3377, -48, 0}}, {ECampaignAction::Walk, {-3225, -8, 0}},
         {ECampaignAction::Walk, {-3073, -112, 0}}, {ECampaignAction::Walk, {-3048, -243, 0}},
         {ECampaignAction::Use, {-3048, -285, 180}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 246},
-        {ECampaignAction::Walk, {-3146, -450, 0}}, {ECampaignAction::Walk, {-3151, -554, 0}},
+        {ECampaignAction::DefeatCreature, {}, 83, TEXT("the eastern Legionary inside L73's potion room")},
+        {ECampaignAction::CrossDoor, {-3048, -343, 180}, 246, TEXT("the potion-room doorway after the eastern fight"), {-3048, -243}},
+        {ECampaignAction::Walk, {-3146, -450, 0}},
+        {ECampaignAction::DefeatCreature, {}, 84, TEXT("the Legionary guarding L73's flight potions")},
+        {ECampaignAction::Walk, {-3151, -554, 0}},
         {ECampaignAction::Walk, {-3128, -562, 0}},
         {ECampaignAction::Pickup, {-3092, -564, 0}, NativeWadRules::FlyingPotion, TEXT("an original L73 potion of flying")},
+        {ECampaignAction::Walk, {-3280, -562, 0}}, {ECampaignAction::Walk, {-3280, -410, 0}},
+        {ECampaignAction::Pickup, {-3280, -374, 0}, NativeWadRules::FlyingPotion, TEXT("L73's second carried flight potion")},
+        {ECampaignAction::Checkpoint, {}, INDEX_NONE, TEXT("NativeWadL73PotionsReview")},
+        {ECampaignAction::Rejuvenate, {0, 0, 4000}}, {ECampaignAction::ManaAtLeast, {0, 0, 4200}},
+        {ECampaignAction::Walk, {-3280, -562, 0}}, {ECampaignAction::Walk, {-3128, -562, 0}},
+        {ECampaignAction::Walk, {-3128, -640, 0}}, {ECampaignAction::Walk, {-3020, -640, 0}},
+        {ECampaignAction::Walk, {-3020, -610, 0}},
+        {ECampaignAction::Pickup, {-3020, -566, 0}, NativeWadRules::FlyingPotion, TEXT("L73's third original flight potion beyond the chair")},
+        {ECampaignAction::Checkpoint, {}, INDEX_NONE, TEXT("NativeWadL73AllPotionsReview")},
+        {ECampaignAction::Walk, {-3020, -640, 0}}, {ECampaignAction::Walk, {-3128, -640, 0}},
+        {ECampaignAction::Walk, {-3128, -562, 0}},
         {ECampaignAction::Walk, {-3048, -343, 0}}, {ECampaignAction::Use, {-3048, -301, 180}},
         {ECampaignAction::OpenDoor, {0, 0, 65}, 246},
         {ECampaignAction::Walk, {-3048, -242, 0}}, {ECampaignAction::Walk, {-3073, -112, 0}},
         {ECampaignAction::Walk, {-3225, -8, 0}},
         {ECampaignAction::Walk, {-3257, 316, 0}}, {ECampaignAction::Use, {-3257, 358, 179}},
         {ECampaignAction::OpenDoor, {0, 0, 65}, 226}, {ECampaignAction::Walk, {-3268, 618, 0}},
+        {ECampaignAction::WaitBoulder, {-3180, -3050, 0}, 223},
         {ECampaignAction::Use, {-3268, 660, 91}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 37},
         {ECampaignAction::Walk, {-3268, 777, 0}}, {ECampaignAction::Use, {-3268, 816, 75}},
         {ECampaignAction::OpenDoor, {0, 0, 65}, 249},
@@ -971,63 +1018,68 @@ namespace
         {ECampaignAction::Ceiling, {0, 0, 175}, 118},
         {ECampaignAction::Fly, {-4562, 1304, 151}}, {ECampaignAction::Fly, {-4610, 1329, 151}},
         {ECampaignAction::Ceiling, {0, 0, 195}, 118},
-        {ECampaignAction::Fly, {-4505, 1318, 151}}, {ECampaignAction::Fly, {-4405, 1220, 151}},
+        {ECampaignAction::Fly, {-4505, 1318, 151}}, {ECampaignAction::Fly, {-4405, 1220, 151}, 16},
         {ECampaignAction::Fly, {-4321, 1125, 151}}, {ECampaignAction::Fly, {-4345, 1078, 151}},
         {ECampaignAction::Ceiling, {0, 0, 232}, 118, TEXT("L73's three plates raise gate 118 through all three heights")},
         {ECampaignAction::Ceiling, {0, 0, 232}, 136},
-        {ECampaignAction::Walk, {-4056, 1347, 0}}, {ECampaignAction::Use, {-4014, 1347, 83}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 119}, {ECampaignAction::Walk, {-3953, 1344, 0}},
+        {ECampaignAction::CrossDoor, {-3953, 1344, 83}, 119, TEXT("the plate-room return door"), {-4056, 1347}},
         {ECampaignAction::Walk, {-3825, 1346, 0}},
-        {ECampaignAction::Use, {-3784, 1346, 19}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 150},
+        {ECampaignAction::CrossDoor, {-3728, 1346, 19}, 150, TEXT("the plate-wing return door"), {-3825, 1346}},
         {ECampaignAction::Walk, {-3329, 1328, 0}},
-        {ECampaignAction::Walk, {-3260, 866, 0}}, {ECampaignAction::Use, {-3260, 824, 59}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 249}, {ECampaignAction::Walk, {-3260, 776, 0}},
+        {ECampaignAction::Walk, {-3260, 866, 0}},
+        {ECampaignAction::WaitBoulder, {-3180, -3050, 0}, 223, TEXT("L73's boulder clears the return route")},
+        {ECampaignAction::CrossDoor, {-3260, 776, 59}, 249, TEXT("the return door beyond L73's boulder"), {-3260, 866}},
         {ECampaignAction::Walk, {-2729, 784, 0}},
         {ECampaignAction::Walk, {-2617, 880, 0}}, {ECampaignAction::Walk, {-1969, 920, 0}},
         {ECampaignAction::Walk, {-1969, 976, 0}}, {ECampaignAction::Walk, {-2025, 1086, 0}},
-        {ECampaignAction::Use, {-2004, 1120, 123}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 18},
+        {ECampaignAction::CrossDoor, {-1944, 1136, 123}, 18, TEXT("L73's recovery-wing approach door"), {-2048, 1136}},
         {ECampaignAction::Walk, {-1129, 1176, 0}},
         {ECampaignAction::Teleport, {-1040, 1264, 0}, INDEX_NONE, TEXT("L73's source teleporter reaches the recovery wing"), {-619, 1147}},
         {ECampaignAction::FlightEnded},
+        {ECampaignAction::Checkpoint, {}, INDEX_NONE, TEXT("NativeWadL73RecoveryReview")},
         {ECampaignAction::Walk, {-458, 1168, 0}}, {ECampaignAction::Use, {-416, 1168, 36}},
         {ECampaignAction::OpenDoor, {0, 0, 65}, 95},
         {ECampaignAction::Walk, {-377, 1168, 0}}, {ECampaignAction::Walk, {-226, 1318, 0}},
         {ECampaignAction::HealthAtLeast, {0, 0, 1800}, INDEX_NONE, TEXT("L73's source recovery sector restores health")},
-        {ECampaignAction::Walk, {-374, 1496, 0}}, {ECampaignAction::Use, {-415, 1496, 51}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 209},
-        {ECampaignAction::Walk, {-454, 1496, 0}}, {ECampaignAction::Walk, {-1441, 1592, 0}},
-        {ECampaignAction::Walk, {-1735, 1608, 0}}, {ECampaignAction::Use, {-1777, 1608, 148}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 214},
-        {ECampaignAction::Walk, {-1816, 1608, 0}}, {ECampaignAction::Walk, {-1865, 1728, 0}},
-        {ECampaignAction::Walk, {-1832, 2184, 0}}, {ECampaignAction::Use, {-1790, 2184, 148}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 206}, {ECampaignAction::Walk, {-1738, 2184, 0}},
-        {ECampaignAction::Walk, {-1137, 2174, 0}}, {ECampaignAction::Use, {-1137, 2216, 148}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 207}, {ECampaignAction::Walk, {-1137, 2284, 0}},
+        {ECampaignAction::Walk, {-374, 1496, 0}},
+        {ECampaignAction::CrossDoor, {-454, 1496, 51}, 209, TEXT("L73's recovery-room exit"), {-374, 1496}}, {ECampaignAction::Walk, {-1441, 1592, 0}},
+        {ECampaignAction::Walk, {-1735, 1608, 0}},
+        {ECampaignAction::CrossDoor, {-1816, 1608, 148}, 214, TEXT("L73's outer return door"), {-1735, 1608}}, {ECampaignAction::Walk, {-1865, 1728, 0}},
+        {ECampaignAction::Walk, {-1832, 2184, 0}},
+        {ECampaignAction::CrossDoor, {-1738, 2184, 148}, 206, TEXT("L73's northeast return door"), {-1832, 2184}},
+        {ECampaignAction::Walk, {-1137, 2174, 0}},
+        {ECampaignAction::CrossDoor, {-1137, 2284, 148}, 207, TEXT("L73's final return door"), {-1137, 2174}},
         {ECampaignAction::Walk, {-1041, 2496, 0}},
         {ECampaignAction::Walk, {-1029, 2864, 0}},
     };
     const FCampaignAction Campaign72[] = {
         {ECampaignAction::Rejuvenate, {0, 0, 3000}}, {ECampaignAction::ManaAtLeast, {0, 0, 4200}},
-        {ECampaignAction::Walk, {2304, 366, 0}}, {ECampaignAction::Walk, {2202, 366, 0}},
-        {ECampaignAction::Use, {2160, 366, -13}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 228},
-        {ECampaignAction::Walk, {2072, 339, 0}}, {ECampaignAction::Walk, {1618, -106, 0}},
-        {ECampaignAction::Use, {1579, -106, -13}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 156},
-        {ECampaignAction::Walk, {1516, -106, 0}}, {ECampaignAction::Walk, {1496, 43, 0}},
-        {ECampaignAction::Walk, {1449, 773, 0}}, {ECampaignAction::Use, {1406, 773, -13}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 158}, {ECampaignAction::Walk, {1376, 803, 0}},
-        {ECampaignAction::Walk, {1384, 899, 0}}, {ECampaignAction::Walk, {1460, 946, 0}},
-        {ECampaignAction::Use, {1485, 946, -12}},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {2304, 366, 40}}, {ECampaignAction::Fly, {2202, 366, 40}},
+        {ECampaignAction::Use, {2160, 366, 40}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 228},
+        {ECampaignAction::Fly, {2072, 339, 40}}, {ECampaignAction::Fly, {1618, -106, 40}},
+        {ECampaignAction::Use, {1579, -106, 40}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 156},
+        {ECampaignAction::Fly, {1516, -106, 40}}, {ECampaignAction::Fly, {1496, 43, 40}},
+        {ECampaignAction::Fly, {1449, 773, 40}}, {ECampaignAction::Use, {1406, 773, 40}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 158}, {ECampaignAction::Fly, {1376, 803, 40}},
+        {ECampaignAction::Fly, {1384, 899, 140}}, {ECampaignAction::Fly, {1460, 946, 140}},
+        {ECampaignAction::Use, {1485, 946, 170}},
         {ECampaignAction::Floor, {0, 0, -56}, 295, TEXT("L72's wall lowers the hidden floor")},
-        {ECampaignAction::Walk, {872, 842, 0}}, {ECampaignAction::Walk, {464, 627, 0}},
-        {ECampaignAction::Walk, {-370, 624, 0}}, {ECampaignAction::Use, {-412, 624, 147}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 37}, {ECampaignAction::Walk, {-552, 627, 0}},
-        {ECampaignAction::Walk, {-1472, 1075, 0}}, {ECampaignAction::Walk, {-1592, 1061, 0}},
+        {ECampaignAction::Fly, {872, 842, 140}}, {ECampaignAction::Fly, {464, 627, 120}},
+        {ECampaignAction::Fly, {128, 624, 160}}, {ECampaignAction::Fly, {-128, 624, 160}},
+        {ECampaignAction::Fly, {-370, 624, 190}},
+        {ECampaignAction::Use, {-412, 624, 200}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 37}, {ECampaignAction::Fly, {-552, 627, 200}},
+        {ECampaignAction::Fly, {-1472, 1075, 200}}, {ECampaignAction::Fly, {-1592, 1061, 200}},
         {ECampaignAction::Teleport, {-1592, 1020, 0}, INDEX_NONE, TEXT("L72's portal reaches the Wand chamber"), {-3328, -219}},
-        {ECampaignAction::Walk, {-3392, 942, 0}},
+        {ECampaignAction::Fly, {-3392, 942, 40}},
         {ECampaignAction::Pickup, {-3392, 984, 12}, NativeWadRules::WandOfDisintegration, TEXT("the original L72 Wand of Disintegration pickup")},
-        {ECampaignAction::Walk, {-3312, 934, 0}}, {ECampaignAction::Walk, {-3312, 994, 0}},
-        {ECampaignAction::Walk, {-3312, 1045, 0}}, {ECampaignAction::Jump, {-3312, 1071, 0}, 34},
-        {ECampaignAction::Jump, {-3312, 1136, 0}, 65},
+        {ECampaignAction::Fly, {-3392, 400, 40}},
+        {ECampaignAction::FireWand, {}, NativeWadRules::WandOfDisintegration},
+        {ECampaignAction::Fly, {-3312, 934, 140}}, {ECampaignAction::Fly, {-3312, 994, 140}},
+        {ECampaignAction::Fly, {-3312, 1045, 200}},
+        {ECampaignAction::Fly, {-3312, 1071, 265}},
+        {ECampaignAction::Fly, {-3312, 1136, 265}},
     };
     const FCampaignAction Campaign32[] = {
         {ECampaignAction::Rejuvenate, {0, 0, 3200}},
@@ -1114,7 +1166,9 @@ namespace
         {ECampaignAction::Walk, {120, 176, 0}}, {ECampaignAction::Walk, {-72, 128, 0}},
         {ECampaignAction::Walk, {-200, 176, 0}}, {ECampaignAction::Walk, {-232, 240, 0}},
         {ECampaignAction::Walk, {-200, 392, 0}}, {ECampaignAction::Walk, {-92, 495, 0}},
-        {ECampaignAction::Walk, {218, 495, 0}}, {ECampaignAction::Walk, {400, 617, 0}},
+        // Approach from below the switch: the direct diagonal clips its raised pedestal at (384, 592).
+        {ECampaignAction::Walk, {218, 495, 0}}, {ECampaignAction::Walk, {330, 640, 0}},
+        {ECampaignAction::Walk, {400, 640, 0}}, {ECampaignAction::Walk, {400, 617, 0}},
         {ECampaignAction::Use, {400, 592, -146}},
         {ECampaignAction::Ceiling, {0, 0, 190}, 56, TEXT("L70's switch raises gate 56")},
         {ECampaignAction::Walk, {319, 580, 0}}, {ECampaignAction::Jump, {273, 520, 0}, 65},
@@ -1142,7 +1196,8 @@ namespace
             TEXT("L61's pressure plate opens both ceilings")},
         {ECampaignAction::Walk, {-768, 2852, 0}}, {ECampaignAction::Walk, {-215, 2189, 0}},
         {ECampaignAction::Walk, {-155, 2189, 0}}, {ECampaignAction::Jump, {-96, 2189, 0}, 60},
-        {ECampaignAction::Walk, {-36, 2189, 0}},
+        // The middle ledge is -40 and the far bank is 0: land, then jump the second lip.
+        {ECampaignAction::Jump, {-36, 2189, 0}, 45},
         {ECampaignAction::Walk, {64, 1976, 0}}, {ECampaignAction::Walk, {-960, 1976, 0}},
         {ECampaignAction::Walk, {-1976, 1776, 0}}, {ECampaignAction::Walk, {-2200, 1776, 0}},
         {ECampaignAction::Walk, {-2215, 1624, 0}},
@@ -1512,7 +1567,11 @@ namespace
         {ECampaignAction::Walk, {2747, -160, 0}}, {ECampaignAction::Use, {2784, -160, -105}},
         {ECampaignAction::OpenDoor, {0, 0, 65}, 137}, {ECampaignAction::Walk, {3083, -160, 0}},
         {ECampaignAction::Use, {3120, -160, -105}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 174},
-        {ECampaignAction::Walk, {3410, -160, 0}}, {ECampaignAction::Walk, {3722, -160, 0}},
+        {ECampaignAction::Walk, {3180, -160, 0}},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {3552, -160, -37}},
+        {ECampaignAction::Fly, {3704, -160, -50}, INDEX_NONE, TEXT("L153's flight potion clears the Gargoyle corridor")},
+        {ECampaignAction::Walk, {3722, -160, 0}},
         {ECampaignAction::Use, {3760, -160, -105}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 193},
         {ECampaignAction::Walk, {4330, -176, 0}}, {ECampaignAction::Walk, {4394, -240, 0}},
         {ECampaignAction::Use, {4432, -240, -112}},
@@ -1522,12 +1581,15 @@ namespace
         {ECampaignAction::Pickup, {4612, -330, -136}, NativeWadRules::OrbOfDefense, TEXT("the original Orb of Defense")},
         {ECampaignAction::Walk, {4594, -208, 0}}, {ECampaignAction::Walk, {4490, -160, 0}},
         {ECampaignAction::Use, {4448, -160, -106}}, {ECampaignAction::Floor, {0, 0, -148}, 202},
-        {ECampaignAction::Walk, {3810, -160, 0}}, {ECampaignAction::Use, {3768, -160, -105}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 193}, {ECampaignAction::Walk, {3474, -160, 0}},
-        {ECampaignAction::Walk, {3180, -160, 0}}, {ECampaignAction::Use, {3144, -160, -105}},
-        {ECampaignAction::OpenDoor, {0, 0, 65}, 174}, {ECampaignAction::Walk, {2835, -160, 0}},
-        {ECampaignAction::Use, {2800, -160, -105}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 137},
-        {ECampaignAction::Walk, {2690, -80, 0}}, {ECampaignAction::Walk, {2626, -48, 0}},
+        {ECampaignAction::Fly, {3810, -160, -50}}, {ECampaignAction::Use, {3768, -160, -105}},
+        {ECampaignAction::OpenDoor, {0, 0, 65}, 193}, {ECampaignAction::Fly, {3474, -160, -50}},
+        {ECampaignAction::Fly, {3180, -160, -30}, INDEX_NONE, TEXT("L153's flight potion clears the return corridor")},
+        {ECampaignAction::UseLockedDoor, {3144, -160, -75}, 174}, {ECampaignAction::Fly, {3170, -160, -30}},
+        {ECampaignAction::Fly, {3088, -160, -30}}, {ECampaignAction::Fly, {2835, -160, -44}},
+        {ECampaignAction::UseLockedDoor, {2800, -160, -75}, 137},
+        {ECampaignAction::Fly, {2690, -80, -44}},
+        {ECampaignAction::FlightEnded, {}, INDEX_NONE, TEXT("L153's flight ends before climbing the return stairs")},
+        {ECampaignAction::Walk, {2626, -48, 0}},
         {ECampaignAction::Walk, {2578, -64, 0}}, {ECampaignAction::Walk, {2458, -160, 0}},
         {ECampaignAction::Walk, {2040, -160, 0}}, {ECampaignAction::Use, {2000, -160, -105}},
         {ECampaignAction::OpenDoor, {0, 0, 65}, 130}, {ECampaignAction::Walk, {1786, -144, 0}},
@@ -1575,6 +1637,14 @@ namespace
         {ECampaignAction::Walk, {1999, 1082, 0}}, {ECampaignAction::Walk, {1900, 1180, 0}},
         {ECampaignAction::TouchSector, {1900, 1240, 0}, 35}, {ECampaignAction::Walk, {1900, 1180, 0}},
         {ECampaignAction::Floor, {0, 0, -16}, 192, TEXT("L75's pit trigger lowers the passage platform")},
+        {ECampaignAction::UseFlightItem, {}, NativeWadRules::FlyingPotion},
+        {ECampaignAction::Fly, {1764, 1328, 50}},
+        {ECampaignAction::Fly, {1764, 1328, -1738}},
+        {ECampaignAction::Pickup, {1742, 1303, 0}, NativeWadRules::FlyingPotion, TEXT("L75's authored flight potion in the pit")},
+        {ECampaignAction::Fly, {1744, 1274, -1738}},
+        {ECampaignAction::Pickup, {1724, 1283, 0}, NativeWadRules::FlyingPotion, TEXT("L75's second authored pit flight potion")},
+        {ECampaignAction::Fly, {1900, 1180, 50}},
+        {ECampaignAction::FlightEnded, {}, INDEX_NONE, TEXT("L75's two collected flight potions are carried out of the pit")},
         {ECampaignAction::Walk, {1999, 1082, 0}}, {ECampaignAction::Walk, {2271, 1054, 0}},
         {ECampaignAction::Walk, {2435, 1186, 0}}, {ECampaignAction::Walk, {2511, 1510, 0}},
         {ECampaignAction::Walk, {2323, 1822, 0}}, {ECampaignAction::Walk, {2059, 1859, 0}},
@@ -1631,7 +1701,10 @@ namespace
         {ECampaignAction::OpenDoor, {0, 0, 65}, 27}, {ECampaignAction::Walk, {-1694, 1698, 0}},
         {ECampaignAction::Use, {-1640, 1698, 43}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 206},
         {ECampaignAction::Walk, {-1397, 1698, 0}}, {ECampaignAction::Walk, {-983, 1793, 0}},
+        {ECampaignAction::Pickup, {-1001, 1802, 0}, GreaterHealingPotion, TEXT("L10's western platform healing potion")},
         {ECampaignAction::Pickup, {-956, 1771, 12}, NativeWadRules::ElmoreKey6, TEXT("the original L10 platform key")},
+        {ECampaignAction::Walk, {-932, 1753, 0}},
+        {ECampaignAction::Pickup, {-914, 1739, 0}, GreaterHealingPotion, TEXT("L10's eastern platform healing potion")},
         {ECampaignAction::Walk, {-957, 2274, 0}}, {ECampaignAction::Walk, {-1189, 2586, 0}},
         {ECampaignAction::Walk, {-1157, 2698, 0}}, {ECampaignAction::Walk, {-969, 2905, 0}},
         {ECampaignAction::Use, {-969, 2932, 128}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 200},
@@ -1658,6 +1731,8 @@ namespace
         {ECampaignAction::Walk, {2486, 3176, 0}}, {ECampaignAction::Walk, {1568, 3320, 0}},
         {ECampaignAction::Use, {1568, 3360, 63}}, {ECampaignAction::OpenDoor, {0, 0, 60}, 170},
         {ECampaignAction::Walk, {1568, 3420, 0}}, {ECampaignAction::Walk, {1512, 3540, 0}},
+        {ECampaignAction::Walk, {1436, 3640, 0}},
+        {ECampaignAction::Pickup, {1424, 3662, 0}, GreaterHealingPotion, TEXT("L12's healing potion before the key door")},
         {ECampaignAction::Walk, {1352, 3553, 0}}, {ECampaignAction::Walk, {1320, 3616, 0}},
         {ECampaignAction::Use, {1276, 3616, 63}}, {ECampaignAction::OpenDoor, {0, 0, 65}, 81},
         {ECampaignAction::Walk, {1088, 3613, 0}}, {ECampaignAction::TouchSector, {1088, 3551, 0}, 52},
@@ -1848,6 +1923,7 @@ namespace
         int32 HealthBeforeCast = INDEX_NONE;
         int32 ManaBeforeCast = INDEX_NONE;
         int32 FoodBeforeBerry = INDEX_NONE;
+        int32 SliceStartingBerries = 0;
         int32 ExperienceBeforeTravel = INDEX_NONE;
         int32 HealthBeforeTravel = INDEX_NONE;
         int32 ManaBeforeTravel = INDEX_NONE;
@@ -1880,6 +1956,7 @@ namespace
         bool bRiverReload = false;
         ERiverStage RiverStage = ERiverStage::Spawn;
         FVector DriftStart = FVector::ZeroVector;
+        FVector ProjectileTargetStart = FVector::ZeroVector;
         FVector2D InitialWaterUV = FVector2D::ZeroVector;
         double DriftStarted = 0.0;
         double RiverProgressTime = 0.0;
@@ -1891,6 +1968,62 @@ namespace
         bool bEconomyReload = false;
         bool bRangedReview = false;
         bool bTimedItemReload = false;
+        bool bWandReview = false;
+        bool bBoulderReview = false;
+        bool bBoulder75Review = false;
+        bool bBoulderPitTriggered = false;
+        bool bElymasPresentationReview = false;
+        bool bElymasPlatePrimed = false;
+        TWeakObjectPtr<ANativeWadBolt> PresentationBolt;
+        FVector PresentationPreviousPosition = FVector::ZeroVector;
+        FVector PresentationPreviousDelta = FVector::ZeroVector;
+        FVector PresentationPlayerStart = FVector::ZeroVector;
+        bool bAmmoReview = false;
+        bool bAmmoBannerReview = false;
+        bool bRuneProjectileReview = false;
+        bool bRuneProjectileReload = false;
+        int32 RuneProjectileIndex = 0;
+        int32 RuneProjectileCastsBefore = 0;
+        bool bConfusionWandReview = false;
+        bool bConfusionWandReload = false;
+        FRotator ConfusionHeading = FRotator::ZeroRotator;
+        bool bResistanceReview = false;
+        bool bResistanceReload = false;
+        int32 ResistancePoisonBefore = 0;
+        int32 ResistanceManaBefore = 0;
+        bool bUtilityReview = false;
+        bool bUtilityReload = false;
+        bool bAmmoReload = false;
+        bool bReviveReview = false;
+        bool bReviveReload = false;
+        bool bMusicReview = false;
+        bool bCharacterReview = false;
+        bool bCharacterReload = false;
+        bool bClassEquipmentReview = false;
+        bool bPendingCharacterReview = false;
+        bool bElementalMeleeReview = false;
+        bool bProjectileWandsReview = false;
+        bool bRuneOwnershipReview = false;
+        bool bLegacyRuneReview = false;
+        bool bAuthoredGeneratorReview = false;
+        bool bUndeadWizardGeneratorReview = false;
+        int32 ProjectileWandIndex = 0;
+        bool bInfiniteGeneratorReview = false;
+        bool bLavaTerrainReview = false;
+        TWeakObjectPtr<ANativeWadGuardian> ElementalTarget;
+        TOptional<FVector2D> CampaignObstacleDetour;
+        TOptional<FVector2D> CampaignObstacleAfter;
+        TWeakObjectPtr<ANativeWadGuardian> WalkBlockingEnemy;
+        bool bCampaignConcealmentVerified = false;
+        bool bFightingForeground = false;
+        int32 CombatStrafe = 0;
+        bool bFireballWandReview = false;
+        FVector ReviveEntrance = FVector::ZeroVector;
+        TWeakObjectPtr<ANativeWadGuardian> AmmoTarget;
+        TWeakObjectPtr<ANativeWadGuardian> LighthouseTarget;
+        int32 LighthouseStairPoint = INDEX_NONE;
+        TWeakObjectPtr<ANativeWadGuardian> RouteCombatTarget;
+        double RouteCombatStarted = 0.0;
         bool bInventoryReview = false;
         bool bInventoryReload = false;
         bool bItemUseReview = false;
@@ -1967,6 +2100,7 @@ namespace
                 UE_LOG(LogTemp, Display, TEXT("L20 movement timing: %d sampled frames, %d over 100 ms, longest %.1f ms."),
                     WalkFrameCount, WalkHitchCount, LongestWalkFrame * 1000.0);
             }
+            if (Player) { SetCombatStrafe(*Player, 0); }
             if (Player && bWalking)
             {
                 SendKey(*Player, EKeys::W, IE_Released);
@@ -2016,10 +2150,38 @@ namespace
             }
         }
 
+        void SetCombatStrafe(ANativeWadPlayer& Player, int32 Direction)
+        {
+            if (CombatStrafe == Direction) { return; }
+            if (CombatStrafe != 0) { SendKey(Player, CombatStrafe < 0 ? EKeys::A : EKeys::D, IE_Released); }
+            CombatStrafe = Direction;
+            Player.GetCharacterMovement()->StopMovementImmediately();
+            if (Direction != 0) { SendKey(Player, Direction < 0 ? EKeys::A : EKeys::D, IE_Pressed); }
+        }
+
+        bool SafeCombatGround(ANativeWadLevel& Level, ANativeWadPlayer& Player, const FVector& Candidate)
+        {
+            const FTransform Transform = Level.GetActorTransform();
+            const FVector Local = Transform.InverseTransformPosition(Candidate);
+            const int32 Sector = Level.FindWadSector(FVector2D(Local));
+            const FVector Feet = Player.GetActorLocation() - FVector::UpVector * Player.GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+            const double Height = Transform.InverseTransformPosition(Feet).Z;
+            FVector2D Limits;
+            return Level.GetSectorSurfaceHeights(Sector, Limits) && FMath::Abs(Level.GetWalkingHeight(Sector) - Height) <= 24.0
+                && Limits.Y - Limits.X >= 56.0;
+        }
+
         void BeginCampaignMap(UWorld& Current, ANativeWadPlayer& Player)
         {
             Stop(Player);
+            SetCombatStrafe(Player, 0);
             SetFlightThrust(Player, false);
+            CombatWeapon = INDEX_NONE;
+            NextElymasCombatSample = 0.0;
+            CampaignObstacleDetour.Reset();
+            CampaignObstacleAfter.Reset();
+            WalkBlockingEnemy.Reset();
+            bCampaignConcealmentVerified = false;
             bCampaignArrivalVerified = false;
             if (HeldKey)
             {
@@ -2045,7 +2207,8 @@ namespace
                 : CampaignRoute && (CampaignRoute->Map == 34 || CampaignRoute->Map == 60
                     || CampaignRoute->Map == 151 || CampaignRoute->Map == 152 || CampaignRoute->Map == 153
                     || CampaignRoute->Quest == 3) ? 12.0
-                : CampaignRoute && (CampaignRoute->Map == 20 || CampaignRoute->Map == 64 || CampaignRoute->Map == 65) ? 8.0 : 5.0;
+                : CampaignRoute && (CampaignRoute->Map == 20 || CampaignRoute->Map == 64 || CampaignRoute->Map == 65
+                    || CampaignRoute->Map == 70 || CampaignRoute->Map == 71) ? 8.0 : 5.0;
             if (Offset.SizeSquared() < FMath::Square(AcceptanceRadius))
             {
                 Stop(Player);
@@ -2107,8 +2270,12 @@ namespace
             HeldKey = Key;
         }
 
-        void RecordTownCharacter(const ANativeWadPlayer& Player)
+        void RecordTownCharacter(ANativeWadPlayer& Player)
         {
+            if (Player.CanChooseWadClass())
+            {
+                Player.ChooseWadClass(Player.GetCharacterClass());
+            }
             ExperienceBeforeTravel = Player.GetExperience();
             HealthBeforeTravel = Player.GetHealth();
             ManaBeforeTravel = Player.GetMana();
@@ -2281,6 +2448,10 @@ namespace
             if (HeldKey)
             {
                 SendKey(Player, HeldKey.GetValue(), IE_Released);
+                if (HeldKey.GetValue() == EKeys::NumPadSeven || HeldKey.GetValue() == EKeys::NumPadSix)
+                {
+                    SendKey(Player, EKeys::LeftAlt, IE_Released);
+                }
                 HeldKey.Reset();
             }
             APlayerController* Controller = Cast<APlayerController>(Player.GetController());
@@ -2305,9 +2476,20 @@ namespace
             switch (NextPoint)
             {
             case 0:
-                if (!Player.GetCarriedItems().IsEmpty() || Player.GetExperience() != 0)
+                if (Player.HasRestoredWadCheckpoint())
                 {
-                    return Finish(&Player, TEXT("the classic HUD baseline needs a fresh character"));
+                    const auto* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+                    if (!Travel || Player.GetItemCount(105) != 1 || Travel->Quest.GetWalletCopper() != 6043
+                        || Travel->Quest.BankCopper != 9876)
+                    {
+                        return Finish(&Player, TEXT("the withdrawn five-coin pile or the remaining balances changed after reload"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the withdrawn coin pile and remaining finances after a process restart."));
+                    return Finish(&Player);
+                }
+                if (Player.GetCarriedItems().ContainsByPredicate([](int32 Type) { return !NativeWadRules::IsRuneItem(Type); }) || Player.GetExperience() != 0)
+                {
+                    return Finish(&Player, TEXT("the classic HUD baseline needs a fresh character with only installed runes"));
                 }
                 if (const int32 Result = Capture(TEXT("exploring")); Result != 0)
                 {
@@ -2318,6 +2500,7 @@ namespace
                     Player.ReceiveEncounterHit(300);
                     Player.CollectItem(NativeWadRules::IronDagger);
                     Player.CollectItem(NativeWadRules::Berry);
+                    SendKey(Player, EKeys::LeftAlt, IE_Pressed);
                     Press(Player, EKeys::NumPadSeven);
                     ++NextPoint;
                 }
@@ -2342,11 +2525,38 @@ namespace
                     {
                         return Finish(&Player, TEXT("could not capture the classic inventory"));
                     }
-                    Click({47, 161});
+                    constexpr int32 Helmet = 704;
+                    if (!Player.CollectItem(Helmet))
+                    {
+                        return Finish(&Player, TEXT("could not supply the authored chain helmet"));
+                    }
+                    const int32 Slot = Player.GetCarriedItems().Find(Helmet);
+                    Hud->ClickHUD(Hud->InventorySlotCenter(Slot));
+                    Hud->ClickHUD(Hud->InventorySlotCenter(INDEX_NONE));
+                    Click({265, 144});
+                    if (!Player.IsWornInventorySlot(Slot))
+                    {
+                        return Finish(&Player, TEXT("the chain helmet was not equipped from the bag"));
+                    }
                     ++NextPoint;
                 }
                 break;
             case 3:
+                if (const int32 Result = Capture(TEXT("equipment")); Result != 0)
+                {
+                    constexpr int32 Helmet = 704;
+                    const int32 Slot = Player.GetCarriedItems().Find(Helmet);
+                    Click({250, 24});
+                    if (Result < 0 || Player.IsWornInventorySlot(Slot))
+                    {
+                        return Finish(&Player, TEXT("the equipment form did not capture or remove the worn helmet"));
+                    }
+                    Click({265, 144});
+                    Click({47, 161});
+                    ++NextPoint;
+                }
+                break;
+            case 4:
                 if (const int32 Result = Capture(TEXT("statistics")); Result != 0)
                 {
                     if (Result < 0)
@@ -2362,7 +2572,7 @@ namespace
                     ++NextPoint;
                 }
                 break;
-            case 4:
+            case 5:
                 Click({272, 174});
                 Click({289, 174});
                 if (Player.GetRunes() != TEXT("45"))
@@ -2371,7 +2581,7 @@ namespace
                 }
                 ++NextPoint;
                 break;
-            case 5:
+            case 6:
                 if (const int32 Result = Capture(TEXT("runes")); Result != 0)
                 {
                     const int32 Mana = Player.GetMana();
@@ -2380,7 +2590,59 @@ namespace
                     {
                         return Finish(&Player, TEXT("the original Cast button did not spend mana and clear the runes"));
                     }
-                    UE_LOG(LogTemp, Display, TEXT("Verified the classic HUD at the L301 spawn, inventory and ready hand, rune buttons and Cast action."));
+                    auto* Travel = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+                    if (!Travel)
+                    {
+                        return Finish(&Player, TEXT("the classic finances review requires the player purse and bank balance"));
+                    }
+                    Travel->Quest.SetWalletCopper(6543);
+                    Travel->Quest.BankCopper = 9876;
+                    SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                    Press(Player, EKeys::NumPadSix);
+                    ++NextPoint;
+                }
+                break;
+            case 7:
+            {
+                auto& Progress = Player.GetGameInstance()->GetSubsystem<UNativeWadTravelState>()->Quest;
+                Click({220, 49});
+                Click({232, 49});
+                if (!Player.IsInventoryOpen() || Player.GetItemCount(104) != 1 || Player.GetItemCount(105) != 0
+                    || Progress.GetWalletCopper() != 6443)
+                {
+                    return Finish(&Player, TEXT("the finances shortcut or single-coin retrieval did not honor the mouse hand"));
+                }
+                Click({290, 48});
+                Click({232, 49});
+                if (Player.GetItemCount(104) != 0 || Player.GetItemCount(105) != 1 || Progress.GetWalletCopper() != 6043)
+                {
+                    return Finish(&Player, TEXT("the original finances targets did not return the coin and retrieve the five-coin pile"));
+                }
+                Click({290, 48});
+                Click({232, 61});
+                if (Player.GetItemCount(105) != 0 || Player.GetItemCount(103) != 0 || Progress.GetWalletCopper() != 6543
+                    || Progress.BankCopper != 9876)
+                {
+                    return Finish(&Player, TEXT("the finances controls did not preserve the purse and bank balances"));
+                }
+                ++NextPoint;
+                break;
+            }
+            case 8:
+                if (const int32 Result = Capture(TEXT("finances")); Result != 0)
+                {
+                    if (Result < 0)
+                    {
+                        return Finish(&Player, TEXT("could not capture the original finances panel"));
+                    }
+                    Click({232, 49});
+                    Click({46, 175});
+                    if (Player.IsInventoryOpen() || Player.GetItemCount(105) != 1
+                        || !Player.SaveWadCheckpoint(TEXT("NativeWadFinancesReview")))
+                    {
+                        return Finish(&Player, TEXT("the original finances banner button did not close and save the withdrawn pile"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the classic HUD at the L301 spawn, inventory, ready hand, equipment, statistics, rune casting, and finances."));
                     return Finish(&Player);
                 }
                 break;
@@ -5339,53 +5601,168 @@ namespace
 
         bool FightCampaignEncounter(ANativeWadPlayer& Player, ANativeWadGuardian& Boss)
         {
-            const FVector Target = Boss.GetActorLocation();
+            const FVector Target = Boss.GetActorLocation() + FVector::UpVector
+                * Boss.GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.35;
+            if (!bFightingForeground && CampaignRoute && (CampaignRoute->Map == 72 || CampaignRoute->Map == 73 || CampaignRoute->Map == 61))
+            {
+                ANativeWadGuardian* Attacker = nullptr;
+                double Closest = FMath::Min(FMath::Square(55.0), FVector::DistSquared2D(Player.GetActorLocation(), Target) - 225.0);
+                for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                {
+                    const double Range = FVector::DistSquared2D(Player.GetActorLocation(), Enemy->GetActorLocation());
+                    if (*Enemy != &Boss && Enemy->GetSourceType() == (CampaignRoute->Map == 61 ? 1023 : 1011) && !Enemy->IsHidden() && !Enemy->IsDefeated()
+                        && Range < Closest && Enemy->CanSeePlayer(Player)) { Attacker = *Enemy; Closest = Range; }
+                }
+                if (Attacker)
+                {
+                    bFightingForeground = true;
+                    FightCampaignEncounter(Player, *Attacker);
+                    bFightingForeground = false;
+                    return false;
+                }
+            }
+            if (!bFightingForeground && !Boss.IsDefeated())
+            {
+                const FVector Start = Player.GetPawnViewLocation();
+                FHitResult Hit;
+                const FCollisionQueryParams Query(SCENE_QUERY_STAT(CampaignForegroundEnemy), false, &Player);
+                Player.GetWorld()->LineTraceSingleByChannel(Hit, Start,
+                    Start + (Target - Start).GetSafeNormal() * 100.0, ECC_Visibility, Query);
+                if (auto* Foreground = Cast<ANativeWadGuardian>(Hit.GetActor()); Foreground && Foreground != &Boss && !Foreground->IsDefeated())
+                {
+                    bFightingForeground = true;
+                    FightCampaignEncounter(Player, *Foreground);
+                    bFightingForeground = false;
+                    return false;
+                }
+            }
+            const FVector View = Player.GetPawnViewLocation();
+            FHitResult MeleeSight;
+            const FCollisionQueryParams SightQuery(SCENE_QUERY_STAT(CampaignMeleeSight), false, &Player);
+            Player.GetWorld()->LineTraceSingleByChannel(MeleeSight, View,
+                View + (Target - View).GetSafeNormal() * 110.0, ECC_Visibility, SightQuery);
+            int32 Strafe = 0;
+            if (Cast<ANativeWadScenery>(MeleeSight.GetActor()) && CampaignRoute && (CampaignRoute->Map == 73 || CampaignRoute->Map == 61))
+            {
+                const FVector Toward = (Target - Player.GetActorLocation()).GetSafeNormal2D();
+                const FVector Right(-Toward.Y, Toward.X, 0);
+                const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+                const UCapsuleComponent* Capsule = Player.GetCapsuleComponent();
+                for (const int32 Sign : {-1, 1})
+                {
+                    const FVector Candidate = Player.GetActorLocation() + Right * 24.0 * Sign;
+                    FHitResult Hit;
+                    if (Level && SafeCombatGround(**Level, Player, Candidate)
+                        && !Player.GetWorld()->SweepSingleByChannel(Hit, Player.GetActorLocation(), Candidate, FQuat::Identity,
+                            ECC_Pawn, FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), SightQuery, FCollisionResponseParams(Capsule->GetCollisionResponseToChannels())))
+                    {
+                        Strafe = Sign;
+                        break;
+                    }
+                }
+            }
+            SetCombatStrafe(Player, Strafe);
             const double Distance = FVector::Dist2D(Player.GetActorLocation(), Target);
             const bool bExiguus = Boss.GetEncounterName() == TEXT("Exiguus");
             const bool bElymas = Boss.GetEncounterName() == TEXT("Elymas");
-            const bool bSkeleton = Boss.GetEncounterName() == TEXT("Skeleton Knight");
-            const double Now = Player.GetWorld()->GetTimeSeconds();
-            if (bElymas && Now >= NextElymasCombatSample)
+            const bool bSkeleton = Boss.GetEncounterName() == TEXT("Skeleton Knight") || Boss.GetSourceType() == 1025;
+            const bool bLegionaryOrArcher = Boss.GetSourceType() == 1011 || Boss.GetSourceType() == 1014;
+            const bool bShadow = Boss.GetSourceType() == 1003;
+            const bool bGargoyle = Boss.GetSourceType() == 1007;
+            const bool bGriffon = Boss.GetSourceType() == 1023;
+            const int32 RangedWeapon = Player.GetItemCount(902) > 0 ? 902 : 0;
+            const bool bRangedArcher = Boss.GetSourceType() == 1014 && RangedWeapon != 0
+                && Player.GetMana() > 500 && Distance > 96.0;
+            if (Boss.GetSourceType() == 1014 && Player.GetStatusPower(NativeWadRules::ElectricityAttackStatus) == 0
+                && Player.GetItemCount(370) > 0)
             {
-                UE_LOG(LogTemp, Display, TEXT("Elymas combat: boss health %d, player health %d, distance %.1f."),
-                    Boss.GetEncounterHealth(), Player.GetHealth(), Distance);
+                Stop(Player);
+                if (Player.GetReadyItem() != 370 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 370); }
+                else { Press(Player, EKeys::LeftControl); }
+                return false;
+            }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            if ((bElymas || bExiguus || bLegionaryOrArcher || bGriffon) && Now >= NextElymasCombatSample)
+            {
+                UE_LOG(LogTemp, Display, TEXT("%s combat: boss health %d, player health %d, distance %.1f. Player %s, boss %s, ready item %d, weapon %d."),
+                    *Boss.GetEncounterName(), Boss.GetEncounterHealth(), Player.GetHealth(), Distance,
+                    *Player.GetActorLocation().ToCompactString(), *Target.ToCompactString(), Player.GetReadyItem(), CombatWeapon);
+                UE_LOG(LogTemp, Display, TEXT("Combat aim is blocked by %s on %s. Strafe %d."),
+                    *GetNameSafe(MeleeSight.GetComponent()), *GetNameSafe(MeleeSight.GetActor()), Strafe);
                 NextElymasCombatSample = Now + 5.0;
             }
-            // Keep Exiguus outside his melee range while staying clear of the chamber's outer drop.
+            // The eastern chamber has authored stairs down to the approach corridor.
             const FVector2D Location(Player.GetActorLocation());
             const FVector2D Retreat = Location + (Location - FVector2D(Target)).GetSafeNormal() * 24.0;
-            const bool bExiguusRetreat = bExiguus && Distance < 61.0 && Retreat.X > -4110 && Retreat.X < -3610
+            const bool bExiguusRetreat = bExiguus && Distance < 61.0 && Retreat.X > -4110 && Retreat.X < -3320
                 && Retreat.Y > 3480 && Retreat.Y < 3715;
-            const bool bElymasRetreat = bElymas && Distance < 61.0 && Retreat.X > -360 && Retreat.X < -227
-                && Retreat.Y > 975 && Retreat.Y < 1100;
-            const bool bBack = !Boss.IsDefeated() && (bExiguusRetreat || bElymasRetreat || (bSkeleton && Distance < 43.0));
+            bool bElymasRetreat = false;
+            if (bElymas && Distance < 61.0)
+            {
+                const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+                if (Level)
+                {
+                    const FTransform Transform = (*Level)->GetActorTransform();
+                    const FVector LocalRetreat = Transform.InverseTransformPosition(FVector(Retreat, Player.GetActorLocation().Z));
+                    const int32 Sector = (*Level)->FindWadSector(FVector2D(LocalRetreat));
+                    FVector2D Heights;
+                    const FVector Feet = Player.GetActorLocation()
+                        - FVector::UpVector * Player.GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+                    const double LocalFeet = Transform.InverseTransformPosition(Feet).Z;
+                    bElymasRetreat = (*Level)->GetSectorSurfaceHeights(Sector, Heights)
+                        && FMath::Abs(Heights.X - LocalFeet) <= 24.0 && Heights.Y - Heights.X >= 56.0;
+                }
+            }
+            const TActorIterator<ANativeWadLevel> CombatLevel(Player.GetWorld());
+            const bool bGriffonRetreat = bGriffon && Distance < 84.0 && CombatLevel
+                && SafeCombatGround(**CombatLevel, Player, FVector(Retreat, Player.GetActorLocation().Z));
+            const bool bBack = !Boss.IsDefeated() && !bRangedArcher && Strafe == 0 && !Player.IsConcealed() && (bExiguusRetreat || bElymasRetreat || bGriffonRetreat || (bSkeleton && Distance < 43.0)
+                || ((bLegionaryOrArcher || bShadow) && Distance < 61.0) || (bGargoyle && Distance < 72.0));
             if (bBack != bCombatBacking)
             {
                 SendKey(Player, EKeys::S, bBack ? IE_Pressed : IE_Released);
                 bCombatBacking = bBack;
+                if (!bBack)
+                {
+                    Player.GetCharacterMovement()->StopMovementImmediately();
+                }
             }
             if (Boss.IsDefeated())
             {
+                SetCombatStrafe(Player, 0);
                 Stop(Player);
                 return true;
             }
-            if (CombatWeapon == INDEX_NONE)
-            {
-                CombatWeapon = Player.GetItemCount(IronLongSword) > 0 ? IronLongSword : Player.GetEquippedWeapon();
-                if (CombatWeapon <= 0 && Player.GetItemCount(NativeWadRules::IronDagger) > 0)
-                {
-                    CombatWeapon = NativeWadRules::IronDagger;
-                }
-            }
-            if (Distance > (bExiguus || bElymas ? 77.0 : bSkeleton ? 64.0 : 54.0))
+            CombatWeapon = BestReviewMeleeWeapon(Player);
+            const double Reach = bRangedArcher ? 300.0 : bGargoyle || bGriffon ? 86.0 : bExiguus || bElymas ? 77.0
+                : bLegionaryOrArcher || bShadow ? 74.0 : bSkeleton ? 64.0 : 54.0;
+            if (Strafe != 0) { Stop(Player); }
+            else if (!bBack && Distance > Reach)
             {
                 WalkTo(Player, FVector2D(Target));
             }
             else
             {
                 Stop(Player);
+                if (!bBack)
+                {
+                    // Flying has no braking deceleration. Clear input-lag drift throughout the idle frames.
+                    Player.GetCharacterMovement()->StopMovementImmediately();
+                }
             }
             Aim(Player, Target);
+            if (Boss.GetSourceType() == 1014 && Player.GetMana() <= 100 && Player.GetItemCount(362) > 0)
+            {
+                if (Player.GetReadyItem() != 362 || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, 362);
+                }
+                else
+                {
+                    Press(Player, EKeys::LeftControl);
+                }
+                return false;
+            }
             const int32 Potion = Player.GetItemCount(GreaterHealingPotion) > 0 ? GreaterHealingPotion : HealingPotion;
             if (Player.GetHealth() < Player.GetMaxHealth() / 2 && Player.GetItemCount(Potion) > 0)
             {
@@ -5399,17 +5776,21 @@ namespace
                 }
                 return false;
             }
-            if (Player.GetHealth() < Player.GetMaxHealth() / 2 && Player.GetMana() >= NativeWadRules::RejuvenateCost)
+            if (Player.GetHealth() < (bGriffon ? 1000 : Player.GetMaxHealth() / 2) && Player.GetMana() >= NativeWadRules::RejuvenateCost)
             {
                 CastCampaignRejuvenate(Player);
                 return false;
             }
-            if (CombatWeapon > 0 && (Player.GetReadyItem() != CombatWeapon || Player.IsInventoryOpen()))
+            const int32 Weapon = bRangedArcher ? RangedWeapon : CombatWeapon;
+            if (Weapon > 0 && (Player.GetReadyItem() != Weapon || Player.IsInventoryOpen()))
             {
-                ReadyCampaignItem(Player, CombatWeapon);
+                ReadyCampaignItem(Player, Weapon);
                 return false;
             }
-            if (Distance < 96.0) { Press(Player, EKeys::LeftControl); }
+            if (Strafe == 0 && Distance < (bRangedArcher ? 450.0 : 96.0) && (!bRangedArcher || Player.GetMana() > 300))
+            {
+                Press(Player, EKeys::LeftControl);
+            }
             return false;
         }
 
@@ -5881,11 +6262,20 @@ namespace
             if (CampaignPickupCount == INDEX_NONE && (Player.GetCharacterMovement()->IsMovingOnGround() || Player.CanFly() || bAirborne))
             {
                 CampaignPickupCount = Player.GetItemCount(Type);
+                CampaignNextUseTime = 0.0;
+            }
+            if (CampaignPickupCount != INDEX_NONE && Player.GetItemCount(Type) == CampaignPickupCount + 1)
+            {
+                return true;
+            }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            if (CampaignPickupCount != INDEX_NONE && Now >= CampaignNextUseTime)
+            {
                 Aim(Player, Position);
                 Press(Player, EKeys::E);
-                return false;
+                CampaignNextUseTime = Now + 0.4;
             }
-            return CampaignPickupCount != INDEX_NONE && Player.GetItemCount(Type) == CampaignPickupCount + 1;
+            return false;
         }
 
         void CastCampaignRejuvenate(ANativeWadPlayer& Player)
@@ -5938,13 +6328,23 @@ namespace
                 return PlaceReviewPlayer(Level, Player, FVector2D(Step.Target));
             case ECampaignAction::Walk:
             {
+                if (ANativeWadGuardian* Blocking = WalkBlockingEnemy.Get(); Blocking && Blocking->GetWorld() == Player.GetWorld()
+                    && !Blocking->IsDefeated())
+                {
+                    FightCampaignEncounter(Player, *Blocking);
+                    CampaignStepTime = -1.0;
+                    return false;
+                }
+                WalkBlockingEnemy.Reset();
                 const bool bElmore = CampaignRoute->Quest == 2;
+                const bool bRangedApproach = CampaignRoute->Map == 41 || CampaignRoute->Map == 70 || CampaignRoute->Map == 71;
                 const int32 Potion = Player.GetItemCount(GreaterHealingPotion) > 0 ? GreaterHealingPotion : HealingPotion;
-                const int32 HealBelow = CampaignRoute->Map == 73 || CampaignRoute->Map == 51 || CampaignRoute->Map == 44 ? 2300
+                const int32 HealBelow = CampaignRoute->Map == 73 || CampaignRoute->Map == 51 || CampaignRoute->Map == 44 || bRangedApproach
+                    ? FMath::Min(2300, Player.GetMaxHealth() * 3 / 4)
                     : Potion == GreaterHealingPotion ? 1050 : 1300;
                 const bool bNeedsHealing = Player.GetHealth() < HealBelow;
                 const bool bUsePotion = bElmore || ((bNeedsHealing || Player.IsInventoryOpen())
-                    && (CampaignRoute->Quest == 3 || CampaignRoute->Quest == 5 || CampaignRoute->Map == 51 || CampaignRoute->Map == 44
+                    && (CampaignRoute->Quest == 3 || CampaignRoute->Quest == 5 || CampaignRoute->Map == 51 || CampaignRoute->Map == 44 || bRangedApproach
                         || FParse::Param(FCommandLine::Get(), TEXT("WadReviewPlayerCombat"))));
                 if (bUsePotion && Player.GetItemCount(Potion) > 0)
                 {
@@ -5959,10 +6359,92 @@ namespace
                     }
                 }
                 else if ((CampaignRoute->Map == 20 || CampaignRoute->Map == 60 || CampaignRoute->Quest == 3
-                    || CampaignRoute->Quest == 5 || bElmore)
-                    && (Player.GetHealth() < (CampaignRoute->Map == 34 ? 1450 : 1050) || !Player.GetRunes().IsEmpty()))
+                    || CampaignRoute->Quest == 5 || bElmore || bRangedApproach)
+                    && (Player.GetHealth() < (bRangedApproach ? HealBelow : CampaignRoute->Map == 34 ? 1450 : 1050)
+                        || !Player.GetRunes().IsEmpty()))
                 {
                     CastCampaignRejuvenate(Player);
+                }
+                if (CampaignRoute->Map == 73 && Player.CanFly())
+                {
+                    FVector2D Heights;
+                    if (Level.GetSectorSurfaceHeights(Level.FindWadSector(FVector2D(Player.GetActorLocation())), Heights))
+                    {
+                        const double Desired = Level.GetActorLocation().Z + FMath::Min(Heights.X + ANativeWadPlayer::CapsuleHalfHeight + 90.0,
+                            Heights.Y - ANativeWadPlayer::CapsuleHalfHeight - 2.0);
+                        FVector2D AheadHeights;
+                        const FVector2D Position(Player.GetActorLocation());
+                        const FVector2D Ahead = Position + (FVector2D(Step.Target) - Position).GetClampedToMaxSize(48.0);
+                        const double SafeDesired = Level.GetSectorSurfaceHeights(Level.FindWadSector(Ahead), AheadHeights)
+                            ? FMath::Min(Desired, Level.GetActorLocation().Z + AheadHeights.Y - ANativeWadPlayer::CapsuleHalfHeight - 2.0) : Desired;
+                        const double Difference = SafeDesired - Player.GetActorLocation().Z;
+                        SetFlightThrust(Player, Difference > 5.0);
+                        if (FMath::Abs(Difference) > 24.0) { Stop(Player); return false; }
+                    }
+                }
+                if (CampaignRoute->Map == 70 || CampaignRoute->Map == 71)
+                {
+                    if (CampaignObstacleDetour)
+                    {
+                        if (WalkTo(Player, CampaignObstacleDetour.GetValue()))
+                        {
+                            CampaignObstacleDetour = CampaignObstacleAfter;
+                            CampaignObstacleAfter.Reset();
+                        }
+                        return false;
+                    }
+                    const FVector Start = Player.GetActorLocation();
+                    const FVector End(Step.Target.X, Step.Target.Y, Start.Z);
+                    const UCapsuleComponent* Capsule = Player.GetCapsuleComponent();
+                    const FCollisionResponseParams Responses(Capsule->GetCollisionResponseToChannels());
+                    const FCollisionShape Shape = FCollisionShape::MakeCapsule(
+                        Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight());
+                    FCollisionQueryParams Query(SCENE_QUERY_STAT(CampaignSceneryDetour), false, &Player);
+                    Query.bFindInitialOverlaps = false;
+                    FHitResult Obstacle;
+                    if (Player.GetWorld()->SweepSingleByChannel(Obstacle, Start, End, FQuat::Identity, ECC_Pawn, Shape, Query, Responses)
+                        && Obstacle.Distance < 96.0
+                        && (Cast<ANativeWadScenery>(Obstacle.GetActor())
+                            || ((CampaignRoute->Map == 71 || CampaignRoute->Map == 70) && Cast<ANativeWadGuardian>(Obstacle.GetActor()))))
+                    {
+                        if ((CampaignRoute->Map == 71 || CampaignRoute->Map == 70) && Cast<ANativeWadGuardian>(Obstacle.GetActor())
+                            && FVector::DistSquared2D(Start, End) < FMath::Square(40.0))
+                        {
+                            UE_LOG(LogTemp, Display, TEXT("The concealed tower replay continues from beside the archer occupying waypoint %s."),
+                                *End.ToCompactString());
+                            return true;
+                        }
+                        const FVector Direction = (End - Start).GetSafeNormal2D();
+                        const FVector Side(-Direction.Y, Direction.X, 0);
+                        const FVector Extent = Obstacle.GetComponent()->Bounds.BoxExtent;
+                        const bool bCreature = Cast<ANativeWadGuardian>(Obstacle.GetActor()) != nullptr;
+                        const double Clearance = (bCreature ? 1.0 : 2.0) * (FMath::Max(Extent.X, Extent.Y) + Capsule->GetScaledCapsuleRadius()) + 12.0;
+                        const double ForwardClearance = bCreature ? Obstacle.Distance + 2.0 * Clearance : Clearance;
+                        for (const double Sign : {1.0, -1.0})
+                        {
+                            const FVector Detour = Start + Side * Clearance * Sign;
+                            const FVector After = Detour + Direction * ForwardClearance;
+                            FHitResult Hit;
+                            if (SafeCombatGround(Level, Player, Detour) && SafeCombatGround(Level, Player, After)
+                                && !Player.GetWorld()->SweepSingleByChannel(Hit, Start, Detour, FQuat::Identity, ECC_Pawn, Shape, Query, Responses)
+                                && !Player.GetWorld()->SweepSingleByChannel(Hit, Detour, After, FQuat::Identity, ECC_Pawn, Shape, Query, Responses))
+                            {
+                                CampaignObstacleDetour = FVector2D(Detour);
+                                CampaignObstacleAfter = FVector2D(After);
+                                UE_LOG(LogTemp, Display, TEXT("The campaign replay walks around obstacle %s via %s."),
+                                    *Obstacle.GetActor()->GetActorNameOrLabel(), *Detour.ToCompactString());
+                                return false;
+                            }
+                        }
+                        if (auto* Blocking = Cast<ANativeWadGuardian>(Obstacle.GetActor()))
+                        {
+                            WalkBlockingEnemy = Blocking;
+                            Stop(Player);
+                            FightCampaignEncounter(Player, *Blocking);
+                            CampaignStepTime = -1.0;
+                            return false;
+                        }
+                    }
                 }
                 return WalkTo(Player, FVector2D(Step.Target));
             }
@@ -5987,6 +6469,69 @@ namespace
                 WalkTo(Player, FVector2D(Step.Target));
                 return false;
             }
+            case ECampaignAction::WaitBoulder:
+            {
+                Stop(Player);
+                const FName Tag(*FString::Printf(TEXT("WAD Creature Thing %d"), Step.Index));
+                for (TActorIterator<ANativeWadGuardian> Hazard(Player.GetWorld()); Hazard; ++Hazard)
+                {
+                    if (Hazard->ActorHasTag(Tag))
+                    {
+                        const double X = Hazard->GetActorLocation().X;
+                        return X >= Step.Target.X && X <= Step.Target.Y;
+                    }
+                }
+                return true;
+            }
+            case ECampaignAction::FireWand:
+            {
+                using namespace NativeWadRules;
+                if (!FParse::Param(FCommandLine::Get(), TEXT("WadReviewFireWand")))
+                {
+                    return true;
+                }
+                ANativeWadGuardian* Apollo = nullptr;
+                for (TActorIterator<ANativeWadGuardian> Target(Player.GetWorld()); Target; ++Target)
+                {
+                    if (Target->ActorHasTag(TEXT("WAD Creature Thing 29")))
+                    {
+                        Apollo = *Target;
+                        break;
+                    }
+                }
+                if (!Apollo)
+                {
+                    return false;
+                }
+                if (bCampaignActionStarted)
+                {
+                    if (Apollo->GetEncounterHealth() != HealthBeforeCast - PlasmaDamage / 2
+                        || Player.GetItemCount(Step.Index) != 1 || Player.GetMana() > ManaBeforeTravel - DisintegrationManaCost)
+                    {
+                        return false;
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified the L72 wand dealt %d damage to the fire-resistant Apollo."),
+                        PlasmaDamage / 2);
+                    return true;
+                }
+                if (Player.GetReadyItem() != Step.Index || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, Step.Index);
+                    return false;
+                }
+                if (Player.GetMana() <= DisintegrationManaCost)
+                {
+                    return false;
+                }
+                UE_LOG(LogTemp, Display, TEXT("The Disintegration review fires from %.1f horizontal units away from Apollo."),
+                    FVector::Dist2D(Player.GetActorLocation(), Apollo->GetActorLocation()));
+                ManaBeforeTravel = Player.GetMana();
+                HealthBeforeCast = Apollo->GetEncounterHealth();
+                Aim(Player, Apollo->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                bCampaignActionStarted = true;
+                return false;
+            }
             case ECampaignAction::UseFlightItem:
                 if (bCampaignActionStarted)
                 {
@@ -6008,7 +6553,9 @@ namespace
                 return !Player.CanFly() && Player.GetCharacterMovement()->IsMovingOnGround();
             case ECampaignAction::Fly:
             {
-                if (CampaignRoute->Map == 73 && (Player.GetHealth() < 2300 || Player.IsInventoryOpen()))
+                const int32 HealBelow = CampaignRoute->Map == 72 ? Player.GetMaxHealth() * 3 / 4 : 2300;
+                if ((CampaignRoute->Map == 72 || CampaignRoute->Map == 73 || CampaignRoute->Map == 44)
+                    && (Player.GetHealth() < HealBelow || Player.IsInventoryOpen()))
                 {
                     const int32 Potion = Player.GetItemCount(GreaterHealingPotion) > 0 ? GreaterHealingPotion : HealingPotion;
                     if (Player.GetItemCount(Potion) > 0)
@@ -6035,8 +6582,41 @@ namespace
                     Stop(Player);
                     return false;
                 }
+                if (Step.Index > 0 && FVector2D::Distance(FVector2D(Player.GetActorLocation()), FVector2D(Step.Target)) <= Step.Index)
+                {
+                    Stop(Player);
+                    SetFlightThrust(Player, false);
+                    return true;
+                }
                 if (!WalkTo(Player, FVector2D(Step.Target)))
                 {
+                    if (CampaignRoute->Map == 72 || CampaignRoute->Map == 73)
+                    {
+                        const UCapsuleComponent* Capsule = Player.GetCapsuleComponent();
+                        const FVector Start = Player.GetActorLocation();
+                        const FVector Direction = (FVector(Step.Target.X, Step.Target.Y, Start.Z) - Start).GetSafeNormal();
+                        FCollisionQueryParams Query(SCENE_QUERY_STAT(CampaignFlyingPassage), false, &Player);
+                        Query.bFindInitialOverlaps = false;
+                        FHitResult Hit;
+                        Player.GetWorld()->SweepSingleByChannel(Hit, Start, Start + Direction * 32.0, FQuat::Identity,
+                            ECC_Pawn, FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(),
+                                Capsule->GetScaledCapsuleHalfHeight()), Query);
+                        if (auto* Blocker = Cast<ANativeWadGuardian>(Hit.GetActor());
+                            Blocker && !Blocker->IsDefeated())
+                        {
+                            Aim(Player, Blocker->GetActorLocation() + FVector(0, 0, Blocker->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() * 0.35));
+                            CampaignStepTime = -1.0;
+                            const int32 Weapon = BestReviewMeleeWeapon(Player);
+                            if (Player.GetReadyItem() != Weapon || Player.IsInventoryOpen())
+                            {
+                                ReadyCampaignItem(Player, Weapon);
+                            }
+                            else
+                            {
+                                Press(Player, EKeys::LeftControl);
+                            }
+                        }
+                    }
                     return false;
                 }
                 SetFlightThrust(Player, false);
@@ -6120,6 +6700,26 @@ namespace
             }
             case ECampaignAction::CrossDoor:
             {
+                if (Player.CanFly() && FVector2D::DistSquared(FVector2D(Player.GetActorLocation()), Step.Destination) > FMath::Square(64.0)
+                    && FVector2D::DistSquared(FVector2D(Player.GetActorLocation()), FVector2D(Step.Target)) > FMath::Square(64.0))
+                {
+                    const FCampaignAction Approach{ECampaignAction::Walk, FVector(Step.Destination, 0.0)};
+                    TickCampaignAction(Level, Player, Approach);
+                    return false;
+                }
+                double DoorAimZ = Step.Target.Z;
+                if (Player.CanFly())
+                {
+                    FVector2D Limits;
+                    if (CampaignRoute->Map == 73 && Step.Index == 18) { DoorAimZ += 40.0; }
+                    if (Level.GetSectorSurfaceHeights(Level.FindWadSector(FVector2D(Player.GetActorLocation())), Limits))
+                    {
+                        DoorAimZ = FMath::Min(DoorAimZ, Level.GetActorLocation().Z + Limits.Y - ANativeWadPlayer::CapsuleHalfHeight - 2.0);
+                    }
+                    const double Difference = DoorAimZ - Player.GetActorLocation().Z;
+                    SetFlightThrust(Player, Difference > 5.0);
+                    if (FMath::Abs(Difference) > 12.0) { Stop(Player); return false; }
+                }
                 const FVector2D FarSide(Step.Target);
                 const FVector2D DoorCenter = (FarSide + Step.Destination) * 0.5;
                 const FVector2D Across = (FarSide - Step.Destination).GetSafeNormal();
@@ -6142,7 +6742,7 @@ namespace
                 const double Now = Level.GetWorld()->GetTimeSeconds();
                 if (!bCampaignActionStarted || Now >= CampaignNextUseTime)
                 {
-                    Aim(Player, FVector(DoorCenter - Across * 8.0, Step.Target.Z));
+                    Aim(Player, FVector(DoorCenter - Across * 8.0, DoorAimZ));
                     Press(Player, EKeys::E);
                     CampaignNextUseTime = Now + 0.4;
                     bCampaignActionStarted = true;
@@ -6334,7 +6934,7 @@ namespace
                 {
                     Press(Player, EKeys::Enter);
                 }
-                else if (bWholeCampaign && CampaignLaunch->Quest >= 3 && CampaignLaunch->Quest <= 5 && !bCampaignBoughtSupplies)
+                else if (bCampaignChain && CampaignLaunch->Quest >= 2 && CampaignLaunch->Quest <= 6 && !bCampaignBoughtSupplies)
                 {
                     return TickTownServices(Current, Player, Quest, true);
                 }
@@ -6472,7 +7072,78 @@ namespace
                 }
                 NextPoint = static_cast<int32>(Saved - CampaignRoute->Actions.GetData()) + 1;
             }
+            if ((CampaignRoute->Map == 61 || CampaignRoute->Map == 40) && Player.GetStatusPower(NativeWadRules::LavaWalkStatus) == 0
+                && Player.GetItemCount(813) > 0 && Level->FindLavaSurfaceZ(Player.GetActorLocation()).IsSet())
+            {
+                Stop(Player);
+                if (Player.GetReadyItem() != 813 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 813); }
+                else { Press(Player, EKeys::LeftControl); }
+                CampaignStepTime = -1.0;
+                return true;
+            }
+            if (CampaignRoute->Map == 71 || CampaignRoute->Map == 70)
+            {
+                if (Player.GetStatusPower(NativeWadRules::LavaWalkStatus) == 0 && Player.GetItemCount(813) > (CampaignRoute->Map == 71 ? 2 : 0)
+                    && Level->FindLavaSurfaceZ(Player.GetActorLocation()).IsSet())
+                {
+                    Stop(Player);
+                    if (Player.GetReadyItem() != 813 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 813); }
+                    else { Press(Player, EKeys::LeftControl); }
+                    CampaignStepTime = -1.0;
+                    return true;
+                }
+                if (Player.GetStatusPower(NativeWadRules::InvisibleStatus) == 0 && Player.GetItemCount(361) > (CampaignRoute->Map == 71 ? 3 : 0))
+                {
+                    Stop(Player);
+                    if (Player.GetReadyItem() != 361 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 361); }
+                    else { Press(Player, EKeys::LeftControl); }
+                    CampaignStepTime = -1.0;
+                    return true;
+                }
+                if (!bCampaignConcealmentVerified && Player.IsConcealed() && !Player.GetVelocity().IsNearlyZero())
+                {
+                    int32 HiddenFrom = 0;
+                    for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                    {
+                        if (Enemy->GetSourceType() == 1014 && !Enemy->IsHidden() && !Enemy->IsDefeated())
+                        {
+                            if (Enemy->CanSeePlayer(Player)) { return Finish(&Player, TEXT("an archer could see the concealed campaign character")); }
+                            ++HiddenFrom;
+                        }
+                    }
+                    bCampaignConcealmentVerified = true;
+                    UE_LOG(LogTemp, Display, TEXT("Verified the original invisibility effect conceals the moving campaign character from %d live L%d archers."), HiddenFrom, CampaignRoute->Map);
+                }
+            }
+            if (CampaignRoute->Map == 72 && NextPoint > 2 && !Player.CanFly() && Player.GetItemCount(NativeWadRules::FlyingPotion) > 0)
+            {
+                Stop(Player);
+                SetFlightThrust(Player, false);
+                if (Player.GetReadyItem() != NativeWadRules::FlyingPotion || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, NativeWadRules::FlyingPotion);
+                }
+                else { Press(Player, EKeys::LeftControl); }
+                CampaignStepTime = -1.0;
+                return true;
+            }
             TConstArrayView<FCampaignAction> Actions = CampaignRoute->Actions;
+            if (NextPoint == 0 && CampaignRoute->Map == 73 && !bCampaignArrivedInRun)
+            {
+                const FString Slot(Current.URL.GetOption(TEXT("WadLoad="), TEXT("")));
+                if (Slot == TEXT("NativeWadL73PotionsReview") || Slot == TEXT("NativeWadL73AllPotionsReview") || Slot == TEXT("NativeWadL73RecoveryReview"))
+                {
+                    const FCampaignAction* Saved = Algo::FindByPredicate(Actions, [&](const FCampaignAction& Action)
+                    {
+                        return Action.Action == ECampaignAction::Checkpoint && Slot == Action.Label;
+                    });
+                    if (!Saved || Player.GetItemCount(NativeWadRules::FlyingPotion) < (Slot == TEXT("NativeWadL73AllPotionsReview") ? 3 : Slot == TEXT("NativeWadL73PotionsReview") ? 2 : 1))
+                    {
+                        return Finish(&Player, TEXT("the L73 review checkpoint is missing its carried flight supplies"));
+                    }
+                    NextPoint = int32(Saved - Actions.GetData()) + 1;
+                }
+            }
             if (CampaignRoute->Map == 52 && FCString::Stricmp(Current.URL.GetOption(TEXT("WadLoad="), TEXT("")), TempleExitSlot) == 0)
             {
                 Actions = Campaign52Exit;
@@ -6500,10 +7171,143 @@ namespace
                 ExperienceBeforeTravel = Player.GetExperience();
             }
             const FCampaignAction& Step = Actions[NextPoint];
+            if (CampaignRoute->Map == 34 && Step.Action == ECampaignAction::Walk
+                && FVector2D::DistSquared(FVector2D(Step.Target), FVector2D(-980, 1660)) < FMath::Square(200.0))
+            {
+                ANativeWadGuardian* Nearest = LighthouseTarget.Get();
+                if (!Nearest || Nearest->IsDefeated() || !Nearest->CanSeePlayer(Player))
+                {
+                    Nearest = nullptr;
+                    double Closest = FMath::Square(150.0);
+                    for (TActorIterator<ANativeWadGuardian> Target(&Current); Target; ++Target)
+                    {
+                        const FVector Offset = Target->GetActorLocation() - Player.GetActorLocation();
+                        if ((Target->GetSourceType() == 1003 || Target->GetEncounterName() == TEXT("Skeleton Knight"))
+                            && !Target->IsDefeated() && !Target->IsHidden()
+                            && FMath::Abs(Offset.Z) < 38.0 && Offset.SizeSquared2D() < Closest && Target->CanSeePlayer(Player))
+                        {
+                            Closest = Offset.SizeSquared2D();
+                            Nearest = *Target;
+                        }
+                    }
+                    LighthouseTarget = Nearest;
+                }
+                if (Nearest)
+                {
+                    FightCampaignEncounter(Player, *Nearest);
+                    CampaignStepTime = -1.0;
+                    return true;
+                }
+                if (bCombatBacking)
+                {
+                    SendKey(Player, EKeys::S, IE_Released);
+                    bCombatBacking = false;
+                }
+                const FVector Position = Player.GetActorLocation();
+                // A retreat below the tall boundary must return via the authored stair sectors.
+                if (LighthouseStairPoint == INDEX_NONE && Position.Z < 60.0 && Position.X < -900.0
+                    && FMath::IsWithinInclusive(Position.Y, 1350.0, 1380.0))
+                {
+                    LighthouseStairPoint = 0;
+                }
+                if (LighthouseStairPoint != INDEX_NONE)
+                {
+                    const FVector2D Stair[] = {{-940, 1120}, {-832, 1120}, {-832, 1476}};
+                    if (WalkTo(Player, Stair[LighthouseStairPoint]) && ++LighthouseStairPoint == UE_ARRAY_COUNT(Stair))
+                    {
+                        LighthouseStairPoint = INDEX_NONE;
+                    }
+                    CampaignStepTime = -1.0;
+                    return true;
+                }
+            }
+            if (CampaignRoute->Map == 73)
+            {
+                ANativeWadGuardian* Finished = RouteCombatTarget.Get();
+                if (Finished && Finished->GetWorld() == &Current && Finished->IsDefeated())
+                {
+                    RouteCombatTarget.Reset();
+                    if (NextPoint > 0 && Actions[NextPoint - 1].Action == ECampaignAction::CrossDoor)
+                    {
+                        Stop(Player);
+                        if (bCombatBacking) { SendKey(Player, EKeys::S, IE_Released); bCombatBacking = false; }
+                        SetCombatStrafe(Player, 0);
+                        Player.GetCharacterMovement()->StopMovementImmediately();
+                        --NextPoint;
+                        bCampaignActionStarted = false;
+                        CampaignStepTime = -1.0;
+                        UE_LOG(LogTemp, Display, TEXT("The L73 replay rejoins the last timed doorway after the close-range fight."));
+                        return true;
+                    }
+                }
+            }
+            const int32 ThreatType = CampaignRoute->Map == 72 || CampaignRoute->Map == 73 ? 1011 : CampaignRoute->Map == 70 ? 1014
+                : CampaignRoute->Map == 61 ? 1023 : CampaignRoute->Map == 153 ? 1007 : INDEX_NONE;
+            if (ThreatType != INDEX_NONE && !((CampaignRoute->Map == 72 || CampaignRoute->Map == 73) && Player.CanFly())
+                && !(CampaignRoute->Map == 70 && Player.GetStatusPower(NativeWadRules::InvisibleStatus) > 0)
+                && (Step.Action == ECampaignAction::Walk || Step.Action == ECampaignAction::Use
+                    || (CampaignRoute->Map == 70 && Step.Action == ECampaignAction::TouchSector)
+                    || (CampaignRoute->Map == 61 && Step.Action == ECampaignAction::Jump)))
+            {
+                const FVector Location = Player.GetActorLocation();
+                ANativeWadGuardian* Nearby = RouteCombatTarget.Get();
+                if (!Nearby || Nearby->GetWorld() != &Current || Nearby->GetSourceType() != ThreatType
+                    || Nearby->IsDefeated() || Nearby->IsHidden()
+                    || FVector::DistSquared2D(Nearby->GetActorLocation(), Location) > FMath::Square(CampaignRoute->Map == 70 ? 600.0 : CampaignRoute->Map == 61 ? 400.0 : 200.0)
+                    || FMath::Abs(Nearby->GetActorLocation().Z - Location.Z) >= (CampaignRoute->Map == 61 ? 120.0 : 45.0))
+                {
+                    Nearby = nullptr;
+                    double Closest = FMath::Square(CampaignRoute->Map == 70 ? 450.0 : CampaignRoute->Map == 61 ? 250.0 : 100.0);
+                    for (TActorIterator<ANativeWadGuardian> Target(&Current); Target; ++Target)
+                    {
+                        const FVector Offset = Target->GetActorLocation() - Location;
+                        if (Target->GetSourceType() == ThreatType && !Target->IsDefeated() && !Target->IsHidden()
+                            && Offset.SizeSquared2D() < Closest && FMath::Abs(Offset.Z) < (CampaignRoute->Map == 61 ? 120.0 : 45.0) && Target->CanSeePlayer(Player))
+                        {
+                            Nearby = *Target;
+                            Closest = Offset.SizeSquared2D();
+                        }
+                    }
+                }
+                if (Nearby)
+                {
+                    if (RouteCombatTarget.Get() != Nearby)
+                    {
+                        RouteCombatTarget = Nearby;
+                        RouteCombatStarted = Current.GetTimeSeconds();
+                    }
+                    if (Current.GetTimeSeconds() - RouteCombatStarted > 90.0)
+                    {
+                        return Finish(&Player, *FString::Printf(TEXT("L%d could not clear %s. Creature health %d, player health %d."),
+                            CampaignRoute->Map, *Nearby->GetActorNameOrLabel(), Nearby->GetEncounterHealth(), Player.GetHealth()));
+                    }
+                    FightCampaignEncounter(Player, *Nearby);
+                    CampaignStepTime = -1.0;
+                    return true;
+                }
+                RouteCombatTarget.Reset();
+                if (bCombatBacking)
+                {
+                    SendKey(Player, EKeys::S, IE_Released);
+                    bCombatBacking = false;
+                }
+            }
             if (CampaignRoute->Map == 34 && Step.Action == ECampaignAction::OpenDoor
                 && (Player.GetHealth() < 1450 || !Player.GetRunes().IsEmpty()))
             {
                 CastCampaignRejuvenate(Player);
+            }
+            if (CampaignRoute->Map == 73 && Player.CanFly() && Step.Action != ECampaignAction::Walk
+                && Step.Action != ECampaignAction::Fly && Step.Action != ECampaignAction::CrossDoor
+                && Step.Action != ECampaignAction::FlightEnded)
+            {
+                FVector2D Limits;
+                if (Level->GetSectorSurfaceHeights(Level->FindWadSector(FVector2D(Player.GetActorLocation())), Limits))
+                {
+                    const double Desired = Level->GetActorLocation().Z + FMath::Min(Limits.X + ANativeWadPlayer::CapsuleHalfHeight + 90.0,
+                        Limits.Y - ANativeWadPlayer::CapsuleHalfHeight - 2.0);
+                    SetFlightThrust(Player, Desired - Player.GetActorLocation().Z > 5.0);
+                }
             }
             const double Now = Current.GetTimeSeconds();
             if (CampaignStepTime < 0.0)
@@ -6514,6 +7318,23 @@ namespace
                 || Step.Action == ECampaignAction::FlightEnded || Step.Action == ECampaignAction::DefeatCreature
                 || Step.Action == ECampaignAction::Defeat ? 240.0 : 30.0))
             {
+                if (Step.Action == ECampaignAction::Pickup)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Campaign pickup type %d has inventory count %d, starting count %d. View %s, message %s."),
+                        Step.Index, Player.GetItemCount(Step.Index), CampaignPickupCount,
+                        *Player.GetPawnViewLocation().ToCompactString(), *Player.GetInteractionMessage());
+                    int32 Reported = 0;
+                    for (TActorIterator<ANativeWadPickup> Item(&Current); Item && Reported < 8; ++Item)
+                    {
+                        if (Item->GetItemType() == Step.Index
+                            && FVector::DistSquared2D(Item->GetActorLocation(), Step.Target) < FMath::Square(256.0))
+                        {
+                            UE_LOG(LogTemp, Display, TEXT("Campaign pickup %s at %s, available %d."),
+                                *Item->GetActorNameOrLabel(), *Item->GetActorLocation().ToCompactString(), Item->IsAvailable());
+                            ++Reported;
+                        }
+                    }
+                }
                 FVector2D Heights;
                 if ((Step.Action == ECampaignAction::Floor || Step.Action == ECampaignAction::Ceiling || Step.Action == ECampaignAction::CeilingAtMost
                     || Step.Action == ECampaignAction::OpenDoor) && (*Level)->GetSectorSurfaceHeights(Step.Index, Heights))
@@ -6535,8 +7356,8 @@ namespace
                     FHitResult Hit;
                     Current.SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Pawn,
                         FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), Trace);
-                    UE_LOG(LogTemp, Display, TEXT("Campaign movement at Z%.2f hit %s at %s. Jump peak Z%.2f."),
-                        Start.Z, *GetNameSafe(Hit.GetComponent()), *Hit.ImpactPoint.ToCompactString(), CampaignJumpPeak);
+                    UE_LOG(LogTemp, Display, TEXT("Campaign movement at Z%.2f hit %s on %s at %s. Jump peak Z%.2f."),
+                        Start.Z, *GetNameSafe(Hit.GetComponent()), *GetNameSafe(Hit.GetActor()), *Hit.ImpactPoint.ToCompactString(), CampaignJumpPeak);
                 }
                 return Finish(&Player, *FString::Printf(TEXT("L%d step %d timed out waiting for action %d toward %s"), CampaignRoute->Map,
                     NextPoint, int32(Step.Action), *Step.Target.ToCompactString()));
@@ -6864,15 +7685,31 @@ namespace
             const auto StowItem = [&]() { Click(220, 22); };
             if (TownReview == ETownReview::ServicesLoadout || bCampaignShop)
             {
-                const bool bBuySword = Player.GetItemCount(IronLongSword) == 0;
+                const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+                const int32 Melee = Player.CanUseWadItem(IronLongSword) ? IronLongSword
+                    : Player.CanUseWadItem(NativeWadRules::IronMace) ? Progress.ShopTier >= 4 ? 28873 : NativeWadRules::IronMace : 202;
+                const bool bBuyMelee = Player.GetItemCount(Melee) == 0;
                 const int64 Before = Progress.GetWalletCopper();
-                const int32 SwordPrice = bBuySword ? 600 : 0;
-                const int32 BuyCount = Progress.ResultQuest == 2 ? 6 : int32(FMath::Clamp<int64>((Before - SwordPrice) / 300, 0, 18));
-                const int32 Price = SwordPrice + 300 * BuyCount;
-                const int32 PotionsBefore = Player.GetItemCount(GreaterHealingPotion);
-                if (Progress.ResultQuest < 2 || !Progress.bSucceeded || BuyCount < 6 || Before < Price)
+                const auto ItemPrice = [&](int32 Type)
                 {
-                    return Finish(&Player, TEXT("the provisioned combat run needs a post-Elmore save and enough earned gold"));
+                    const FWadInventoryDetails* Item = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
+                    return Item ? Item->ValueCopper : 0;
+                };
+                const bool bBeforeElmore = bCampaignShop && Progress.ResultQuest == 1;
+                const bool bBeforeDestruction = bCampaignShop && Progress.ResultQuest == 5;
+                const int32 AttackScrolls = bBeforeDestruction ? FMath::Max(0, 3 - Player.GetItemCount(370)) : 0;
+                const int32 InvisibleScrolls = bBeforeDestruction ? FMath::Max(0, 6 - Player.GetItemCount(361)) : 0;
+                const int32 LavaPotions = bBeforeDestruction ? FMath::Max(0, 3 - Player.GetItemCount(813)) : 0;
+                const bool bBuyMana = bBeforeDestruction && Player.GetItemCount(362) == 0;
+                const int32 WeaponPrice = (bBuyMelee ? ItemPrice(Melee) : 0) + AttackScrolls * ItemPrice(370) + InvisibleScrolls * ItemPrice(361) + LavaPotions * ItemPrice(813) + (bBuyMana ? ItemPrice(362) : 0);
+                const int32 PotionLimit = bBeforeElmore || Progress.ResultQuest == 2 ? 6 : 18;
+                const int32 BuyCount = int32(FMath::Clamp<int64>((Before - WeaponPrice) / 300, 0, PotionLimit));
+                const int32 Price = WeaponPrice + 300 * BuyCount;
+                const int32 PotionsBefore = Player.GetItemCount(GreaterHealingPotion);
+                if ((Progress.ResultQuest < 2 && !bBeforeElmore) || !Progress.bSucceeded
+                    || (!bCampaignShop && BuyCount < 6) || Before < Price)
+                {
+                    return Finish(&Player, TEXT("the provisioned combat run needs the previous reward and enough earned gold"));
                 }
                 const auto Buy = [&](int32 Type, int32 Count)
                 {
@@ -6892,19 +7729,37 @@ namespace
                         CloseService();
                     }
                 };
-                if (bBuySword)
+                if (bBuyMelee)
                 {
-                    Buy(IronLongSword, 1);
+                    Buy(Melee, 1);
                 }
-                Buy(GreaterHealingPotion, BuyCount);
-                if (Progress.GetWalletCopper() != Before - Price || Player.GetItemCount(IronLongSword) != 1
+                if (AttackScrolls > 0)
+                {
+                    Buy(370, AttackScrolls);
+                }
+                if (InvisibleScrolls > 0) { Buy(361, InvisibleScrolls); }
+                if (LavaPotions > 0) { Buy(813, LavaPotions); }
+                if (bBuyMana)
+                {
+                    Buy(362, 1);
+                }
+                if (BuyCount > 0)
+                {
+                    Buy(GreaterHealingPotion, BuyCount);
+                }
+                if (Progress.GetWalletCopper() != Before - Price || Player.GetItemCount(Melee) == 0
                     || Player.GetItemCount(GreaterHealingPotion) != PotionsBefore + BuyCount
-                    || !Player.SaveWadCheckpoint(Progress.ResultQuest == 2 ? TEXT("NativeWadUndeadProvisionedTown")
-                        : TEXT("NativeWadProvisionedTownReview")))
+                    || (bBeforeDestruction && (Player.GetItemCount(370) < 3 || Player.GetItemCount(361) < 6 || Player.GetItemCount(813) < 3 || Player.GetItemCount(362) == 0))
+                    || !Player.SaveWadCheckpoint(bBeforeElmore ? TEXT("NativeWadElmoreProvisionedTown")
+                        : Progress.ResultQuest == 2 ? TEXT("NativeWadUndeadProvisionedTown") : TEXT("NativeWadProvisionedTownReview")))
                 {
-                    return Finish(&Player, TEXT("could not buy and save the campaign sword and healing supplies"));
+                    return Finish(&Player, TEXT("could not buy and save the permitted campaign equipment and healing supplies"));
                 }
-                UE_LOG(LogTemp, Display, TEXT("Verified the campaign character spends earned gold and carries a longsword and %d more healing potions."), BuyCount);
+                UE_LOG(LogTemp, Display, TEXT("Verified earned-gold purchases of permitted weapon %d and %d healing potions."), Melee, BuyCount);
+                if (bBeforeDestruction)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Verified the earned Destruction loadout includes three electric-attack scrolls, six invisibility scrolls (three reserved for L70), three Lava Walking potions (two reserved for L70), and mana recovery."));
+                }
                 if (bCampaignShop)
                 {
                     bCampaignBoughtSupplies = true;
@@ -7159,6 +8014,10 @@ namespace
 
         bool ReadyInventoryItem(ANativeWadPlayer& Player, int32 Type, bool bReleasedKey)
         {
+            if (bFreshCampaign && Type == NativeWadRules::IronDagger && !Player.CanUseWadItem(Type))
+            {
+                Type = NativeWadRules::IronMace;
+            }
             if (Player.GetReadyItem() == Type)
             {
                 if (!Player.IsInventoryOpen())
@@ -7179,7 +8038,7 @@ namespace
                 }
                 if (!bReleasedKey)
                 {
-                    Press(Player, EKeys::NumPadSeven);
+                    Press(Player, EKeys::I);
                 }
                 return false;
             }
@@ -7187,7 +8046,7 @@ namespace
             {
                 if (!bReleasedKey)
                 {
-                    Press(Player, EKeys::NumPadSeven);
+                    Press(Player, EKeys::I);
                 }
                 return false;
             }
@@ -7230,13 +8089,14 @@ namespace
             {
                 SliceProgressTime = Current.GetTimeSeconds();
                 StartingExperience = Player.GetExperience();
+                SliceStartingBerries = Player.GetItemCount(Berry);
                 FVector2D Gate;
                 const FVector2D Spawn = bSecondMap ? FVector2D(176,3464) : FVector2D(1608,432);
                 const bool bStartingSector = bSecondMap
                     ? Level->GetSectorSurfaceHeights(31, Gate) && Gate.X == -250.0
                     : Level->GetSectorSurfaceHeights(129, Gate) && Gate.Y == 0.0;
                 if (!FVector2D(Player.GetActorLocation()).Equals(Spawn, 2.0) || !bStartingSector
-                    || Player.GetItemCount(Berry) != 0 || Player.GetCharacterLevel() != 1 || Player.GetMana() != MaxMana)
+                    || (!bFreshCampaign && Player.GetItemCount(Berry) != 0) || Player.GetCharacterLevel() != 1 || Player.GetMana() != Player.GetMaxMana())
                 {
                     return Finish(&Player, TEXT("the slice did not begin at the original spawn with its initial sector heights"));
                 }
@@ -7429,7 +8289,7 @@ namespace
             case EAction::Pickup:
             {
                 const int32 Type = Step.Sector;
-                if (Player.GetItemCount(Type) == 1)
+                if (Player.GetItemCount(Type) == 1 + (Type == Berry ? SliceStartingBerries : 0))
                 {
                     bDone = true;
                     break;
@@ -7469,7 +8329,7 @@ namespace
                 break;
             }
             case EAction::EatBerry:
-                if (Player.GetItemCount(Berry) == 0 && FoodBeforeBerry != INDEX_NONE)
+                if (Player.GetItemCount(Berry) == SliceStartingBerries && FoodBeforeBerry != INDEX_NONE)
                 {
                     const int32 RestoredFood = FMath::Min(MaxFood, FoodBeforeBerry + BerryFood);
                     // The next review tick can observe one scheduled hunger tick after the berry was used.
@@ -7740,7 +8600,7 @@ namespace
                 {
                     return Finish(&Player, TEXT("the restored exit switch did not block a repeated activation"));
                 }
-                UE_LOG(LogTemp, Display, TEXT("Verified disk checkpoint restored character stats, ready dagger, removed pickups, defeated Guardian, raised gate and exit switch lock."));
+                UE_LOG(LogTemp, Display, TEXT("Verified disk checkpoint restored character stats, ready starter weapon, removed pickups, defeated Guardian, raised gate and exit switch lock."));
                 bCheckpointVerified = true;
             }
             bool bSaved = false;
@@ -7784,14 +8644,14 @@ namespace
             if (&Current != SourceWorld.Get() && RiverStage == ERiverStage::Exit)
             {
                 if (!bIsL531 || !XY.Equals(FVector2D(-144, -232), 3.0) || Player.GetExperience() != ExperienceBeforeTravel
-                    || Player.GetHealth() != HealthBeforeTravel || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                    || Player.GetHealth() != HealthBeforeTravel || Player.GetEquippedWeapon() != (Player.CanUseWadItem(NativeWadRules::IronDagger) ? NativeWadRules::IronDagger : NativeWadRules::IronMace))
                 {
                     return Finish(&Player, TEXT("the authored L301 link did not bring the same player to the L531 spawn"));
                 }
                 Camera.Reset();
                 bWalking = false;
                 Advance(ERiverStage::Arrival);
-                UE_LOG(LogTemp, Display, TEXT("Verified L301 thing 304 travels to the original L531 spawn, with the same XP, health and ready dagger."));
+                UE_LOG(LogTemp, Display, TEXT("Verified L301 thing 304 travels to the original L531 spawn, with the same XP, health and ready starter weapon."));
             }
             bool bSaved = false;
             switch (RiverStage)
@@ -7813,9 +8673,9 @@ namespace
                     Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
                     break;
                 }
-                if (!XY.Equals(FVector2D(3440, 2944), 3.0) || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                if (!XY.Equals(FVector2D(3440, 2944), 3.0) || Player.GetEquippedWeapon() != (Player.CanUseWadItem(NativeWadRules::IronDagger) ? NativeWadRules::IronDagger : NativeWadRules::IronMace))
                 {
-                    return Finish(&Player, TEXT("the river run requires the original L301 spawn with a ready dagger"));
+                    return Finish(&Player, TEXT("the river run requires the original L301 spawn with a ready starter weapon"));
                 }
                 Advance(ERiverStage::Encounter);
                 break;
@@ -8019,7 +8879,7 @@ namespace
                 {
                     const TActorIterator<ANativeWadGuardian> Encounter(&Current);
                     if (!Encounter || !Encounter->IsDefeated() || Player.GetExperience() != ExperienceBeforeTravel
-                        || Player.GetHealth() != HealthBeforeTravel || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                        || Player.GetHealth() != HealthBeforeTravel || Player.GetEquippedWeapon() != (Player.CanUseWadItem(NativeWadRules::IronDagger) ? NativeWadRules::IronDagger : NativeWadRules::IronMace))
                     {
                         return Finish(&Player, TEXT("revisiting L301 did not recover its defeated Guardian and carried character"));
                     }
@@ -8048,9 +8908,9 @@ namespace
             if (!bRavineStarted)
             {
                 const FVector2D Start = bL22Journey ? FVector2D(2544, 2775) : FVector2D(-144, -232);
-                if (!Position.Equals(Start, 3.0) || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                if (!Position.Equals(Start, 3.0) || Player.GetEquippedWeapon() != (Player.CanUseWadItem(NativeWadRules::IronDagger) ? NativeWadRules::IronDagger : NativeWadRules::IronMace))
                 {
-                    return Finish(&Player, TEXT("the route requires the original player spawn with a ready dagger"));
+                    return Finish(&Player, TEXT("the route requires the original player spawn with a ready starter weapon"));
                 }
                 if (bL22Journey)
                 {
@@ -8071,7 +8931,7 @@ namespace
                 if (!Current.GetMapName().EndsWith(Destination) || !Position.Equals(Spawn, 3.0)
                     || Player.GetExperience() != ExperienceBeforeTravel || Player.GetHealth() != HealthBeforeTravel
                     || Player.GetFood() != FoodBeforeTravel || Player.GetMana() != ManaBeforeTravel
-                    || Player.GetEquippedWeapon() != NativeWadRules::IronDagger)
+                    || Player.GetEquippedWeapon() != (Player.CanUseWadItem(NativeWadRules::IronDagger) ? NativeWadRules::IronDagger : NativeWadRules::IronMace))
                 {
                     return Finish(&Player, TEXT("the exit did not preserve the character at the original destination spawn"));
                 }
@@ -8705,6 +9565,2059 @@ namespace
             return Finish(&Player);
         }
 
+        bool TickMusicTravel(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel || !Travel->IsBackgroundMusicPlaying())
+            {
+                if (NextPoint == 3)
+                {
+                    return Finish(&Player, TEXT("L61's music stopped during the loop check"));
+                }
+                return true;
+            }
+            if (NextPoint == 0)
+            {
+                if (Travel->BackgroundMusicName() != TEXT("MUSIC2"))
+                {
+                    return Finish(&Player, TEXT("L30 selected the wrong authored track"));
+                }
+                ++NextPoint;
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L301.L301"))));
+            }
+            else if (NextPoint == 1 && Current.GetMapName().EndsWith(TEXT("L301")) && Travel->BackgroundMusicName() == TEXT("MUSIC3"))
+            {
+                ++NextPoint;
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L61.L61"))));
+            }
+            else if (NextPoint == 2 && Current.GetMapName().EndsWith(TEXT("L61")) && Travel->BackgroundMusicName() == TEXT("L1"))
+            {
+                const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+                const USoundWave* Track = Catalog ? Catalog->MusicByMap.FindRef(TEXT("L61")).Get() : nullptr;
+                if (!Track || !Track->bLooping || Track->Duration <= 0.0f)
+                {
+                    return Finish(&Player, TEXT("L61's authored music is missing a looping sound wave"));
+                }
+                StageTime = Current.GetTimeSeconds() + Track->Duration + 1.0;
+                ++NextPoint;
+            }
+            else if (NextPoint == 3 && Current.GetTimeSeconds() >= StageTime)
+            {
+                UE_LOG(LogTemp, Display, TEXT("Verified music switched from MUSIC2 in L30 to MUSIC3 in L301 and continued past the first L1 loop in L61."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickLavaTerrain(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+            if (!Level) { return Finish(&Player, TEXT("the lava terrain check needs L71")); }
+            const bool bReload = Player.GetWorld()->URL.HasOption(TEXT("WadLoad"));
+            if (bReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            if (NextPoint == 0)
+            {
+                FWadLevelCheckpoint State;
+                if (!Level->WriteCheckpoint(State, true)) { return Finish(&Player, TEXT("could not prepare the controlled lava terrain fixture")); }
+                for (auto& [Id, Generator] : State.CreatureGenerators) { Generator.bPaused = true; }
+                for (auto& [Name, Encounter] : State.Encounters) { Encounter.Health = 0; }
+                if (!Level->RestoreCheckpoint(State)) { return Finish(&Player, TEXT("could not isolate the terrain check from encounters")); }
+                if (bReload)
+                {
+                    if (Player.GetItemCount(813) != 0 || Player.GetStatusPower(LavaWalkStatus) == 0)
+                    {
+                        return Finish(&Player, TEXT("Lava Walking or its consumed potion failed to reload"));
+                    }
+                    NextPoint = 5;
+                    StageTime = Now + 2.0;
+                    HealthBeforeCast = Player.GetHealth();
+                }
+                else
+                {
+                    if (Player.GetCapsuleComponent()->GetCollisionResponseToChannel(ANativeWadLevel::LavaSurfaceChannel) != ECR_Ignore
+                        || !PlaceReviewPlayer(**Level, Player, {-240, -652}) || !Level->FindLavaSurfaceZ(Player.GetActorLocation()))
+                    {
+                        return Finish(&Player, TEXT("the default character did not ignore the original lava surface above its walking floor"));
+                    }
+                    Player.CollectItem(813);
+                    HealthBeforeCast = Player.GetHealth();
+                    StageTime = Now + 2.0;
+                    NextPoint = 1;
+                }
+                return true;
+            }
+            switch (NextPoint)
+            {
+            case 1:
+                if (Now < StageTime) { break; }
+                if (Player.GetHealth() > HealthBeforeCast - 400)
+                {
+                    return Finish(&Player, TEXT("unprotected standing in the original lava did not deal damage"));
+                }
+                ++NextPoint;
+                break;
+            case 2:
+                if (Player.GetReadyItem() != 813 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 813); break; }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetItemCount(813) != 0 || Player.GetStatusPower(LavaWalkStatus) == 0)
+                {
+                    return Finish(&Player, TEXT("the regular ready-hand action did not apply and consume Lava Walking"));
+                }
+                StageTime = Now + 2.0;
+                HealthBeforeCast = Player.GetHealth();
+                ++NextPoint;
+                break;
+            case 4:
+            case 5:
+                if (Now < StageTime) { break; }
+                {
+                    const TOptional<double> Surface = Level->FindLavaSurfaceZ(Player.GetActorLocation());
+                    const double Feet = Player.GetActorLocation().Z - Player.GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+                    if (!Surface || Feet < Surface.GetValue() - 0.5 || Player.GetHealth() < HealthBeforeCast
+                        || Player.GetCapsuleComponent()->GetCollisionResponseToChannel(ANativeWadLevel::LavaSurfaceChannel) != ECR_Block)
+                    {
+                        return Finish(&Player, TEXT("Lava Walking did not stand on the original surface without damage"));
+                    }
+                }
+                if (NextPoint == 4)
+                {
+                    if (!Player.SaveWadCheckpoint(TEXT("NativeWadLavaTerrainReview"))) { return Finish(&Player, TEXT("could not save Lava Walking on the actual surface")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified default lava collision, unprotected terrain damage, consumed Lava Walking potion, surface standing, and protection on original L71 terrain."));
+                    return Finish(&Player);
+                }
+                ++NextPoint;
+                break;
+            case 6:
+                if (Player.GetStatusPower(LavaWalkStatus) != 0) { break; }
+                if (Player.GetCapsuleComponent()->GetCollisionResponseToChannel(ANativeWadLevel::LavaSurfaceChannel) != ECR_Ignore)
+                {
+                    return Finish(&Player, TEXT("lava-surface collision remained enabled after the effect expired"));
+                }
+                HealthBeforeCast = Player.GetHealth();
+                StageTime = Now + 2.0;
+                ++NextPoint;
+                break;
+            case 7:
+                if (Now < StageTime) { break; }
+                if (Player.GetHealth() > HealthBeforeCast - 200) { return Finish(&Player, TEXT("lava damage did not resume after protection expired")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified Lava Walking after restart and resumed falling and terrain damage after expiration."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickInfiniteGenerator(ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+            if (!Level) { return Finish(&Player, TEXT("the unlimited generator check needs L71")); }
+            const bool bReload = Player.GetWorld()->URL.HasOption(TEXT("WadLoad"));
+            if (bReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            FWadLevelCheckpoint Snapshot;
+            if (!Level->WriteCheckpoint(Snapshot, true) || !Snapshot.CreatureGenerators.Contains(0))
+            {
+                return Finish(&Player, TEXT("L71 must import its original unlimited generator"));
+            }
+            const auto CountLive = [&]()
+            {
+                int32 Count = 0;
+                for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+                {
+                    Count += It->GetSourceType() == 1014 && !It->IsHidden() && !It->IsDefeated();
+                }
+                return Count;
+            };
+            const auto ClearLive = [&]()
+            {
+                for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->GetSourceType() == 1014 && !It->IsHidden()) { It->RestoreEncounterHealth(0); }
+                }
+            };
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            if (NextPoint == 0 && bReload)
+            {
+                if (Snapshot.CreatureGenerators[0].Released != 41 || Snapshot.CreatureGenerators[0].Remaining <= 0 || CountLive() != 1)
+                {
+                    return Finish(&Player, TEXT("release 41, the live creature, or the running generator clock failed to reload"));
+                }
+                ClearLive();
+                NextPoint = 3;
+                StageTime = Now + 12.0;
+            }
+            else if (NextPoint == 0)
+            {
+                int32 Pool = 0;
+                Snapshot.Encounters.Reset();
+                for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->Tags.IsEmpty()) { continue; }
+                    const bool bPool = It->Tags[0].ToString().StartsWith(TEXT("WAD Generator 0 Creature "));
+                    const int32 Health = bPool && Pool++ < 15 ? 4000 : 0;
+                    Snapshot.Encounters.Add(It->Tags[0], {It->GetActorTransform(), Health, 0, 5.0});
+                }
+                if (Pool != 40) { return Finish(&Player, TEXT("the unlimited generator fixture needs its forty reusable actors")); }
+                for (auto& [Id, State] : Snapshot.CreatureGenerators)
+                {
+                    State.bPaused = Id != 0;
+                }
+                Snapshot.CreatureGenerators[0].Released = 40;
+                Snapshot.CreatureGenerators[0].Remaining = 0.05f;
+                if (!Level->RestoreCheckpoint(Snapshot)) { return Finish(&Player, TEXT("could not seed the controlled generator-cap fixture")); }
+                for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->GetSourceType() == 1014)
+                    {
+                        It->SetActorTickEnabled(false);
+                        It->GetCharacterMovement()->SetComponentTickEnabled(false);
+                    }
+                }
+                NextPoint = 1;
+                StageTime = Now + 6.0;
+                return true;
+            }
+            const FWadCreatureGeneratorState& State = Snapshot.CreatureGenerators[0];
+            if (NextPoint == 1 && Now >= StageTime)
+            {
+                if (State.Released != 40 || CountLive() != 15) { return Finish(&Player, TEXT("the unlimited generator overwrote a live creature or ignored its active cap")); }
+                ClearLive();
+                NextPoint = 2;
+                StageTime = Now + 12.0;
+                return true;
+            }
+            if ((NextPoint == 2 || NextPoint == 3) && State.Released >= (NextPoint == 2 ? 41 : 42))
+            {
+                if (CountLive() != 1 || State.Remaining <= 0)
+                {
+                    return Finish(&Player, TEXT("the unlimited generator did not create exactly one fresh live creature"));
+                }
+                for (TActorIterator<ANativeWadGuardian> It(Player.GetWorld()); It; ++It)
+                {
+                    if (It->GetSourceType() == 1014 && !It->IsHidden() && !It->IsDefeated()
+                        && (It->GetEncounterHealth() != 4000 || It->GetPoisonLevel() != 0
+                            || !FVector2D(It->GetActorLocation()).Equals(FVector2D(-480, -952), 12.0)))
+                    {
+                        return Finish(&Player, TEXT("a recycled creature kept old health, poison, or its previous position"));
+                    }
+                }
+                if (NextPoint == 2 && !Player.SaveWadCheckpoint(TEXT("NativeWadInfiniteGeneratorReview")))
+                {
+                    return Finish(&Player, TEXT("could not save the active unlimited generator after release 41"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the controlled L71 unlimited-generator fixture at release %d, with the active cap and fresh creature state. Restart=%d."), State.Released, bReload);
+                return Finish(&Player);
+            }
+            if (Now > StageTime && NextPoint > 1) { return Finish(&Player, TEXT("the unlimited generator stopped beyond its reusable pool")); }
+            return true;
+        }
+
+        bool TickElementalMelee(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            const bool bReload = Player.GetWorld()->URL.HasOption(TEXT("WadLoad"));
+            if (bReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (bReload && NextPoint == 0)
+            {
+                if (Player.GetItemCount(370) != 0 || Player.GetReadyItem() != IronMace
+                    || Player.GetMeleeDamageMask() != (NormalDamage | DamageFlag(EProjectileDamage::Electricity)))
+                {
+                    return Finish(&Player, TEXT("the consumed electric-attack scroll or its active effect failed to reload"));
+                }
+                NextPoint = 5;
+            }
+            if (NextPoint == 0)
+            {
+                const FTransform Transform(FRotator::ZeroRotator, Player.GetActorLocation() + FVector(55, 0, 0));
+                ANativeWadGuardian* Target = Player.GetWorld()->SpawnActorDeferred<ANativeWadGuardian>(
+                    ANativeWadGuardian::StaticClass(), Transform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+                if (!Target) { return Finish(&Player, TEXT("could not create the controlled resistance target")); }
+                FWadEncounterProfile Profile;
+                Profile.Name = TEXT("Controlled chain-armored resistance target");
+                Profile.MaxHealth = 4000;
+                Profile.MeleeDamage = Profile.BoltDamage = Profile.RegenPerUpdate = 0;
+                Profile.WalkSpeed = 0;
+                Profile.ArmorClass = 1;
+                Profile.ResistanceMask = NormalDamage | DamageFlag(EProjectileDamage::Fire);
+                Target->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+                UGameplayStatics::FinishSpawningActor(Target, Transform);
+                ElementalTarget = Target;
+                Player.CollectItem(IronMace);
+                Player.CollectItem(370);
+                ++NextPoint;
+            }
+            ANativeWadGuardian* Target = ElementalTarget.Get();
+            switch (NextPoint)
+            {
+            case 1:
+                if (Player.GetReadyItem() != IronMace || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, IronMace); break; }
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Player.GetWorld()->GetTimeSeconds() + 2.0;
+                ++NextPoint;
+                break;
+            case 2:
+                if (Player.GetWorld()->GetTimeSeconds() < StageTime) { break; }
+                if (Target->GetEncounterHealth() != 4000) { return Finish(&Player, TEXT("normal melee bypassed the authored resistance")); }
+                if (Player.GetReadyItem() != 370 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 370); break; }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetItemCount(370) != 0 || Player.GetStatusPower(ElectricityAttackStatus) != 1)
+                {
+                    return Finish(&Player, TEXT("the original scroll did not consume and apply electric attack"));
+                }
+                if (Player.GetReadyItem() != IronMace || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, IronMace); break; }
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Player.GetWorld()->GetTimeSeconds() + 2.0;
+                ++NextPoint;
+                break;
+            case 4:
+                if (Player.GetWorld()->GetTimeSeconds() < StageTime) { break; }
+                // Strength 15 * mace damage 10 / 2 = 75. Chain adds 25%, then one of two elements is resisted.
+                if (Target->GetEncounterHealth() != 3953 || !Player.SaveWadCheckpoint(TEXT("NativeWadElementalMeleeReview")))
+                {
+                    return Finish(&Player, *FString::Printf(TEXT("the normal attack did not apply the expected 47 elemental damage. Target health=%d"), Target->GetEncounterHealth()));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified normal-damage immunity, electric-attack scroll consumption, and a regular mace hit for 47 damage through chain armor and one resisted element."));
+                return Finish(&Player);
+            case 5:
+                if (Player.GetStatusPower(ElectricityAttackStatus) != 0) { return true; }
+                if (Player.GetMeleeDamageMask() != NormalDamage) { return Finish(&Player, TEXT("electric attack persisted after the scroll expired")); }
+                Player.CollectItem(234);
+                ++NextPoint;
+                break;
+            case 6:
+                if (Player.GetReadyItem() != 234 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 234); break; }
+                if (Player.GetMeleeDamageMask() != (NormalDamage | DamageFlag(EProjectileDamage::Electricity)))
+                {
+                    return Finish(&Player, TEXT("the original electric mace lost its readied effect"));
+                }
+                ++NextPoint;
+                break;
+            case 7:
+                if (Player.GetReadyItem() != IronMace || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, IronMace); break; }
+                if (Player.GetMeleeDamageMask() != NormalDamage) { return Finish(&Player, TEXT("the electric mace effect remained after unreadying it")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified electric-attack persistence and expiration, and the original enchanted mace's ready/unready effects."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickPendingCharacter(ANativeWadPlayer& Player)
+        {
+            if (Player.GetWorld()->URL.HasOption(TEXT("WadLoad")) && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (Player.HasRestoredWadCheckpoint())
+            {
+                if (!Player.CanChooseWadClass() || Player.GetItemCount(800) != 1
+                    || !Player.ChooseWadClass(NativeWadRules::MageClass) || Player.CanChooseWadClass()
+                    || Player.GetItemCount(800) != 1 || Player.GetReadyItem() != NativeWadRules::IronDagger)
+                {
+                    return Finish(&Player, TEXT("a pre-creation purchase prevented class choice after reload or was lost when the Mage kit was assigned"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the controlled carried item and pending class choice survive restart. Mage creation retains the purchased item and cannot be repeated."));
+                return Finish(&Player);
+            }
+            if (!Player.CanChooseWadClass() || !Player.CollectItem(800)
+                || Player.GetItemCount(800) != 1 || !Player.CanChooseWadClass()
+                || !Player.SaveWadCheckpoint(TEXT("NativeWadPendingCharacterReview")))
+            {
+                return Finish(&Player, TEXT("could not save the controlled carried-item fixture before choosing a class"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Verified a controlled carried-item fixture can be saved before character creation."));
+            return Finish(&Player);
+        }
+
+        bool TickClassEquipment(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr const TCHAR* Slot = TEXT("NativeWadClassEquipmentReview");
+            constexpr const TCHAR* LegacySlot = TEXT("NativeWadClassLegacyReview");
+            if (Player.GetWorld()->URL.HasOption(TEXT("WadLoad")) && !Player.HasRestoredWadCheckpoint())
+            {
+                return true;
+            }
+            if (Player.HasRestoredWadCheckpoint())
+            {
+                const bool bLegacy = FCString::Stricmp(Player.GetWorld()->URL.GetOption(TEXT("WadLoad="), TEXT("")), LegacySlot) == 0;
+                const int32 Helmet = Player.GetCarriedItems().Find(704);
+                if (Player.GetCharacterClass() != PriestClass || Player.CanChooseWadClass()
+                    || Player.GetReadyItem() != (bLegacy ? 0 : IronMace)
+                    || Player.GetItemCount(204) != 1 || Player.GetItemCount(Crossbow) != 1 || Player.GetItemCount(708) != 1
+                    || Player.IsWornInventorySlot(Player.GetCarriedItems().Find(708))
+                    || Player.IsWornInventorySlot(Helmet) == bLegacy)
+                {
+                    return Finish(&Player, TEXT("class equipment or a restricted legacy slot failed to reload"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified class equipment after restart. Restricted legacy slots=%d."), bLegacy);
+                return Finish(&Player);
+            }
+            if (NextPoint == 0)
+            {
+                const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+                if (!Catalog || Catalog->StartingEquipment.Num() != CharacterClassCount)
+                {
+                    return Finish(&Player, TEXT("all eleven starting inventories must be imported"));
+                }
+                struct FPermission { int32 Type; uint16 Allowed; };
+                const FPermission Permissions[] = {
+                    {IronDagger, uint16(AllClasses & ~ClassFlag(PriestClass))},
+                    {204, uint16(AllClasses & ~(ClassFlag(MageClass) | ClassFlag(PriestClass) | ClassFlag(RogueClass) | ClassFlag(MagicianClass)))},
+                    {Crossbow, uint16(ClassFlag(CitizenClass) | ClassFlag(KnightClass) | ClassFlag(RogueClass) | ClassFlag(ArcherClass) | ClassFlag(SailorClass) | ClassFlag(MercenaryClass))},
+                    {IronMace, uint16(AllClasses & ~(ClassFlag(MageClass) | ClassFlag(MercenaryClass) | ClassFlag(MagicianClass)))},
+                    {708, uint16(ClassFlag(CitizenClass) | ClassFlag(KnightClass) | ClassFlag(PaladinClass) | ClassFlag(MercenaryClass))},
+                    {704, uint16(AllClasses & ~(ClassFlag(MageClass) | ClassFlag(RogueClass) | ClassFlag(MagicianClass)))},
+                    {32970, uint16(ClassFlag(MageClass) | ClassFlag(WarlockClass) | ClassFlag(PriestClass) | ClassFlag(MagicianClass))},
+                };
+                constexpr int32 Weapons[] = {203, 204, 200, 203, 201, 200, 28, 204, 204, 205, 200};
+                for (int32 Class = 0; Class < CharacterClassCount; ++Class)
+                {
+                    ANativeWadPlayer* Example = Player.GetWorld()->SpawnActor<ANativeWadPlayer>();
+                    bool bCorrect = Example && Example->ChooseWadClass(Class);
+                    if (bCorrect)
+                    {
+                        bCorrect = Example->GetReadyItem() == Weapons[Class] && !Example->CanChooseWadClass()
+                            && Example->GetCarriedItems().Num() == Catalog->StartingEquipment[Class].Items.Num() + 6
+                            && Example->GetItemCount(StartingWaterGourd) == 1
+                            && Example->GetArmorRating() == (Class == KnightClass ? 12 : 5)
+                            && Example->GetAmmoReserve(0) == (Class == ArcherClass ? 80 : 0)
+                            && Example->GetAmmoReserve(1) == (Class == ArcherClass ? 24 : 0)
+                            && Example->GetAmmoReserve(3) == (Class == ArcherClass ? 24 : 0);
+                        for (const FPermission& Permission : Permissions)
+                        {
+                            bCorrect &= Example->CanUseWadItem(Permission.Type) == ((Permission.Allowed & ClassFlag(Class)) != 0);
+                        }
+                    }
+                    if (Example) { Example->Destroy(); }
+                    if (!bCorrect)
+                    {
+                        return Finish(&Player, *FString::Printf(TEXT("starting gear or proficiency failed for %s"), CharacterClasses[Class].Name));
+                    }
+                }
+                if (!Player.ChooseWadClass(PriestClass))
+                {
+                    return Finish(&Player, TEXT("could not create the controlled Priest"));
+                }
+                ++NextPoint;
+                Player.TravelToWadLevel(TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Maps/L30.L30"))));
+                return true;
+            }
+            if (Player.GetWorld()->GetAuthGameMode<ANativeWadTownGameMode>()) { return true; }
+            if (NextPoint == 1)
+            {
+                SendKey(Player, EKeys::I, IE_Pressed);
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 2)
+            {
+                SendKey(Player, EKeys::I, IE_Released);
+                if (!Player.IsInventoryOpen()) { return Finish(&Player, TEXT("the regular inventory key did not open the equipment check")); }
+                for (const int32 Type : {204, Crossbow, 708, 704})
+                {
+                    Player.CollectItem(Type);
+                    Player.ClickInventorySlot(Player.GetCarriedItems().Find(Type));
+                    Player.ClickInventorySlot(INDEX_NONE);
+                }
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == 3)
+            {
+                SendKey(Player, EKeys::I, IE_Pressed);
+                ++NextPoint;
+                return true;
+            }
+            SendKey(Player, EKeys::I, IE_Released);
+            if (Player.GetReadyItem() != IronMace || Player.IsWornInventorySlot(Player.GetCarriedItems().Find(708))
+                || !Player.IsWornInventorySlot(Player.GetCarriedItems().Find(704)) || !Player.SaveWadCheckpoint(Slot))
+            {
+                return Finish(&Player, TEXT("the regular equipment actions did not enforce Priest restrictions"));
+            }
+            auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(Slot, 0));
+            if (!Save) { return Finish(&Player, TEXT("could not read the equipment checkpoint")); }
+            FURL Options(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
+            Options.AddOption(*FString::Printf(TEXT("WadReady=%d"), Player.GetCarriedItems().Find(204)));
+            TArray<FString> Worn;
+            FString(Options.GetOption(TEXT("WadWorn="), TEXT(""))).ParseIntoArray(Worn, TEXT(","), false);
+            if (Worn.Num() != EquipmentSlotCount) { return Finish(&Player, TEXT("the equipment checkpoint has no worn slots")); }
+            Worn[HeadSlot] = LexToString(Player.GetCarriedItems().Find(708));
+            Options.AddOption(*(TEXT("WadWorn=") + FString::Join(Worn, TEXT(","))));
+            Save->PlayerOptions = TEXT("?") + FString::Join(Options.Op, TEXT("?"));
+            if (!UGameplayStatics::SaveGameToSlot(Save, LegacySlot, 0))
+            {
+                return Finish(&Player, TEXT("could not save the legacy restricted-slot fixture"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Verified all eleven original starting inventories, weapon and armor proficiencies, explicit useable lists, and controlled Priest equipment."));
+            return Finish(&Player);
+        }
+
+        bool TickCharacter(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr int32 Mage = 2;
+            constexpr const TCHAR* Slot = TEXT("NativeWadCharacterReview");
+            if (bCharacterReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                if (Player.GetCharacterClass() != Mage || Player.GetCharacterLevel() != 2 || !Player.HasFeatherfall())
+                {
+                    return Finish(&Player, TEXT("the Mage, level, or active spell failed to reload"));
+                }
+                const auto* Save = Cast<UNativeWadCheckpoint>(UGameplayStatics::LoadGameFromSlot(Slot, 0));
+                const FURL Options(nullptr, Save ? *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions) : TEXT(""), TRAVEL_Absolute);
+                TArray<FString> Attributes;
+                FString(Options.GetOption(TEXT("WadAttributes="), TEXT(""))).ParseIntoArray(Attributes, TEXT(","));
+                if (Attributes.Num() != AttributeCount)
+                {
+                    return Finish(&Player, TEXT("the Mage checkpoint has no complete attribute list"));
+                }
+                for (int32 Index = 0; Index < AttributeCount; ++Index)
+                {
+                    if (Player.GetAttributes()[Index] != FCString::Atoi(*Attributes[Index]))
+                    {
+                        return Finish(&Player, TEXT("a saved Mage attribute changed during reload"));
+                    }
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified Mage progression and Feather Fall after a fresh process reload."));
+                return Finish(&Player);
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+                SendKey(Player, EKeys::LeftAlt, IE_Released);
+            }
+            if (FPlatformTime::Seconds() < StageTime)
+            {
+                return true;
+            }
+            StageTime = FPlatformTime::Seconds() + 0.1;
+            switch (NextPoint)
+            {
+            case 0:
+                SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                Press(Player, EKeys::N);
+                break;
+            case 1:
+            case 2:
+                Press(Player, EKeys::Left);
+                break;
+            case 3:
+                Press(Player, EKeys::Enter);
+                break;
+            case 4:
+                if (Player.GetCharacterClass() != Mage || Player.GetMaxHealth() != 1700 || Player.GetMaxMana() != 3500)
+                {
+                    return Finish(&Player, TEXT("choosing Mage did not set the authored starting stats"));
+                }
+                SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                Press(Player, EKeys::Q);
+                break;
+            case 5:
+                Press(Player, EKeys::Enter);
+                break;
+            case 6:
+                if (Current.GetAuthGameMode<ANativeWadTownGameMode>())
+                {
+                    if (++CaptureFrames > 20)
+                    {
+                        return Finish(&Player, TEXT("the selected character could not launch the first quest"));
+                    }
+                    Press(Player, EKeys::Enter);
+                    return true;
+                }
+                if (!Current.GetMapName().EndsWith(TEXT("L30")))
+                {
+                    return Finish(&Player, TEXT("the new character's first quest went to the wrong map"));
+                }
+                if (Player.GetCharacterClass() != Mage)
+                {
+                    return Finish(&Player, TEXT("the class changed at the start of the quest"));
+                }
+                Press(Player, EKeys::NumPadSeven);
+                break;
+            case 7:
+                if (Player.GetRunes() != TEXT("7") || Player.IsInventoryOpen())
+                {
+                    return Finish(&Player, TEXT("keypad 7 did not enter rune 7 independently of the inventory"));
+                }
+                Press(Player, EKeys::BackSpace);
+                break;
+            case 8:
+                Press(Player, EKeys::NumPadFour);
+                break;
+            case 9:
+                Press(Player, EKeys::NumPadOne);
+                break;
+            case 10:
+                Press(Player, EKeys::RightMouseButton);
+                break;
+            case 11:
+                if (!Player.HasFeatherfall())
+                {
+                    if (!Player.GetInteractionMessage().Contains(TEXT("fizzled")))
+                    {
+                        return Finish(&Player, TEXT("Mage Feather Fall was not recognized"));
+                    }
+                    NextPoint = 8;
+                    return true;
+                }
+                Player.AwardExperience(FirstLevelThreshold);
+                ++NextPoint;
+                return true;
+            case 12:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (Player.GetCharacterLevel() != 2 || !Player.SaveWadCheckpoint(Slot))
+                {
+                    return Finish(&Player, TEXT("Mage advancement failed to save"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified initial Mage selection, quest arrival, Feather Fall, and advancement."));
+                return Finish(&Player);
+            }
+            ++NextPoint;
+            return true;
+        }
+
+        bool TickInn(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel)
+            {
+                return Finish(&Player, TEXT("the inn needs Town Hall's character and wallet state"));
+            }
+            const auto IsRested = [&]
+            {
+                return Player.GetHealth() == Player.GetMaxHealth() && Player.GetMana() == Player.GetMaxMana()
+                    && Player.GetFood() == NativeWadRules::MaxFood && Player.GetWater() == NativeWadRules::MaxFood
+                    && Player.GetPoisonLevel() == 0 && Travel->Quest.GetWalletCopper() == 0;
+            };
+            if (TownReview == ETownReview::InnReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                if (!IsRested()) { return Finish(&Player, TEXT("the paid inn stay failed to reload")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified the inn's restored vitals and wallet in a fresh process."));
+                return Finish(&Player);
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+                SendKey(Player, EKeys::LeftAlt, IE_Released);
+            }
+            const auto RoomKey = [&](const FKey& Key)
+            {
+                SendKey(Player, EKeys::LeftAlt, IE_Pressed);
+                Press(Player, Key);
+                ++NextPoint;
+            };
+            switch (NextPoint)
+            {
+            case 0:
+                Travel->Quest.SetWalletCopper(3200);
+                HealthBeforeTravel = Player.GetHealth();
+                ManaBeforeTravel = Player.GetMana();
+                RoomKey(EKeys::I);
+                break;
+            case 1:
+                if (Player.GetInteractionMessage() != TEXT("Welcome to the inn!"))
+                {
+                    return Finish(&Player, TEXT("the inn could not open with Alt+I"));
+                }
+                RoomKey(EKeys::C);
+                break;
+            case 2:
+                if (Travel->Quest.GetWalletCopper() != 3200 || Player.GetHealth() != HealthBeforeTravel)
+                {
+                    return Finish(&Player, TEXT("the commons charged money or changed health"));
+                }
+                RoomKey(EKeys::S);
+                break;
+            case 3:
+                if (Travel->Quest.GetWalletCopper() != 3000 || Player.GetHealth() != HealthBeforeTravel + Player.GetMaxHealth() / 4
+                    || Player.GetMana() != ManaBeforeTravel + Player.GetMaxMana() / 4 || Player.GetPoisonLevel() != 100)
+                {
+                    return Finish(&Player, TEXT("the small room's price or recovery differed from the room data"));
+                }
+                RoomKey(EKeys::L);
+                break;
+            case 4:
+                if (Travel->Quest.GetWalletCopper() != 2000 || Player.GetPoisonLevel() != 50)
+                {
+                    return Finish(&Player, TEXT("the large room did not charge a platinum and halve the poison"));
+                }
+                RoomKey(EKeys::U);
+                break;
+            case 5:
+                if (!IsRested()) { return Finish(&Player, TEXT("the suite did not charge two platinum and fully restore the player")); }
+                RoomKey(EKeys::S);
+                break;
+            case 6:
+                if (!IsRested() || Player.GetInteractionMessage() != TEXT("You cannot afford that room."))
+                {
+                    return Finish(&Player, TEXT("the inn accepted a room with insufficient funds"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified all four inn rooms, their prices and recovery, and an unaffordable rental."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickRevive(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            auto* Travel = Current.GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+            if (!Travel)
+            {
+                return Finish(&Player, TEXT("the revive review requires saved player finances"));
+            }
+            const bool bHasDrops = [&]
+            {
+                bool bDagger = false;
+                bool bQuiver = false;
+                int32 CoinPiles = 0;
+                for (TActorIterator<ANativeWadPickup> Item(&Current); Item; ++Item)
+                {
+                    bDagger |= Item->IsDropped() && Item->GetItemType() == IronDagger;
+                    bQuiver |= Item->IsDropped() && Item->GetItemType() == CrossbowAmmo[1].Quiver && Item->GetAmmoQuantity() == 8;
+                    CoinPiles += Item->IsDropped() && CoinValueCopper(Item->GetItemType()) > 0;
+                }
+                return bDagger && bQuiver && CoinPiles == 4 && Travel->Quest.GetWalletCopper() == 0 && Player.GetItemCount(300) == 1;
+            }();
+            if (bReviveReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                if (!bHasDrops || Player.GetHealth() != Player.GetMaxHealth() || Player.GetReadyItem() != 0)
+                {
+                    return Finish(&Player, TEXT("revival or dropped equipment was missing from the checkpoint"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified the revived player, retained rune, and dropped gear and coins across a process restart."));
+                return Finish(&Player);
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                const TActorIterator<ANativeWadGuardian> Enemy(&Current);
+                if (!Level || !Enemy || !Player.CollectItem(IronDagger) || !Player.CollectAmmo(1, 8) || !Player.CollectItem(300))
+                {
+                    return Finish(&Player, TEXT("could not set up the revive fixture"));
+                }
+                Travel->Quest.SetWalletCopper(6789);
+                ReviveEntrance = Player.GetActorLocation();
+                if (!PlaceReviewPlayer(**Level, Player, FVector2D(Enemy->GetActorLocation()) + FVector2D(-150, 0)))
+                {
+                    return Finish(&Player, TEXT("could not place the revive fixture outside the entrance"));
+                }
+                Player.ReceiveTrapPoison(Player.GetHealth());
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (!bHasDrops || Player.GetHealth() != 0 || Player.GetAmmoReserve(1) != 0)
+                {
+                    return Finish(&Player, TEXT("defeat did not leave the dagger and ammo in the level"));
+                }
+                Press(Player, EKeys::SpaceBar);
+                ++NextPoint;
+                break;
+            case 2:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!bHasDrops || !FVector2D(Player.GetActorLocation()).Equals(FVector2D(ReviveEntrance), 3)
+                    || Player.GetHealth() != Player.GetMaxHealth() || Player.GetMana() != Player.GetMaxMana() / 2
+                    || Player.GetPoisonLevel() != 0)
+                {
+                    return Finish(&Player, TEXT("Space failed to restore the original revive state"));
+                }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadReviveReview"))) { break; }
+                UE_LOG(LogTemp, Display, TEXT("Verified defeat, equipment drops, Space revival, and a new checkpoint."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickAmmoBanner(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr int32 Index = 2;
+            constexpr int32 Quantity = 36;
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            APlayerController* Controller = Player.GetController<APlayerController>();
+            ANativeWadHUD* Hud = Controller ? Controller->GetHUD<ANativeWadHUD>() : nullptr;
+            if (!Level || !Hud || !Hud->HasClassicHud() || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the authored quiver review needs L20 and its classic HUD"));
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            const auto Click = [&](FVector2D Point)
+            {
+                int32 Width = 0, Height = 0;
+                Controller->GetViewportSize(Width, Height);
+                const double Scale = FMath::Min(Width / 320.0, Height / 200.0);
+                Hud->ClickHUD((FVector2D(Width, Height) - FVector2D(320, 200) * Scale) * 0.5 + Scale * Point);
+            };
+            switch (NextPoint)
+            {
+            case 0:
+                for (TActorIterator<ANativeWadPickup> Item(&Current); Item; ++Item)
+                {
+                    if (!Item->ActorHasTag(TEXT("WAD Item Thing 163")))
+                    {
+                        continue;
+                    }
+                    const FVector Position = Item->GetActorLocation();
+                    if (Item->GetItemType() != CrossbowAmmo[Index].Quiver || Item->GetAmmoQuantity() != Quantity
+                        || !PlaceReviewPlayer(**Level, Player, FVector2D(Position) + FVector2D(35, 0)))
+                    {
+                        return Finish(&Player, TEXT("L20's authored piercing quiver and quantity are missing"));
+                    }
+                    Aim(Player, Position);
+                    Press(Player, EKeys::E);
+                    ++NextPoint;
+                    return true;
+                }
+                return Finish(&Player, TEXT("could not find the original L20 quiver"));
+            case 1:
+                if (Player.GetAmmoReserve(Index) != Quantity)
+                {
+                    return Finish(&Player, TEXT("E did not collect the authored quantity of piercing bolts"));
+                }
+                Click({13, 190});
+                Click({305, 59});
+                Click({230, 68});
+                if (!Player.IsInventoryOpen() || Player.GetSelectedAmmo() != Index
+                    || Player.GetAmmoReserve(Index) != Quantity - NormalQuiverBolts
+                    || Player.GetItemCount(CrossbowAmmo[Index].Quiver) != 1)
+                {
+                    return Finish(&Player, TEXT("the classic banner did not select and retrieve piercing ammo"));
+                }
+                ++NextPoint;
+                break;
+            case 2:
+            {
+                bool bSaved = false;
+                if (!CaptureTownFrame(TEXT("ammo"), bSaved)) { break; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not save the rendered ammo banner")); }
+                Click({309, 9});
+                if (Player.IsInventoryOpen() || !Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                Press(Player, EKeys::F5);
+                ++NextPoint;
+                break;
+            }
+            case 3:
+                if (Player.GetInteractionMessage() != TEXT("Checkpoint saved")) { break; }
+                Press(Player, EKeys::F9);
+                ++NextPoint;
+                break;
+            case 4:
+                if (!Player.HasRestoredWadCheckpoint()) { break; }
+                if (Player.GetSelectedAmmo() != Index || Player.GetAmmoReserve(Index) != Quantity - NormalQuiverBolts
+                    || Player.GetItemCount(CrossbowAmmo[Index].Quiver) != 1)
+                {
+                    return Finish(&Player, TEXT("normal save and load did not restore the quiver and ammo selection"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified L20's 36-bolt quiver, classic ammo selection and retrieval, and F5/F9 reload."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickRuneProjectiles(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            TArray<const FWadSpell*> Spells;
+            for (const FWadSpell& Spell : SupportedSpells)
+            {
+                if (Spell.Effect == ESpellEffect::Projectile && Spell.School == SchoolForClass(Player.GetCharacterClass())) { Spells.Add(&Spell); }
+            }
+            if (Spells.IsEmpty()) { return Finish(&Player, TEXT("the rune projectile review has no spells for this class")); }
+            if (bRuneProjectileReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                for (int32 Rune = 1; Rune <= 9; ++Rune)
+                {
+                    if (!Player.HasRune(Rune)) { return Finish(&Player, TEXT("a source rune failed to reload after projectile casting")); }
+                }
+                if (Player.GetSuccessfulCasts() != Spells.Num() || Player.GetMana() != Spells.Last()->Mana)
+                { return Finish(&Player, TEXT("projectile-spell cast count or refusal mana failed to reload")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified %d projectile spells, owned runes, and exact-cost refusal mana after restart for class %d."), Spells.Num(), Player.GetCharacterClass());
+                return Finish(&Player);
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            const FWadSpell& Spell = *Spells[RuneProjectileIndex];
+            const FWadWandProjectile* Rules = FindWandProjectile(Spell.ProjectileIndex);
+            if (!Rules) { return Finish(&Player, TEXT("a supported spell has no source missile")); }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            ANativeWadGuardian* Target = ElementalTarget.Get();
+            const int32 Expected = (Rules->DamageMask & SpecialDamage) ? 0
+                : Rules->Damage + ((Rules->DamageMask & DamageFlag(EProjectileDamage::Fire)) ? Rules->Damage / 4 : 0);
+            const auto TypeRunes = [&]()
+            {
+                const FString Code(Spell.Runes);
+                const FString Entered = Player.GetRunes();
+                if (!Entered.IsEmpty() && !Code.StartsWith(Entered)) { Press(Player, EKeys::BackSpace); return false; }
+                if (Entered != Code)
+                {
+                    Press(Player, ReviewRuneKeys[Code[Entered.Len()] - TEXT('1')]);
+                    return false;
+                }
+                return true;
+            };
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+                const TActorIterator<ANativeWadGuardian> Original(Player.GetWorld());
+                if (!Level || !Original) { return Finish(&Player, TEXT("the rune projectile fixture needs the original L30 room")); }
+                const FVector Position = Original->GetActorLocation();
+                for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                {
+                    Enemy->SetActorTickEnabled(false);
+                    Enemy->SetActorEnableCollision(false);
+                    Enemy->SetActorHiddenInGame(true);
+                }
+                if (!PlaceReviewPlayer(**Level, Player, FVector2D(Position) + FVector2D(-150, 0)))
+                { return Finish(&Player, TEXT("could not use the original room for rune casting")); }
+                const FTransform Transform(FRotator::ZeroRotator, Position);
+                Target = Player.GetWorld()->SpawnActorDeferred<ANativeWadGuardian>(ANativeWadGuardian::StaticClass(), Transform,
+                    nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+                if (!Target) { return Finish(&Player, TEXT("could not create the controlled spell target")); }
+                FWadEncounterProfile Profile;
+                Profile.Name = TEXT("Controlled rune-projectile target");
+                Profile.MaxHealth = 10000;
+                Profile.RegenPerUpdate = 0;
+                Profile.WalkSpeed = 0;
+                Target->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+                UGameplayStatics::FinishSpawningActor(Target, Transform);
+                Target->SetActorTickEnabled(false);
+                ElementalTarget = Target;
+                DriftStart = Position;
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (Now < StageTime) { break; }
+                Target->SetActorLocation(DriftStart, false, nullptr, ETeleportType::TeleportPhysics);
+                Target->GetCharacterMovement()->StopMovementImmediately();
+                Target->RestoreEncounterHealth(10000);
+                Target->RestorePoison(0, 0);
+                Player.RestoreWadVital(9, Player.GetMaxHealth());
+                Player.RestoreWadVital(10, 2 * Spell.Mana - Player.GetMana());
+                ExperienceBeforeTravel = Player.GetExperience();
+                RuneProjectileCastsBefore = Player.GetSuccessfulCasts();
+                ++NextPoint;
+                break;
+            case 2:
+                if (!TypeRunes()) { break; }
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::RightMouseButton);
+                StageTime = Now + 0.5;
+                ++NextPoint;
+                break;
+            case 3:
+                if (Now < StageTime) { break; }
+                if (Target->GetEncounterHealth() != 10000 - Expected || Player.GetExperience() != ExperienceBeforeTravel + Expected
+                    || Player.GetMana() != Spell.Mana || Player.GetSuccessfulCasts() != RuneProjectileCastsBefore + 1)
+                { return Finish(&Player, *FString::Printf(TEXT("rune spell %s has target %d, mana %d, casts %d instead of %d"), Spell.Name,
+                    Target->GetEncounterHealth(), Player.GetMana(), Player.GetSuccessfulCasts(), RuneProjectileCastsBefore + 1)); }
+                ++NextPoint;
+                break;
+            case 4:
+                if (!TypeRunes()) { break; }
+                Press(Player, EKeys::RightMouseButton);
+                ++NextPoint;
+                break;
+            case 5:
+                if (Target->GetEncounterHealth() != 10000 - Expected || Player.GetMana() != Spell.Mana
+                    || Player.GetSuccessfulCasts() != RuneProjectileCastsBefore + 1)
+                { return Finish(&Player, TEXT("a rune projectile spell spent mana or fired at exactly its cost")); }
+                for (TActorIterator<ANativeWadBolt> Bolt(Player.GetWorld()); Bolt; ++Bolt)
+                {
+                    if (Bolt->GetOwner() == &Player && !Bolt->IsActorBeingDestroyed())
+                    { return Finish(&Player, TEXT("an exact-cost spell refusal spawned a missile")); }
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified class %d spell %s (%s), source missile %d, damage or utility, XP, mana, and exact-cost refusal."),
+                    Player.GetCharacterClass(), Spell.Name, Spell.Runes, Rules->Type);
+                if (++RuneProjectileIndex < Spells.Num()) { StageTime = Now + 0.25; NextPoint = 1; break; }
+                --RuneProjectileIndex;
+                ++NextPoint;
+                break;
+            case 6:
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadRuneProjectilesReview")))
+                { return Finish(&Player, TEXT("could not save the owned runes and projectile spell result")); }
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickConfusionWand(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            if (bConfusionWandReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                if (Player.GetReadyItem() != 913 || Player.GetItemCount(913) != 1 || Player.GetMana() != 100)
+                { return Finish(&Player, TEXT("the confusion wand, ready hand, or refusal mana failed to reload")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified the confusion wand and remaining mana across a process restart."));
+                return Finish(&Player);
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            ANativeWadGuardian* Target = ElementalTarget.Get();
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+                const TActorIterator<ANativeWadGuardian> Original(Player.GetWorld());
+                if (!Level || !Original || !PlaceReviewPlayer(**Level, Player, FVector2D(Original->GetActorLocation()) + FVector2D(-150, 0)))
+                { return Finish(&Player, TEXT("the confusion fixture needs the original L30 encounter room")); }
+                Target = *Original;
+                ElementalTarget = Target;
+                Target->SetActorRotation((Player.GetActorLocation() - Target->GetActorLocation()).Rotation());
+                StageTime = Player.GetWorld()->GetTimeSeconds();
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (!Target->HasAcquiredTarget())
+                {
+                    if (Player.GetWorld()->GetTimeSeconds() - StageTime > 1.0)
+                    { return Finish(&Player, TEXT("the confusion target did not acquire the controlled player approach")); }
+                    break;
+                }
+                Target->SetActorTickEnabled(false);
+                Target->GetCharacterMovement()->DisableMovement();
+                ConfusionHeading = Target->GetActorRotation();
+                HealthBeforeCast = Target->GetEncounterHealth();
+                ExperienceBeforeTravel = Player.GetExperience();
+                ++NextPoint;
+                break;
+            case 2:
+                if (Player.GetReadyItem() != 913 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 913); break; }
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Player.GetWorld()->GetTimeSeconds();
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetWorld()->GetTimeSeconds() - StageTime < 0.3) { break; }
+                if (Target->HasAcquiredTarget() || Target->GetActorRotation().Equals(ConfusionHeading, 0.001)
+                    || Target->GetEncounterHealth() != HealthBeforeCast || Target->GetPoisonLevel() != 0
+                    || Player.GetExperience() != ExperienceBeforeTravel || Player.GetMana() != 200 || Player.GetItemCount(913) != 1)
+                { return Finish(&Player, TEXT("confusion failed to clear and turn the acquired target without health damage or XP")); }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 4:
+                if (Player.GetMana() != 100 || Player.GetItemCount(913) != 1)
+                { return Finish(&Player, TEXT("the confusion wand failed its exact-cost refusal")); }
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { break; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadConfusionWandReview")))
+                { return Finish(&Player, TEXT("could not save the confusion wand result")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified original wand 913 missile 4010: acquired-target loss, random heading, no damage or XP, mana, refusal, and retained item."));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickResistanceItems(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            UWorld& Current = *Player.GetWorld();
+            constexpr const TCHAR* Slot = TEXT("NativeWadResistanceItemsReview");
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            if (bResistanceReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                if (NextPoint == 0)
+                {
+                    const uint8 Expected = DamageFlag(EProjectileDamage::Fire) | DamageFlag(EProjectileDamage::Poison)
+                        | DamageFlag(EProjectileDamage::ManaDrain);
+                    if (Player.GetResistanceMask() != Expected || Player.GetReadyItem() != 618)
+                    { return Finish(&Player, TEXT("the ready amulet and active resistance scrolls did not restore")); }
+                    ++NextPoint;
+                }
+                else if (NextPoint == 1)
+                {
+                    if (Player.GetReadyItem() != IronMace || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, IronMace); return true; }
+                    StageTime = Current.GetTimeSeconds();
+                    ++NextPoint;
+                }
+                else
+                {
+                    if (Player.GetResistanceMask() & DamageFlag(EProjectileDamage::ManaDrain))
+                    { return Finish(&Player, TEXT("the amulet remained active after unreadying it")); }
+                    const double Elapsed = Current.GetTimeSeconds() - StageTime;
+                    if (Player.GetResistanceMask() == 0)
+                    {
+                        if (Elapsed < 15000.0 / TicksPerSecond - 3.0)
+                        { return Finish(&Player, TEXT("the resistance scrolls expired before their source duration")); }
+                        UE_LOG(LogTemp, Display, TEXT("Verified resistance scroll and readied-amulet restart, unreadying, and original expiration."));
+                        return Finish(&Player);
+                    }
+                    if (Elapsed > 15000.0 / TicksPerSecond + 1.0)
+                    { return Finish(&Player, TEXT("the resistance scrolls outlasted their source duration")); }
+                }
+                return true;
+            }
+            struct FResistanceItem { int32 Type; EProjectileDamage Element; };
+            constexpr FResistanceItem Amulets[] = {
+                {606, EProjectileDamage::Poison}, {607, EProjectileDamage::Fire}, {616, EProjectileDamage::Acid},
+                {617, EProjectileDamage::Electricity}, {618, EProjectileDamage::ManaDrain},
+            };
+            if (NextPoint == 0)
+            {
+                for (TActorIterator<ANativeWadGuardian> Enemy(&Current); Enemy; ++Enemy)
+                {
+                    Enemy->SetActorTickEnabled(false);
+                    Enemy->GetCharacterMovement()->DisableMovement();
+                }
+                if (Player.GetArmorRating() != 0) { return Finish(&Player, TEXT("the controlled resistance fixture requires no armor")); }
+                ++NextPoint;
+            }
+            const int32 Index = (NextPoint - 1) / 4;
+            if (Index < UE_ARRAY_COUNT(Amulets))
+            {
+                const auto& Item = Amulets[Index];
+                const int32 Phase = (NextPoint - 1) % 4;
+                if (Phase == 0 || Phase == 2)
+                {
+                    const int32 Ready = Phase == 0 ? Item.Type : IronMace;
+                    if (Player.GetReadyItem() != Ready || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, Ready); return true; }
+                    const uint8 ExpectedMask = Phase == 0 ? DamageFlag(Item.Element) : 0;
+                    if (Player.GetResistanceMask() != ExpectedMask) { return Finish(&Player, *FString::Printf(TEXT("amulet %d has resistance %d instead of %d"), Ready, Player.GetResistanceMask(), ExpectedMask)); }
+                    HealthBeforeCast = Player.GetHealth();
+                    ResistanceManaBefore = Player.GetMana();
+                    ResistancePoisonBefore = Player.GetPoisonLevel();
+                    ANativeWadBolt* Bolt = Current.SpawnActor<ANativeWadBolt>(Player.GetActorLocation() + FVector(-100, 0, 0), FRotator::ZeroRotator);
+                    if (!Bolt) { return Finish(&Player, TEXT("could not launch the controlled incoming missile")); }
+                    Bolt->Launch(nullptr, nullptr, FVector(2000, 0, 0), 400);
+                    Bolt->SetDamageMask(DamageFlag(Item.Element));
+                    StageTime = Current.GetTimeSeconds();
+                    ++NextPoint;
+                }
+                else if (Current.GetTimeSeconds() - StageTime >= 0.1)
+                {
+                    const bool Protected = Phase == 1;
+                    const int32 ExpectedDamage = Protected ? 80 : Item.Element == EProjectileDamage::Fire ? 500 : 400;
+                    const int32 ExpectedPoison = Item.Element == EProjectileDamage::Poison ? Protected ? 10 : 40 : 0;
+                    const int32 ExpectedDrain = Item.Element == EProjectileDamage::ManaDrain ? Protected ? 100 : 400 : 0;
+                    if (Player.GetHealth() != HealthBeforeCast - ExpectedDamage
+                        || Player.GetPoisonLevel() != ResistancePoisonBefore + ExpectedPoison
+                        || Player.GetMana() != ResistanceManaBefore - ExpectedDrain)
+                    { return Finish(&Player, *FString::Printf(TEXT("incoming element %d had the wrong health, poison, or mana result (protected %d, damage %d, poison %d, mana %d)"),
+                        int32(Item.Element), Protected, HealthBeforeCast - Player.GetHealth(), Player.GetPoisonLevel() - ResistancePoisonBefore, ResistanceManaBefore - Player.GetMana())); }
+                    if (!Protected) { UE_LOG(LogTemp, Display, TEXT("Verified amulet %d against actual incoming missiles, including unreadying."), Item.Type); }
+                    ++NextPoint;
+                }
+                return true;
+            }
+            const int32 ScrollStep = NextPoint - 1 - UE_ARRAY_COUNT(Amulets) * 4;
+            if (ScrollStep < 4)
+            {
+                const int32 Type = ScrollStep < 2 ? 353 : 352;
+                if (ScrollStep % 2 == 0)
+                {
+                    if (Player.GetReadyItem() != Type || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, Type); return true; }
+                    Press(Player, EKeys::LeftControl);
+                }
+                else if (Player.GetItemCount(Type) != 0 || Player.GetStatusPower(Type == 353 ? FireResistStatus : PoisonResistStatus) != 1)
+                { return Finish(&Player, *FString::Printf(TEXT("resistance scroll %d has count %d and status %d"), Type, Player.GetItemCount(Type), Player.GetStatusPower(Type == 353 ? FireResistStatus : PoisonResistStatus))); }
+                ++NextPoint;
+                return true;
+            }
+            if (Player.GetReadyItem() != 618 || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, 618); return true; }
+            if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+            if (!Player.SaveWadCheckpoint(Slot)) { return Finish(&Player, TEXT("could not save the resistance item effects")); }
+            UE_LOG(LogTemp, Display, TEXT("Verified five original resistance amulets with live missiles and both consumed resistance scrolls; saved active effects."));
+            return Finish(&Player);
+        }
+
+        bool TickUtilityItems(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr const TCHAR* Slot = TEXT("NativeWadUtilityItemsReview");
+            struct FTestItem { int32 Type; EItemStatus Effect; int32 Power; };
+            constexpr FTestItem Items[] = {
+                {813, LavaWalkStatus, 1}, {815, InvisibleStatus, 1},
+                {816, TranslucentStatus, 1}, {820, StrengthStatus, 20},
+            };
+            if (bUtilityReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                bool bActive = true;
+                bool bExpired = true;
+                for (const FTestItem& Item : Items)
+                {
+                    const int32 Power = Player.GetStatusPower(Item.Effect);
+                    bActive &= Power == Item.Power;
+                    bExpired &= Power == 0;
+                }
+                if (NextPoint == 0)
+                {
+                    if (!bActive) { return Finish(&Player, TEXT("the original potion effects failed to reload")); }
+                    StageTime = Current.GetTimeSeconds();
+                    ++NextPoint;
+                }
+                else if (bExpired)
+                {
+                    const double Elapsed = Current.GetTimeSeconds() - StageTime;
+                    if (Elapsed < 5000.0 / TicksPerSecond - 2.0)
+                    {
+                        return Finish(&Player, TEXT("the potion effects expired too soon"));
+                    }
+                    UE_LOG(LogTemp, Display, TEXT("Verified all four utility potion effects reload and expire."));
+                    return Finish(&Player);
+                }
+                else if (Current.GetTimeSeconds() - StageTime > 5000.0 / TicksPerSecond + 1.0)
+                {
+                    return Finish(&Player, TEXT("the potion effects lasted past their authored duration"));
+                }
+                return true;
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            const int32 Index = NextPoint / 2;
+            if (Index == UE_ARRAY_COUNT(Items))
+            {
+                if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+                if (!Player.SaveWadCheckpoint(Slot)) { return Finish(&Player, TEXT("could not save the active potion effects")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified use and consumption of Lava Walking, Invisibility, Translucency, and Demon Strength potions."));
+                return Finish(&Player);
+            }
+            const FTestItem& Item = Items[Index];
+            if (NextPoint % 2 == 0)
+            {
+                if (!Player.GetItemCount(Item.Type)) { return Finish(&Player, TEXT("the potion review needs its authored items")); }
+                if (Player.GetReadyItem() != Item.Type || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, Item.Type);
+                    return true;
+                }
+                Press(Player, EKeys::LeftControl);
+            }
+            else if (Player.GetItemCount(Item.Type) || Player.GetStatusPower(Item.Effect) != Item.Power)
+            {
+                return Finish(&Player, *FString::Printf(TEXT("potion %d failed to apply its authored effect and be consumed"), Item.Type));
+            }
+            ++NextPoint;
+            return true;
+        }
+
+        bool TickSpecialAmmo(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr const TCHAR* Slot = TEXT("NativeWadSpecialAmmoReview");
+            constexpr int32 Last = UE_ARRAY_COUNT(CrossbowAmmo) - 1;
+            if (bAmmoReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                if (Player.GetSelectedAmmo() != Last || Player.GetAmmoReserve(Last) != 8 || Player.GetReadyItem() != Crossbow)
+                {
+                    return Finish(&Player, TEXT("the ammo selection, reserve, or ready crossbow failed to reload"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified ammo selection and reserve across a process restart."));
+                return Finish(&Player);
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            if (NextPoint == 0)
+            {
+                const TActorIterator<ANativeWadLevel> Level(&Current);
+                const TActorIterator<ANativeWadGuardian> Existing(&Current);
+                if (!Level || !Existing || !Player.CollectItem(Crossbow))
+                {
+                    return Finish(&Player, TEXT("the special-ammo review needs its level, encounter, and crossbow"));
+                }
+                const FTransform Transform = Existing->GetActorTransform();
+                Existing->Destroy();
+                ANativeWadGuardian* Target = Current.SpawnActorDeferred<ANativeWadGuardian>(ANativeWadGuardian::StaticClass(),
+                    Transform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+                if (!Target || !PlaceReviewPlayer(**Level, Player, FVector2D(Transform.GetLocation()) + FVector2D(-150, 0)))
+                {
+                    return Finish(&Player, TEXT("could not place the special-ammo fixture"));
+                }
+                FWadEncounterProfile Profile;
+                Profile.MaxHealth = 10000;
+                Profile.RegenPerUpdate = 0;
+                Profile.ArmorClass = 2;
+                Target->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+                Target->FinishSpawning(Transform);
+                Target->SetActorTickEnabled(false);
+                Target->GetCharacterMovement()->DisableMovement();
+                AmmoTarget = Target;
+                for (int32 Index = 0; Index <= Last; ++Index)
+                {
+                    Player.CollectAmmo(Index, 1);
+                }
+                ++NextPoint;
+                return true;
+            }
+            ANativeWadGuardian* Target = AmmoTarget.Get();
+            if (!Target)
+            {
+                return Finish(&Player, TEXT("the special-ammo target disappeared"));
+            }
+            const int32 Index = (NextPoint - 1) / 2;
+            const double Now = Current.GetTimeSeconds();
+            if (Index <= Last && (NextPoint % 2) != 0)
+            {
+                if (Now < StageTime) { return true; }
+                if (Player.GetReadyItem() != Crossbow || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, Crossbow);
+                    return true;
+                }
+                Player.SelectAmmo(Index);
+                HealthBeforeTravel = Target->GetEncounterHealth();
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Now + 1.5;
+                ++NextPoint;
+                return true;
+            }
+            if (Index <= Last)
+            {
+                if (Now < StageTime) { return true; }
+                const auto& Ammo = CrossbowAmmo[Index];
+                const int32 Expected = Ammo.Effect == EProjectileDamage::Electricity ? Ammo.Damage * 3 / 2
+                    : Ammo.Effect == EProjectileDamage::Piercing ? Ammo.Damage + Ammo.Damage * 8 / 100 : Ammo.Damage;
+                if (Player.GetAmmoCount(Index) != 0 || Target->GetEncounterHealth() != HealthBeforeTravel - Expected
+                    || (Ammo.Effect == EProjectileDamage::Poison && Target->GetPoisonLevel() != Ammo.Damage / 10))
+                {
+                    return Finish(&Player, *FString::Printf(TEXT("ammo %s did not apply its damage and spend exactly one round"), Ammo.Name));
+                }
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == UE_ARRAY_COUNT(CrossbowAmmo) * 2 + 1)
+            {
+                Target->RestorePoison(0, 0.0);
+                HealthBeforeTravel = Target->GetEncounterHealth();
+                if (!Player.CollectAmmo(Last, 1))
+                {
+                    return Finish(&Player, TEXT("could not provide the test round for a missed shot"));
+                }
+                Aim(Player, Player.GetPawnViewLocation() * 2 - Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Now + 2.1;
+                ++NextPoint;
+                return true;
+            }
+            if (NextPoint == UE_ARRAY_COUNT(CrossbowAmmo) * 2 + 2)
+            {
+                if (Now < StageTime) { return true; }
+                if (Player.GetAmmoCount(Last) != 0 || Target->GetEncounterHealth() != HealthBeforeTravel)
+                {
+                    return Finish(&Player, TEXT("a missed shot did not spend exactly one round"));
+                }
+                ++NextPoint;
+                return true;
+            }
+            if ((NextPoint % 2) != 0)
+            {
+                HealthBeforeTravel = Target->GetEncounterHealth();
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                return true;
+            }
+            if (Player.GetInteractionMessage() != TEXT("No bolts.") || Target->GetEncounterHealth() != HealthBeforeTravel)
+            {
+                return Finish(&Player, TEXT("the empty crossbow could still fire"));
+            }
+            if (!Player.CollectAmmo(Last, 8) || !Player.SaveWadCheckpoint(Slot))
+            {
+                return Finish(&Player, TEXT("could not save the continued ammo state"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Verified all seven ammo types, armor and poison effects, and missed and empty shots."));
+            return Finish(&Player);
+        }
+
+        bool TickElymasPresentation(ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+            ANativeWadGuardian* Boss = nullptr;
+            for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+            {
+                if (Enemy->GetEncounterName() == TEXT("Elymas")) { Boss = *Enemy; break; }
+            }
+            if (!Level || !Boss || Player.GetHealth() <= 0) { return Finish(&Player, TEXT("the Elymas presentation fixture lost its encounter")); }
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                if (!bElymasPlatePrimed)
+                {
+#if WITH_EDITORONLY_DATA
+                TArray<uint8> Table;
+                const FString Source = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/COLORIZE/COLORT12");
+                if (!FFileHelper::LoadFileToArray(Table, *Source) || Table.Num() != 256) { return Finish(&Player, TEXT("Elymas's original palette table is missing")); }
+                const TCHAR* Names[] = {TEXT("Elymas"), TEXT("Elymas_Hurt"), TEXT("Elymas_Down"), TEXT("Elymas_Attack")};
+                const TCHAR* Art[] = {TEXT("WIZEVL/WIZEVL8.CPC"), TEXT("WIZEVL/WIZHRT1.CPC"), TEXT("WIZEVL/WIZEVL7G.CPC"), TEXT("WIZEVL/WIZEVL1.CPC")};
+                for (int32 Index = 0; Index < UE_ARRAY_COUNT(Names); ++Index)
+                {
+                    FIntPoint SpriteSize;
+                    TArray<FColor> Pixels;
+                    const FString Object = FString::Printf(TEXT("/Game/Maps/L44_Assets/Things/T_%s.T_%s"), Names[Index], Names[Index]);
+                    UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, *Object);
+                    TArray64<uint8> Actual;
+                    if (!Texture || !LoadWadSprite(Art[Index], SpriteSize, Pixels, Table) || !Texture->Source.GetMipData(Actual, 0)
+                        || Texture->Source.GetSizeX() != SpriteSize.X || Texture->Source.GetSizeY() != SpriteSize.Y
+                        || Actual.Num() != Pixels.Num() * int64(sizeof(FColor))
+                        || FMemory::Memcmp(Actual.GetData(), Pixels.GetData(), Actual.Num()) != 0)
+                    {
+                        return Finish(&Player, *FString::Printf(TEXT("the saved %s sprite differs from the original COLORT12 palette"), Names[Index]));
+                    }
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified all four saved Elymas sprite pixel buffers match the original art with COLORT12."));
+#else
+                return Finish(&Player, TEXT("the source palette comparison requires Editor texture data"));
+#endif
+                for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                {
+                    if (*Enemy != Boss) { Enemy->SetActorTickEnabled(false); Enemy->GetCharacterMovement()->SetComponentTickEnabled(false); }
+                }
+                    if (!PlaceReviewPlayer(**Level, Player, {-268, 1046})) { return Finish(&Player, TEXT("could not reach Elymas's original first pressure plate")); }
+                    bElymasPlatePrimed = true;
+                    return true;
+                }
+                FVector2D Plate;
+                if (!Level->GetSectorSurfaceHeights(102, Plate) || Plate.X != 512.0) { break; }
+                const FVector Origin = Boss->GetActorLocation();
+                UE_LOG(LogTemp, Display, TEXT("Elymas presentation source floor: boss %s, capsule half-height %.1f, facing %s."),
+                    *Origin.ToCompactString(), Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight(), *Boss->GetActorForwardVector().ToCompactString());
+                const double Floor = Origin.Z - Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+                bool bPlaced = false;
+                for (const double Distance : {256.0, 288.0, 320.0, 352.0, 384.0, 416.0, 448.0, 512.0, 576.0, 640.0})
+                {
+                    for (const double Angle : {0.0, -15.0, 15.0, -30.0, 30.0, -45.0, 45.0, -60.0, 60.0, -75.0, 75.0, -85.0, 85.0})
+                    {
+                        const FVector Candidate = Origin + Boss->GetActorForwardVector().RotateAngleAxis(Angle, FVector::UpVector) * Distance;
+                        const int32 Sector = Level->FindWadSector(FVector2D(Candidate));
+                        if (Sector != INDEX_NONE && FMath::Abs(Level->GetActorLocation().Z + Level->GetWalkingHeight(Sector) - Floor) < 80.0
+                            && PlaceReviewPlayer(**Level, Player, FVector2D(Candidate)) && Boss->CanSeePlayer(Player))
+                        {
+                            bPlaced = true;
+                            break;
+                        }
+                    }
+                    if (bPlaced) { break; }
+                }
+                if (!bPlaced) { return Finish(&Player, TEXT("could not stage a visible source-floor approach to Elymas")); }
+                Aim(Player, Origin);
+                ++NextPoint;
+                break;
+            }
+            case 1:
+            {
+                bool bSaved = false;
+                Aim(Player, Boss->GetActorLocation());
+                if (!CaptureTownFrame(TEXT("palette"), bSaved)) { break; }
+                if (!bSaved) { return Finish(&Player, TEXT("could not capture Elymas's source palette")); }
+                ++NextPoint;
+                break;
+            }
+            case 2:
+                for (TActorIterator<ANativeWadBolt> Bolt(Player.GetWorld()); Bolt; ++Bolt)
+                {
+                    if (Bolt->GetOwner() == Boss && !Bolt->IsActorBeingDestroyed())
+                    {
+                        PresentationBolt = *Bolt;
+                        PresentationPreviousPosition = Bolt->GetActorLocation();
+                        ++NextPoint;
+                        break;
+                    }
+                }
+                break;
+            case 3:
+                if (ANativeWadBolt* Bolt = PresentationBolt.Get())
+                {
+                    PresentationPreviousDelta = Bolt->GetActorLocation() - PresentationPreviousPosition;
+                    PresentationPreviousPosition = Bolt->GetActorLocation();
+                    PresentationPlayerStart = Player.GetActorLocation();
+                    SetCombatStrafe(Player, 1);
+                    ++NextPoint;
+                }
+                else { NextPoint = 2; }
+                break;
+            case 4:
+            {
+                ANativeWadBolt* Bolt = PresentationBolt.Get();
+                if (!Bolt || Bolt->IsActorBeingDestroyed()) { SetCombatStrafe(Player, 0); NextPoint = 2; break; }
+                const FVector Delta = Bolt->GetActorLocation() - PresentationPreviousPosition;
+                const FVector TowardPlayer = (Player.GetActorLocation() - Bolt->GetActorLocation()).GetSafeNormal();
+                const FVector Before = PresentationPreviousDelta.GetSafeNormal();
+                const FVector After = Delta.GetSafeNormal();
+                if (FVector::Dist2D(Player.GetActorLocation(), PresentationPlayerStart) > 1.0
+                    && FVector::DotProduct(Before, After) < 0.999999
+                    && FVector::DotProduct(After, TowardPlayer) > FVector::DotProduct(Before, TowardPlayer) + 0.0000001)
+                {
+                    SetCombatStrafe(Player, 0);
+                    Player.GetCharacterMovement()->StopMovementImmediately();
+                    UE_LOG(LogTemp, Display, TEXT("Verified Elymas's authored missile bends toward the player during a normal sideways dodge."));
+                    ++NextPoint;
+                }
+                PresentationPreviousDelta = Delta;
+                PresentationPreviousPosition = Bolt->GetActorLocation();
+                break;
+            }
+            case 5:
+            {
+                bool bSaved = false;
+                Aim(Player, Boss->GetActorLocation());
+                if (!CaptureTownFrame(TEXT("homing"), bSaved)) { break; }
+                return Finish(&Player, bSaved ? nullptr : TEXT("could not capture the homing-shot review"));
+            }
+            }
+            return true;
+        }
+
+        bool TickBoulderRail(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            ANativeWadGuardian* Rock = nullptr;
+            for (TActorIterator<ANativeWadGuardian> Actor(&Current); Actor; ++Actor)
+            {
+                if (Actor->ActorHasTag(bBoulder75Review ? TEXT("WAD Creature Thing 443") : TEXT("WAD Creature Thing 223")))
+                {
+                    Rock = *Actor;
+                    break;
+                }
+            }
+            if (!Level || !Rock)
+            {
+                return Finish(&Player, TEXT("the authored boulder is missing"));
+            }
+            if (bBoulder75Review && NextPoint == 0)
+            {
+                if (!bCampaignActionStarted)
+                {
+                    if (!PlaceReviewPlayer(**Level, Player, {2640, 160})) { return Finish(&Player, TEXT("could not stage the L75 boulder-pit approach")); }
+                    bCampaignActionStarted = true;
+                    return true;
+                }
+                if (!bBoulderPitTriggered)
+                {
+                    FWadLevelCheckpoint Pit;
+                    if (!Level->WriteCheckpoint(Pit, true)) { return Finish(&Player, TEXT("could not inspect the original boulder-pit trigger")); }
+                    if (Pit.Variables[3] == 0)
+                    {
+                        WalkTo(Player, {2544, 160});
+                        return true;
+                    }
+                    bBoulderPitTriggered = true;
+                    UE_LOG(LogTemp, Display, TEXT("Verified normal entry into L75's boulder pit starts the authored lowering and return cycle."));
+                }
+                Stop(Player);
+            }
+            const FVector Position = Rock->GetActorLocation();
+            if (NextPoint == 0 && (bBoulder75Review ? Position.X > 2600 : Position.X < -3600))
+            {
+                ++NextPoint;
+            }
+            else if (NextPoint == 1 && (bBoulder75Review ? Position.X > 2200 && Position.X < 2400 : Position.X > -3000 && Position.X < -2800))
+            {
+                FWadLevelCheckpoint Checkpoint;
+                if (!Level->WriteCheckpoint(Checkpoint, true))
+                {
+                    return Finish(&Player, TEXT("the boulder position could not be saved"));
+                }
+                Rock->SetActorLocation(Position + FVector(50, 0, 0));
+                if (!Level->RestoreCheckpoint(Checkpoint) || !Position.Equals(Rock->GetActorLocation(), 0.1))
+                {
+                    return Finish(&Player, TEXT("the boulder position was not restored"));
+                }
+                if (!PlaceReviewPlayer(**Level, Player, FVector2D(Position)))
+                {
+                    return Finish(&Player, TEXT("the contact review could not reach the boulder rail"));
+                }
+                ++NextPoint;
+            }
+            else if (NextPoint == 2 && Player.GetHealth() == 0)
+            {
+                UE_LOG(LogTemp, Display, TEXT("Verified the L%d boulder wraps, travels along its source rail, resumes its saved position, and deals contact damage."), bBoulder75Review ? 75 : 73);
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickAuthoredGenerator(ANativeWadPlayer& Player)
+        {
+            const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+            if (!Level) { return Finish(&Player, TEXT("the authored generator fixture needs its native map")); }
+            const bool bReload = Player.GetWorld()->URL.HasOption(TEXT("WadLoad"));
+            if (bReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            const int32 Count = bUndeadWizardGeneratorReview ? 4 : 7;
+            const int32 Trigger = bUndeadWizardGeneratorReview ? 152 : 264;
+            const int32 Creature = bUndeadWizardGeneratorReview ? 1002 : 1006;
+            const FVector2D Approach = bUndeadWizardGeneratorReview ? FVector2D(-116, -64) : FVector2D(1344, 3744);
+            const FVector2D Plate = bUndeadWizardGeneratorReview ? FVector2D(-116, 40) : FVector2D(1344, 3840);
+            FWadLevelCheckpoint State;
+            if (!Level->WriteCheckpoint(State, true))
+            {
+                return Finish(&Player, TEXT("the source creature generators are absent"));
+            }
+            if (bReload)
+            {
+                if (NextPoint == 0)
+                {
+                    for (int32 Id = 0; Id < Count; ++Id)
+                    {
+                        const FWadCreatureGeneratorState* Generator = State.CreatureGenerators.Find(Id);
+                        if (!Generator || Generator->bPaused || Generator->Released != 0 || Generator->Remaining <= 0.0)
+                        {
+                            return Finish(&Player, TEXT("an active source generator's pending release failed to restore"));
+                        }
+                    }
+                    ++NextPoint;
+                }
+                if (bUndeadWizardGeneratorReview && NextPoint == 2)
+                {
+                    if (Player.GetHealth() <= 0) { return Finish(&Player, TEXT("the occupied-spawn fixture lost its player")); }
+                    if (State.CreatureGenerators.FindChecked(0).Released == 0) { return true; }
+                    if (State.CreatureGenerators.FindChecked(0).Released != 1) { return Finish(&Player, TEXT("the cleared spawn released more than one wizard")); }
+                    bool bReleased = false;
+                    for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                    {
+                        if (Enemy->ActorHasTag(TEXT("WAD Generator 0 Creature 0")) && Enemy->GetSourceType() == 1002
+                            && !Enemy->IsHidden() && !Enemy->IsDefeated()) { bReleased = true; }
+                    }
+                    if (!bReleased) { return Finish(&Player, TEXT("the cleared generator did not release a live Blue Wizard")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified L10's occupied generator retains its release count across restart and releases one wizard after the controlled blocker is cleared."));
+                    return Finish(&Player);
+                }
+                for (int32 Id = 0; Id < Count; ++Id)
+                {
+                    if (bUndeadWizardGeneratorReview && Id == 0)
+                    {
+                        if (State.CreatureGenerators.FindChecked(Id).Released != 0) { return Finish(&Player, TEXT("an occupied source spawn advanced its release count")); }
+                        continue;
+                    }
+                    if (State.CreatureGenerators[Id].Released == 0) { return true; }
+                    if (State.CreatureGenerators[Id].Released != 1) { return Finish(&Player, TEXT("a restored pending release duplicated")); }
+                    const FName Tag(*FString::Printf(TEXT("WAD Generator %d Creature 0"), Id));
+                    bool bFound = false;
+                    for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                    {
+                        if (Enemy->ActorHasTag(Tag) && Enemy->GetSourceType() == Creature && !Enemy->IsHidden() && !Enemy->IsDefeated()) { bFound = true; }
+                    }
+                    if (!bFound) { return Finish(&Player, TEXT("a restored source generator released the wrong encounter")); }
+                }
+                if (bUndeadWizardGeneratorReview)
+                {
+                    const FName BlockerTag(TEXT("WAD Creature Thing 171"));
+                    for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                    {
+                        if (Enemy->ActorHasTag(BlockerTag) && !Enemy->IsDefeated())
+                        {
+                            // Controlled collision fixture, not a combat kill or campaign reward.
+                            Enemy->RestoreEncounterHealth(0);
+                            NextPoint = 2;
+                            UE_LOG(LogTemp, Display, TEXT("Verified L10's three unoccupied wizard generators resume once; generator 0 remains blocked at its original occupied spawn."));
+                            return true;
+                        }
+                    }
+                    return Finish(&Player, TEXT("the original occupied-spawn blocker is absent"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified %d authored L%d wizard generators resume their pending clock and release exactly one original encounter after process restart."),
+                    Count, bUndeadWizardGeneratorReview ? 10 : 41);
+                return Finish(&Player);
+            }
+            if (NextPoint == 0)
+            {
+                for (int32 Id = 0; Id < Count; ++Id)
+                {
+                    const FWadCreatureGeneratorState* Inactive = State.CreatureGenerators.Find(Id);
+                    if (Inactive && (!Inactive->bPaused || Inactive->Released != 0))
+                    {
+                        return Finish(&Player, TEXT("the source wizard generators must begin inactive"));
+                    }
+                }
+                if (!PlaceReviewPlayer(**Level, Player, Approach)) { return Finish(&Player, TEXT("could not stage the original generator plate approach")); }
+                ++NextPoint;
+                return true;
+            }
+            const FWadCreatureGeneratorState* First = State.CreatureGenerators.Find(0);
+            if (!First || First->bPaused)
+            {
+                if (WalkTo(Player, Plate) && !First) { return Finish(&Player, TEXT("the original plate did not activate its source generators")); }
+                return true;
+            }
+            Stop(Player);
+            if (!Player.GetCharacterMovement()->IsMovingOnGround()) { return true; }
+            for (int32 Id = 0; Id < Count; ++Id)
+            {
+                const FWadCreatureGeneratorState* Active = State.CreatureGenerators.Find(Id);
+                if (!Active || Active->bPaused || Active->Released != 0)
+                {
+                    return Finish(&Player, TEXT("the original plate did not activate its complete generator group before release"));
+                }
+            }
+            if (Level->FindWadSector(FVector2D(Player.GetActorLocation())) != Trigger
+                || !Player.SaveWadCheckpoint(bUndeadWizardGeneratorReview ? TEXT("NativeWadL10WizardGeneratorReview") : TEXT("NativeWadL41GeneratorReview")))
+            {
+                return Finish(&Player, TEXT("could not save the grounded source plate with active pending wizard releases"));
+            }
+            UE_LOG(LogTemp, Display, TEXT("Verified walking onto L%d sector %d activates its %d authored wizard generators and saves their pending release clocks."),
+                bUndeadWizardGeneratorReview ? 10 : 41, Trigger, Count);
+            return Finish(&Player);
+        }
+
+        bool TickRuneOwnership(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            const bool bReload = Player.GetWorld()->URL.HasOption(TEXT("WadLoad"));
+            if (bReload && !Player.HasRestoredWadCheckpoint()) { return true; }
+            if (bLegacyRuneReview)
+            {
+                for (int32 Rune = 1; Rune <= 9; ++Rune)
+                {
+                    if (Player.HasRune(Rune) != (Rune <= 6) || (Rune <= 6 && Player.GetItemCount(299 + Rune) != 1))
+                    {
+                        return Finish(&Player, TEXT("legacy rune migration did not install exactly the original Mage starter runes"));
+                    }
+                }
+                if (!bReload && !Player.SaveWadCheckpoint(TEXT("NativeWadRuneLegacyReview")))
+                {
+                    return Finish(&Player, TEXT("could not save the migrated rune inventory"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified original starter-rune migration without duplicates; process reload=%d."), bReload);
+                return Finish(&Player);
+            }
+            if (bReload)
+            {
+                if (Player.GetCharacterClass() != MageClass || !Player.HasRune(1) || Player.HasRune(6) || !Player.HasRune(7)
+                    || Player.HasRune(8) || Player.HasRune(9) || !Player.HasFeatherfall())
+                {
+                    return Finish(&Player, TEXT("rune gains, removals, or the spell effect failed to persist"));
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified acquired and missing runes and Feather Fall across a fresh process restart."));
+                return Finish(&Player);
+            }
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                for (int32 Rune = 1; Rune <= 9; ++Rune)
+                {
+                    if (Player.HasRune(Rune) != (Rune <= 6)) { return Finish(&Player, TEXT("the Mage starter rune ownership differs from the source")); }
+                }
+                const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+                if (!Catalog) { return Finish(&Player, TEXT("the rune fixture needs the original catalog")); }
+                const NativeWadInventoryView::FView Bag(Player, *Catalog);
+                for (int32 Slot = 0; Slot < Player.GetCarriedItems().Num(); ++Slot)
+                {
+                    if (IsRuneItem(Player.GetCarriedItems()[Slot]) && Bag.CellForSlot(Slot) != INDEX_NONE)
+                    {
+                        return Finish(&Player, TEXT("an installed rune appeared as a selectable bag object"));
+                    }
+                }
+                Player.ConsumeItem(300);
+                Press(Player, EKeys::NumPadOne);
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (!Player.GetRunes().IsEmpty() || Player.HasRune(1)) { return Finish(&Player, TEXT("a missing rune accepted its normal key")); }
+                Press(Player, EKeys::NumPadFour);
+                ++NextPoint;
+                break;
+            case 2:
+                Press(Player, EKeys::NumPadOne);
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetRunes() != TEXT("4")) { return Finish(&Player, TEXT("a missing rune completed the spell sequence")); }
+                Press(Player, EKeys::BackSpace);
+                Player.CollectItem(300);
+                Player.CollectItem(305);
+                Player.ConsumeItem(305);
+                if (!Player.HasRune(6)) { return Finish(&Player, TEXT("removing one duplicate removed the remaining rune")); }
+                Player.ConsumeItem(305);
+                Player.CollectItem(306);
+                Player.CollectItem(317);
+                if (Player.HasRune(6) || !Player.HasRune(7) || Player.HasRune(9))
+                {
+                    return Finish(&Player, TEXT("rune removal, acquisition, or spell-school filtering failed"));
+                }
+                ++NextPoint;
+                break;
+            case 4:
+                if (Player.HasFeatherfall())
+                {
+                    if (!Player.SaveWadCheckpoint(TEXT("NativeWadRuneOwnershipReview"))) { return Finish(&Player, TEXT("could not save rune ownership")); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified installed rune bag visibility, missing-key refusal, duplicate ownership, school filtering, normal Feather Fall casting, and saving."));
+                    return Finish(&Player);
+                }
+                if (Player.GetMana() <= 250) { return Finish(&Player, TEXT("the normal rune casting retry exhausted mana")); }
+                if (Player.GetRunes().IsEmpty()) { Press(Player, EKeys::NumPadFour); }
+                else if (Player.GetRunes() == TEXT("4")) { Press(Player, EKeys::NumPadOne); }
+                else if (Player.GetRunes() == TEXT("41")) { Press(Player, EKeys::RightMouseButton); }
+                break;
+            }
+            return true;
+        }
+
+        bool TickProjectileWands(ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            constexpr int32 Types[] = {900, 901, 902, 903, 904, 905, 906, 907, 908, 912, 915, 916, 918};
+            if (HeldKey) { SendKey(Player, HeldKey.GetValue(), IE_Released); HeldKey.Reset(); }
+            const bool bReload = Player.GetWorld()->URL.HasOption(TEXT("WadLoad"));
+            if (bReload)
+            {
+                if (!Player.HasRestoredWadCheckpoint()) { return true; }
+                for (int32 Type : Types)
+                {
+                    if (Player.GetItemCount(Type) != 1) { return Finish(&Player, TEXT("a projectile wand failed to persist")); }
+                }
+                if (Player.GetReadyItem() != WandOfDisintegration) { return Finish(&Player, TEXT("the last wand's ready hand failed to reload")); }
+                UE_LOG(LogTemp, Display, TEXT("Verified eleven damage wands, Push, Pull, and the selected ready hand across a process restart."));
+                return Finish(&Player);
+            }
+            const int32 Type = Types[ProjectileWandIndex];
+            const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+            const FWadInventoryDetails* Item = Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
+            const FWadWandProjectile* Rules = Item ? FindWandProjectile(Item->WandProjectile) : nullptr;
+            if (!Rules || Item->WandManaCost <= 0) { return Finish(&Player, TEXT("a source projectile wand is absent from the catalog")); }
+            const double Now = Player.GetWorld()->GetTimeSeconds();
+            ANativeWadGuardian* Target = ElementalTarget.Get();
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                const TActorIterator<ANativeWadLevel> Level(Player.GetWorld());
+                const TActorIterator<ANativeWadGuardian> Original(Player.GetWorld());
+                if (!Level || !Original) { return Finish(&Player, TEXT("the projectile fixture needs L30's encounter room")); }
+                const FVector Position = Original->GetActorLocation();
+                for (TActorIterator<ANativeWadGuardian> Enemy(Player.GetWorld()); Enemy; ++Enemy)
+                {
+                    Enemy->SetActorTickEnabled(false);
+                    Enemy->SetActorEnableCollision(false);
+                    Enemy->SetActorHiddenInGame(true);
+                }
+                if (!PlaceReviewPlayer(**Level, Player, FVector2D(Position) + FVector2D(-150, 0)))
+                {
+                    return Finish(&Player, TEXT("the projectile fixture could not use the original room"));
+                }
+                const FTransform Transform(FRotator::ZeroRotator, Position);
+                Target = Player.GetWorld()->SpawnActorDeferred<ANativeWadGuardian>(ANativeWadGuardian::StaticClass(), Transform,
+                    nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+                FWadEncounterProfile Profile;
+                Profile.Name = TEXT("Controlled projectile-wand target");
+                Profile.MaxHealth = 10000;
+                Profile.RegenPerUpdate = 0;
+                Profile.WalkSpeed = 0;
+                Target->Configure(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, Profile);
+                UGameplayStatics::FinishSpawningActor(Target, Transform);
+                Target->SetActorTickEnabled(false);
+                ElementalTarget = Target;
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (Now < StageTime) { break; }
+                Target->RestoreEncounterHealth(10000);
+                Target->RestorePoison(0, 0);
+                Player.RestoreWadVital(9, Player.GetMaxHealth());
+                Player.RestoreWadVital(10, 2 * Item->WandManaCost - Player.GetMana());
+                if (Player.GetItemCount(Type) == 0) { Player.CollectItem(Type); }
+                ++NextPoint;
+                break;
+            case 2:
+                if (Player.GetReadyItem() != Type || Player.IsInventoryOpen()) { ReadyCampaignItem(Player, Type); break; }
+                ProjectileTargetStart = Target->GetActorLocation();
+                HealthBeforeCast = Player.GetHealth();
+                ExperienceBeforeTravel = Player.GetExperience();
+                Aim(Player, Target->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                StageTime = Now + 0.5;
+                ++NextPoint;
+                break;
+            case 3:
+            {
+                if (Now < StageTime) { break; }
+                const int32 Expected = (Rules->DamageMask & SpecialDamage) ? 0
+                    : Rules->Damage + ((Rules->DamageMask & DamageFlag(EProjectileDamage::Fire)) ? Rules->Damage / 4 : 0);
+                if (Target->GetEncounterHealth() != 10000 - Expected || Player.GetExperience() != ExperienceBeforeTravel + Expected
+                    || Player.GetMana() != Item->WandManaCost || Player.GetItemCount(Type) != 1)
+                {
+                    return Finish(&Player, *FString::Printf(TEXT("wand %d hit mismatch: target=%d mana=%d"), Type, Target->GetEncounterHealth(), Player.GetMana()));
+                }
+                if (Target->GetPoisonLevel() != (!(Rules->DamageMask & SpecialDamage)
+                    && (Rules->DamageMask & DamageFlag(EProjectileDamage::Poison)) ? Rules->Damage / 10 : 0))
+                {
+                    return Finish(&Player, TEXT("a wand applied the wrong poison component"));
+                }
+                if (Rules->DamageMask == SpecialDamageFlag(ESpecialDamage::Push) || Rules->DamageMask == SpecialDamageFlag(ESpecialDamage::Pull))
+                {
+                    const FVector Away = (ProjectileTargetStart - Player.GetActorLocation()).GetSafeNormal2D();
+                    const double Travel = FVector::DotProduct(Target->GetActorLocation() - ProjectileTargetStart, Away);
+                    if (Rules->DamageMask == SpecialDamageFlag(ESpecialDamage::Push) ? Travel <= 0.1 : Travel >= -0.1)
+                    { return Finish(&Player, *FString::Printf(TEXT("force wand %d moved the live target %.3f units in the wrong direction"), Type, Travel)); }
+                    UE_LOG(LogTemp, Display, TEXT("Verified force wand %d moves the live target %.3f units without health damage or XP."), Type, Travel);
+                }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            }
+            case 4:
+                if (Player.GetMana() != Item->WandManaCost / 2 || Player.GetItemCount(Type) != 1)
+                {
+                    return Finish(&Player, TEXT("a projectile wand failed its exact-cost mana refusal"));
+                }
+                for (TActorIterator<ANativeWadBolt> Bolt(Player.GetWorld()); Bolt; ++Bolt)
+                {
+                    if (Bolt->GetOwner() == &Player && !Bolt->IsActorBeingDestroyed()) { return Finish(&Player, TEXT("a refused wand shot spawned a missile")); }
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified original wand %d projectile %d: damage, elements, mana, refusal, and retained item."), Type, Rules->Type);
+                if (++ProjectileWandIndex < UE_ARRAY_COUNT(Types)) { StageTime = Now + 0.25; NextPoint = 1; break; }
+                if (!Player.SaveWadCheckpoint(TEXT("NativeWadProjectileWandsReview"))) { return Finish(&Player, TEXT("could not save the projectile-wand fixture")); }
+                return Finish(&Player);
+            }
+            return true;
+        }
+
+        bool TickWandCombat(UWorld& Current, ANativeWadPlayer& Player)
+        {
+            using namespace NativeWadRules;
+            const int32 Wand = bFireballWandReview ? 903 : WandOfDisintegration;
+            const int32 Cost = bFireballWandReview ? 800 : DisintegrationManaCost;
+            const TActorIterator<ANativeWadLevel> Level(&Current);
+            const TActorIterator<ANativeWadGuardian> Guardian(&Current);
+            if (!Level || !Guardian || Player.GetHealth() <= 0)
+            {
+                return Finish(&Player, TEXT("the wand review lost its player or target"));
+            }
+            if (HeldKey)
+            {
+                SendKey(Player, HeldKey.GetValue(), IE_Released);
+                HeldKey.Reset();
+            }
+            const double Now = Current.GetTimeSeconds();
+            switch (NextPoint)
+            {
+            case 0:
+            {
+                const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+                const FWadInventoryDetails* Details = Catalog ? Catalog->ItemDetails.Find(Wand) : nullptr;
+                if (!Catalog || (bFireballWandReview
+                    ? !Catalog->WandProjectileMaterials.FindRef(4005) || !Details || Details->WandManaCost != Cost
+                    : !Catalog->PlasmaProjectile))
+                {
+                    return Finish(&Player, TEXT("the wand projectile material is missing from the item catalog"));
+                }
+                if (!Player.CollectItem(Wand))
+                {
+                    return Finish(&Player, TEXT("could not supply the wand for the ranged test"));
+                }
+                ++NextPoint;
+                break;
+            }
+            case 1:
+                if (Player.GetReadyItem() != Wand || Player.IsInventoryOpen())
+                {
+                    ReadyCampaignItem(Player, Wand);
+                    break;
+                }
+                if (Player.GetMana() != 2 * Cost)
+                {
+                    return Finish(&Player, *FString::Printf(TEXT("start the wand review with WadMana=%d"), Cost * 2));
+                }
+                if (!PlaceReviewPlayer(**Level, Player, FVector2D(Guardian->GetActorLocation()) + FVector2D(-150, 0)))
+                {
+                    return Finish(&Player, TEXT("could not set up the wand shot"));
+                }
+                HealthBeforeTravel = Guardian->GetEncounterHealth();
+                HealthBeforeCast = Player.GetHealth();
+                ExperienceBeforeTravel = Player.GetExperience();
+                StageTime = Now;
+                Aim(Player, Guardian->GetActorLocation());
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 2:
+                if (Player.GetMana() != Cost || Player.GetItemCount(Wand) != 1)
+                {
+                    return Finish(&Player, TEXT("the shot spent the wrong mana or consumed the wand"));
+                }
+                if (Now - StageTime < 0.3) { break; }
+                if (!Guardian->IsDefeated() || Player.GetExperience() != ExperienceBeforeTravel + HealthBeforeTravel)
+                {
+                    return Finish(&Player, TEXT("the wand missed the Guardian or awarded the wrong experience"));
+                }
+                if (Player.GetHealth() != HealthBeforeCast - (bFireballWandReview ? 0 : ResolvePlayerDamage(PlasmaDamage, PlasmaElements, Player.GetResistanceMask(), 0, Player.GetArmorRating()).Health))
+                {
+                    return Finish(&Player, TEXT("the caster received the wrong splash damage for the wand's radius"));
+                }
+                Press(Player, EKeys::LeftControl);
+                ++NextPoint;
+                break;
+            case 3:
+                if (Player.GetMana() != Cost / 2 || Player.GetItemCount(Wand) != 1)
+                {
+                    return Finish(&Player, TEXT("the wand failed to apply the half-cost penalty at exactly its mana cost"));
+                }
+                for (TActorIterator<ANativeWadBolt> Bolt(&Current); Bolt; ++Bolt)
+                {
+                    if (Bolt->GetOwner() == &Player && !Bolt->IsActorBeingDestroyed())
+                    {
+                        return Finish(&Player, TEXT("the wand spawned a projectile with insufficient mana"));
+                    }
+                }
+                UE_LOG(LogTemp, Display, TEXT("Verified %s ranged hit, splash radius, mana costs, and retained item."),
+                    *Player.GetInventoryItemDescription(Wand));
+                return Finish(&Player);
+            }
+            return true;
+        }
+
         bool TickRangedAndTimed(UWorld& Current, ANativeWadPlayer& Player)
         {
             using namespace NativeWadRules;
@@ -8852,6 +11765,57 @@ namespace
             {
                 return TickRangedAndTimed(*Current, *Player);
             }
+            if (bAuthoredGeneratorReview) { return TickAuthoredGenerator(*Player); }
+            if (bRuneOwnershipReview) { return TickRuneOwnership(*Player); }
+            if (bProjectileWandsReview) { return TickProjectileWands(*Player); }
+            if (bWandReview)
+            {
+                return TickWandCombat(*Current, *Player);
+            }
+            if (bElymasPresentationReview) { return TickElymasPresentation(*Player); }
+            if (bBoulderReview)
+            {
+                return TickBoulderRail(*Current, *Player);
+            }
+            if (bAmmoReview)
+            {
+                return TickSpecialAmmo(*Current, *Player);
+            }
+            if (bAmmoBannerReview)
+            {
+                return TickAmmoBanner(*Current, *Player);
+            }
+            if (bRuneProjectileReview) { return TickRuneProjectiles(*Player); }
+            if (bConfusionWandReview) { return TickConfusionWand(*Player); }
+            if (bResistanceReview) { return TickResistanceItems(*Player); }
+            if (bUtilityReview)
+            {
+                return TickUtilityItems(*Current, *Player);
+            }
+            if (bReviveReview)
+            {
+                return TickRevive(*Current, *Player);
+            }
+            if (bMusicReview)
+            {
+                return TickMusicTravel(*Current, *Player);
+            }
+            if (bLavaTerrainReview) { return TickLavaTerrain(*Player); }
+            if (bInfiniteGeneratorReview) { return TickInfiniteGenerator(*Player); }
+            if (bElementalMeleeReview) { return TickElementalMelee(*Player); }
+            if (bPendingCharacterReview) { return TickPendingCharacter(*Player); }
+            if (bClassEquipmentReview)
+            {
+                return TickClassEquipment(*Player);
+            }
+            if (bCharacterReview)
+            {
+                return TickCharacter(*Current, *Player);
+            }
+            if (TownReview == ETownReview::Inn || TownReview == ETownReview::InnReload)
+            {
+                return TickInn(*Current, *Player);
+            }
             if (bClassicHudReview)
             {
                 return TickClassicHud(*Player);
@@ -8924,9 +11888,9 @@ namespace
                     {
                         return Finish(Player, TEXT("travel did not arrive at the source L301 player start"));
                     }
-                    if (bSlice && (Player->GetItemCount(NativeWadRules::Berry) != 0
+                    if (bSlice && (Player->GetItemCount(NativeWadRules::Berry) != SliceStartingBerries
                         || Player->GetItemCount(NativeWadRules::IronDagger) != 1
-                        || Player->GetEquippedWeapon() != NativeWadRules::IronDagger || Player->GetSuccessfulCasts() != 1
+                        || Player->GetEquippedWeapon() != (Player->CanUseWadItem(NativeWadRules::IronDagger) ? NativeWadRules::IronDagger : NativeWadRules::IronMace) || Player->GetSuccessfulCasts() != 1
                         || Player->GetExperience() != ExperienceBeforeTravel || Player->GetMana() != ManaBeforeTravel
                         || Player->GetFood() != FoodBeforeTravel || Player->GetHealth() != HealthBeforeTravel
                         || Player->GetCharacterLevel() != LevelBeforeTravel || Player->GetExperienceNeeded() != ThresholdBeforeTravel
@@ -8948,7 +11912,7 @@ namespace
                     UE_LOG(LogTemp, Display, TEXT("Entered native L301 at source player start (3440, 2944)."));
                     if (bSlice)
                     {
-                        UE_LOG(LogTemp, Display, TEXT("Completed continuous L30 gameplay slice. L301 arrival: level %d, health %d/%d, mana %d/%d, food %d, XP %d/%d, dagger ready."),
+                        UE_LOG(LogTemp, Display, TEXT("Completed continuous L30 gameplay slice. L301 arrival: level %d, health %d/%d, mana %d/%d, food %d, XP %d/%d, starter weapon ready."),
                             Player->GetCharacterLevel(), Player->GetHealth(), Player->GetMaxHealth(), Player->GetMana(), Player->GetMaxMana(),
                             Player->GetFood(), Player->GetExperience(), Player->GetExperienceNeeded());
                     }
@@ -9254,12 +12218,15 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : Mode == TEXT("townscroll") ? ETownReview::Scroll
         : Mode == TEXT("townservices") ? ETownReview::Services : Mode == TEXT("townservicesreload") ? ETownReview::ServicesReload
         : Mode == TEXT("townservicesloadout") ? ETownReview::ServicesLoadout
+        : Mode == TEXT("towninn") ? ETownReview::Inn : Mode == TEXT("towninnreload") ? ETownReview::InnReload
         : ETownReview::None;
     const bool bStartsInTown = TownReview == ETownReview::Reload || TownReview == ETownReview::Start
         || TownReview == ETownReview::Scroll || TownReview == ETownReview::Services || TownReview == ETownReview::ServicesReload
         || TownReview == ETownReview::ServicesLoadout
+        || TownReview == ETownReview::Inn || TownReview == ETownReview::InnReload
         || L25Review == EL25Review::ElmoreLaunch
-        || UndeadReview == EUndeadReview::Launch || TempleReview == ETempleReview::Launch || CampaignLaunch;
+        || UndeadReview == EUndeadReview::Launch || TempleReview == ETempleReview::Launch || CampaignLaunch
+        || Mode == TEXT("characterpath") || Mode == TEXT("pendingcharacter") || (Mode == TEXT("classequipment") && World && !World->URL.HasOption(TEXT("WadLoad")));
     const bool bHasReviewWorld = bStartsInTown ? World && World->IsGameWorld() && World->GetAuthGameMode<ANativeWadTownGameMode>()
         : GetReviewLevel(World, OutputPath, ImageSize) != nullptr;
     const FWorldContext* Context = bHasReviewWorld ? GEngine->GetWorldContextFromWorld(World) : nullptr;
@@ -9270,13 +12237,27 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     const bool bEconomy = Mode == TEXT("economywater") || Mode == TEXT("economywaterreload");
     const bool bEconomyReload = Mode == TEXT("economywaterreload");
     const bool bRanged = Mode == TEXT("rangedandtimed") || Mode == TEXT("timeditemreload");
+    const bool bWand = Mode == TEXT("wandcombat") || Mode == TEXT("wandfireball");
+    const bool bBoulder = Mode == TEXT("boulderrail") || Mode == TEXT("boulderrail75");
+    const bool bAmmo = Mode == TEXT("specialammo") || Mode == TEXT("specialammoreload");
+    const bool bAmmoBanner = Mode == TEXT("ammobanner");
+    const bool bRuneProjectile = Mode == TEXT("runeprojectiles") || Mode == TEXT("runeprojectilesreload");
+    const bool bConfusion = Mode == TEXT("confusionwand") || Mode == TEXT("confusionwandreload");
+    const bool bResistance = Mode == TEXT("resistanceitems") || Mode == TEXT("resistanceitemsreload");
+    const bool bUtility = Mode == TEXT("utilityitems") || Mode == TEXT("utilityitemsreload");
+    const bool bRevive = Mode == TEXT("revive") || Mode == TEXT("revivereload");
+    const bool bMusic = Mode == TEXT("musictravel");
+    const bool bCharacter = Mode == TEXT("characterpath") || Mode == TEXT("characterreload");
     const bool bL22Journey = Mode == TEXT("l31tol22");
     const bool bL22Trap = Mode == TEXT("l22trap");
     const bool bLiftCheckpoint = Mode == TEXT("liftsave") || Mode == TEXT("liftreload");
     const bool bDoorReload = Mode == TEXT("doorreload");
-    const bool bStartsInL20 = L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery || L25Review == EL25Review::L20Exit;
+    const bool bStartsInL20 = bAmmoBanner || L25Review == EL25Review::L20Reload || L25Review == EL25Review::L20Scenery
+        || L25Review == EL25Review::L20Exit;
     const FString CampaignMap = CampaignRoute ? FString::Printf(TEXT("L%d"), CampaignRoute->Map) : FString();
     const TCHAR* StartMap = bStartsInTown ? TEXT("WadTown") : CampaignRoute ? *CampaignMap : bStartsInL20 ? TEXT("L20")
+        : Mode == TEXT("elymaspresentation") ? TEXT("L44") : Mode == TEXT("templegenerator") ? TEXT("L41") : Mode == TEXT("undeadwizardgenerator") ? TEXT("L10")
+        : (Mode == TEXT("infinitegenerator") || Mode == TEXT("lavaterrain")) ? TEXT("L71")
         : TempleReview == ETempleReview::L51 ? TEXT("L51") : TempleReview != ETempleReview::None ? TEXT("L52")
         : UndeadReview == EUndeadReview::Castle ? TEXT("L231") : UndeadReview == EUndeadReview::Traps ? TEXT("L75")
         : UndeadReview == EUndeadReview::Keep ? TEXT("L10") : UndeadReview != EUndeadReview::None ? TEXT("L12")
@@ -9289,7 +12270,9 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
         : L25Review >= EL25Review::L60Reload ? TEXT("L60")
         : L25Review != EL25Review::None ? TEXT("L25") : bAmbient || bClassicHud ? TEXT("L301")
         : bEconomyReload ? TEXT("L301")
-        : bInventory || bItemUse || bEconomy || bRanged ? TEXT("L30")
+        : bBoulder ? (Mode == TEXT("boulderrail75") ? TEXT("L75") : TEXT("L73"))
+        : bInventory || bItemUse || bEconomy || bRanged || bWand || bAmmo || bRuneProjectile || bConfusion || bResistance || bUtility || bRevive || bMusic || bCharacter
+            || Mode == TEXT("classequipment") || Mode == TEXT("elementalmelee") || Mode == TEXT("projectilewands") || Mode == TEXT("runeownership") || Mode == TEXT("runelegacy") ? TEXT("L30")
         : bL22Journey || bDoorReload ? TEXT("L31")
         : bL22Trap || TownReview == ETownReview::Tour || TownReview == ETownReview::Failure ? TEXT("L22")
         : bLiftCheckpoint ? TEXT("L151") : TEXT("L531");
@@ -9310,6 +12293,37 @@ bool StartNativeWadExtensionReview(UWorld* World, const FString& OutputPath, int
     Review->bEconomyReload = bEconomyReload;
     Review->bRangedReview = bRanged;
     Review->bTimedItemReload = Mode == TEXT("timeditemreload");
+    Review->bWandReview = bWand;
+    Review->bFireballWandReview = Mode == TEXT("wandfireball");
+    Review->bBoulderReview = bBoulder;
+    Review->bBoulder75Review = Mode == TEXT("boulderrail75");
+    Review->bElymasPresentationReview = Mode == TEXT("elymaspresentation");
+    Review->bAmmoReview = bAmmo;
+    Review->bAmmoBannerReview = bAmmoBanner;
+    Review->bRuneProjectileReview = bRuneProjectile;
+    Review->bRuneProjectileReload = Mode == TEXT("runeprojectilesreload");
+    Review->bConfusionWandReview = bConfusion;
+    Review->bConfusionWandReload = Mode == TEXT("confusionwandreload");
+    Review->bResistanceReview = bResistance;
+    Review->bResistanceReload = Mode == TEXT("resistanceitemsreload");
+    Review->bUtilityReview = bUtility;
+    Review->bUtilityReload = Mode == TEXT("utilityitemsreload");
+    Review->bAmmoReload = Mode == TEXT("specialammoreload");
+    Review->bReviveReview = bRevive;
+    Review->bReviveReload = Mode == TEXT("revivereload");
+    Review->bMusicReview = bMusic;
+    Review->bCharacterReview = bCharacter;
+    Review->bClassEquipmentReview = Mode == TEXT("classequipment");
+    Review->bPendingCharacterReview = Mode == TEXT("pendingcharacter");
+    Review->bElementalMeleeReview = Mode == TEXT("elementalmelee");
+    Review->bProjectileWandsReview = Mode == TEXT("projectilewands");
+    Review->bRuneOwnershipReview = Mode == TEXT("runeownership") || Mode == TEXT("runelegacy");
+    Review->bLegacyRuneReview = Mode == TEXT("runelegacy");
+    Review->bAuthoredGeneratorReview = Mode == TEXT("templegenerator") || Mode == TEXT("undeadwizardgenerator");
+    Review->bUndeadWizardGeneratorReview = Mode == TEXT("undeadwizardgenerator");
+    Review->bInfiniteGeneratorReview = Mode == TEXT("infinitegenerator");
+    Review->bLavaTerrainReview = Mode == TEXT("lavaterrain");
+    Review->bCharacterReload = Mode == TEXT("characterreload");
     Review->bInventoryReview = bInventory;
     Review->bInventoryReload = Mode == TEXT("inventoryreload");
     Review->bItemUseReview = bItemUse;

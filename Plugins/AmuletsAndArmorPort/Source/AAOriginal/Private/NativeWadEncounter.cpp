@@ -5,6 +5,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
@@ -36,6 +37,14 @@ namespace
             NativeWadBillboard::FaceView(Sprite, *Controller);
         }
     }
+
+    bool IsWithinDamageRadius(const ACharacter& Target, const FVector& Origin, float Radius)
+    {
+        const UCapsuleComponent* Capsule = Target.GetCapsuleComponent();
+        const FVector Offset = Target.GetActorLocation() - Origin;
+        return Offset.SizeSquared2D() <= FMath::Square(Radius + Capsule->GetScaledCapsuleRadius())
+            && FMath::Abs(Offset.Z) <= Radius + Capsule->GetScaledCapsuleHalfHeight();
+    }
 }
 
 ANativeWadGuardian::ANativeWadGuardian()
@@ -50,6 +59,38 @@ ANativeWadGuardian::ANativeWadGuardian()
     Sprite->SetupAttachment(GetRootComponent());
 }
 
+void FWadEncounterProfile::ApplySourceRules()
+{
+    switch (SourceType)
+    {
+    case 1006: case 1014: MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::Fire); break;
+    case 1007: case 1011: MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::Piercing); break;
+    case 1020: MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::ManaDrain); break;
+    case 1025: MeleeDamageMask = NormalDamage | DamageFlag(EProjectileDamage::Electricity); break;
+    case 1002: MeleeDamageMask = SpecialDamageFlag(ESpecialDamage::Push); break; // Source Push: no player health damage.
+    default: break;
+    }
+    if (SourceType == 1003 || SourceType == 1010 || SourceType == 1023) { bCanFly = true; }
+    if (SourceType == 1023)
+    {
+        // CREDATA.H Griffon: flying berserker, 6-update melee delay, 3 HP regeneration.
+        MeleeDelayUpdates = 6;
+        UpdateTicks = 7;
+        RegenPerUpdate = 3;
+    }
+    if (SourceType == 1014)
+    {
+        // CREDATA.H, Eastern Archer (1014) and Fire Effect Bolt (890).
+        MeleeDelayUpdates = RangedDelayUpdates = 30;
+        MeleeDamage = 500;
+        BoltRange = 2000;
+        VisionHalfAngle = 90.0f;
+        ResistanceMask = NormalDamage | DamageFlag(EProjectileDamage::Fire);
+        BoltElement = uint8(EProjectileDamage::Fire);
+        ArmorClass = 1; // Cloth=0, chain=1, plate=2.
+    }
+}
+
 void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Standing, UMaterialInterface* Downed,
     UMaterialInterface* Attacking, UMaterialInterface* Hurt, UMaterialInterface* Bolt, const FWadEncounterProfile& InProfile)
 {
@@ -60,8 +101,11 @@ void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Stand
     HurtMaterial = Hurt;
     BoltMaterial = Bolt;
     Profile = InProfile;
+    Profile.ApplySourceRules();
     GetCapsuleComponent()->SetCapsuleSize(Profile.CollisionRadius, Profile.CollisionHalfHeight);
     GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
+    GetCharacterMovement()->MaxFlySpeed = Profile.WalkSpeed;
+    if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
     if (Profile.SpriteSize.X > 0 && Profile.SpriteSize.Y > 0)
     {
         Sprite->SetRelativeScale3D(FVector(Profile.SpriteSize * 0.01, 1.0));
@@ -71,11 +115,35 @@ void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Stand
 void ANativeWadGuardian::BeginPlay()
 {
     Super::BeginPlay();
+    Profile.ApplySourceRules();
     Health = Profile.MaxHealth;
+    if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
+    if (Profile.RailStart != Profile.RailEnd)
+    {
+        const TActorIterator<ANativeWadLevel> Level(GetWorld());
+        RailLevel = Level ? *Level : nullptr;
+        GetCharacterMovement()->DisableMovement();
+        GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+}
+
+void ANativeWadGuardian::ConfigureFrom(const ANativeWadGuardian& Example)
+{
+    Configure(Example.Sprite->GetStaticMesh(), Example.StandingMaterial, Example.DownedMaterial, Example.AttackingMaterial,
+        Example.HurtMaterial, Example.BoltMaterial, Example.Profile);
+}
+
+void ANativeWadGuardian::ShowSummonPose()
+{
+    AttackPoseUntil = GetWorld()->GetTimeSeconds() + 20 / TicksPerSecond;
 }
 
 bool ANativeWadGuardian::CanSeePlayer(const ANativeWadPlayer& Player) const
 {
+    if (Player.IsConcealed())
+    {
+        return false;
+    }
     FHitResult Hit;
     const FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeWadGuardianSight), true, this);
     return !GetWorld()->LineTraceSingleByChannel(Hit, GetActorLocation(), Player.GetActorLocation(), ECC_Visibility, Query)
@@ -85,12 +153,27 @@ bool ANativeWadGuardian::CanSeePlayer(const ANativeWadPlayer& Player) const
 void ANativeWadGuardian::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    FacePlayer(*Sprite);
+    if (Profile.RailStart != Profile.RailEnd)
+    {
+        TickRailHazard(DeltaSeconds);
+        return;
+    }
+    if (!IsDefeated() && PoisonLevel > 0)
+    {
+        PoisonTime -= DeltaSeconds;
+        while (PoisonTime <= 0.0 && PoisonLevel > 0 && !IsDefeated())
+        {
+            TakeHit(PoisonLevel * 2);
+            PoisonLevel = FMath::Max(0, PoisonLevel - 5);
+            PoisonTime += 5.0;
+        }
+    }
     ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerCharacter(this, 0));
     if (!Player)
     {
         return;
     }
-    FacePlayer(*Sprite);
     if (IsDefeated())
     {
         return;
@@ -98,7 +181,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
 
     LogicTime += DeltaSeconds;
     const FVector Offset = Player->GetActorLocation() - GetActorLocation();
-    const FVector TowardPlayer = Offset.GetSafeNormal2D();
+    const FVector TowardPlayer = Profile.bCanFly ? Offset.GetSafeNormal() : Offset.GetSafeNormal2D();
     const double Distance = Offset.Size2D();
     const bool bRetreat = Health < Profile.RetreatHealth;
     const bool bCloseRetreat = Profile.bKeepsBoltDistance && Distance < Profile.MinBoltRange;
@@ -131,7 +214,11 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
         if (bMelee)
         {
             ++MeleeHits;
-            Player->ReceivePhysicalHit(Profile.MeleeDamage);
+            Player->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask);
+            if (Player->GetHealth() <= 0)
+            {
+                UE_LOG(LogTemp, Display, TEXT("%s defeated the player with a melee hit."), *GetActorNameOrLabel());
+            }
         }
     }
     if (!bVisible)
@@ -176,20 +263,122 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     }
 }
 
+void ANativeWadGuardian::TickRailHazard(float DeltaSeconds)
+{
+    const ANativeWadLevel* Level = RailLevel.Get();
+    if (!Level)
+    {
+        return;
+    }
+    const FVector Origin = Level->GetActorLocation();
+    FVector Current = GetActorLocation() - Origin;
+    const int32 CurrentSector = Level->FindWadSector(FVector2D(Current));
+    if (CurrentSector != INDEX_NONE)
+    {
+        // Passable rail actors have no movement-base physics. Follow the floor beneath them even while an edge blocks XY motion.
+        const double Ground = Level->GetWalkingHeight(CurrentSector) + GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+        Current.Z = FMath::Max(Ground, Current.Z - 350.0 * DeltaSeconds);
+        SetActorLocation(Origin + Current, false, nullptr, ETeleportType::TeleportPhysics);
+    }
+    const FVector2D ToEnd = Profile.RailEnd - FVector2D(Current);
+    const bool bWrap = ToEnd.SizeSquared() < FMath::Square(Profile.CollisionRadius * 0.5f);
+    const FVector2D NextXY = bWrap ? Profile.RailStart
+        : FVector2D(Current) + ToEnd.GetSafeNormal() * FMath::Min(ToEnd.Size(), double(Profile.WalkSpeed * DeltaSeconds));
+    const int32 Sector = Level->FindWadSector(NextXY);
+    if (Sector != INDEX_NONE)
+    {
+        const double Floor = Level->GetWalkingHeight(Sector) + GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+        if (bWrap || Floor <= Current.Z + 48.0)
+        {
+            const double Z = bWrap ? Floor : FMath::Max(Floor, Current.Z);
+            SetActorLocation(Origin + FVector(NextXY, Z), false, nullptr, ETeleportType::TeleportPhysics);
+        }
+    }
+    for (TActorIterator<ANativeWadPlayer> Player(GetWorld()); Player; ++Player)
+    {
+        if (Player->GetHealth() > 0 && IsWithinDamageRadius(**Player, GetActorLocation(), Profile.CollisionRadius))
+        {
+            Player->ReceiveTypedHit(Profile.MeleeDamage, Profile.MeleeDamageMask);
+        }
+    }
+}
+
 bool ANativeWadGuardian::TakeMeleeHit(ANativeWadPlayer& Player, int32 Damage)
 {
-    if (IsDefeated() || Damage <= 0)
+    return TakeHit(Damage, &Player, Player.GetMeleeDamageMask());
+}
+
+bool ANativeWadGuardian::TakeHit(int32 Damage, ANativeWadPlayer* Credit, uint8 DamageMask)
+{
+    if (IsDefeated() || Damage <= 0 || DamageMask == 0 || Profile.RailStart != Profile.RailEnd)
+    {
+        return false;
+    }
+    if (DamageMask & SpecialDamage)
+    {
+        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse))
+        {
+            // CRELOGIC.C loses the target, changes heading, and blocks the previous move.
+            bHasTarget = false;
+            HitTime = 0.0;
+            SetActorRotation(FRotator(0.0, FMath::FRand() * 360.0, 0.0));
+            GetCharacterMovement()->StopMovementImmediately();
+            ConsumeMovementInputVector();
+            return true;
+        }
+        return false;
+    }
+    uint8 Resistances = Profile.ResistanceMask;
+    if (Profile.bResistsFire)
+    {
+        Resistances |= DamageFlag(EProjectileDamage::Fire);
+    }
+    if (Profile.bResistsAcidAndPoison)
+    {
+        Resistances |= DamageFlag(EProjectileDamage::Acid) | DamageFlag(EProjectileDamage::Poison);
+    }
+    const int32 BaseDamage = Damage;
+    const uint8 AppliedEffects = DamageMask & ~Resistances;
+    if (AppliedEffects & DamageFlag(EProjectileDamage::Poison))
+    {
+        if (PoisonLevel == 0)
+        {
+            PoisonTime = 5.0;
+        }
+        PoisonLevel = FMath::Min(int32(MAX_int16), PoisonLevel + Damage / 10);
+    }
+    if (AppliedEffects & DamageFlag(EProjectileDamage::Fire))
+    {
+        Damage += BaseDamage >> 2;
+    }
+    if (AppliedEffects & DamageFlag(EProjectileDamage::Electricity))
+    {
+        Damage += (BaseDamage * Profile.ArmorClass) / 4;
+    }
+    if (AppliedEffects & DamageFlag(EProjectileDamage::Piercing))
+    {
+        Damage += (BaseDamage * Profile.ArmorClass * 4) / 100;
+    }
+    const int32 Resisted = FMath::CountBits(DamageMask & Resistances);
+    Damage -= int32(int64(Damage) * Resisted / FMath::CountBits(DamageMask));
+    if (Damage <= 0)
     {
         return false;
     }
     const int32 Applied = FMath::Min(Health, Damage);
     Health -= Applied;
-    Player.AwardExperience(Applied);
+    if (Credit)
+    {
+        Credit->AwardExperience(Applied);
+    }
     HurtUntil = GetWorld()->GetTimeSeconds() + 20 / TicksPerSecond;
     if (IsDefeated())
     {
         RestoreEncounterHealth(0);
-        Player.ShowInteractionMessage(Profile.Name + TEXT(" defeated"));
+        if (Credit)
+        {
+            Credit->ShowInteractionMessage(Profile.Name + TEXT(" defeated"));
+        }
         UE_LOG(LogTemp, Display, TEXT("Defeated the authored %s."), *Profile.Name);
     }
     return true;
@@ -215,6 +404,12 @@ void ANativeWadGuardian::RestoreEncounterHealth(int32 SavedHealth)
     }
 }
 
+void ANativeWadGuardian::RestorePoison(int32 Level, double Time)
+{
+    PoisonLevel = FMath::Clamp(Level, 0, int32(MAX_int16));
+    PoisonTime = FMath::Clamp(Time, 0.0, 5.0);
+}
+
 void ANativeWadGuardian::SetDefeatPickup(ANativeWadPickup* Pickup)
 {
     DefeatPickup = Pickup;
@@ -229,6 +424,20 @@ void ANativeWadGuardian::SetSpawned(bool bSpawned)
     GetCharacterMovement()->SetComponentTickEnabled(bSpawned);
 }
 
+void ANativeWadGuardian::ResetForGenerator()
+{
+    Health = Profile.MaxHealth;
+    PoisonLevel = BoltsFired = MeleeHits = RegeneratedHealth = 0;
+    PoisonTime = 5.0;
+    MeleeDelay = BoltDelay = 5;
+    HitTime = HurtUntil = AttackPoseUntil = LogicTime = 0.0;
+    bHasTarget = false;
+    Sprite->SetMaterial(0, StandingMaterial);
+    GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    GetCharacterMovement()->StopMovementImmediately();
+    GetCharacterMovement()->SetMovementMode(Profile.bCanFly ? MOVE_Flying : MOVE_Walking);
+}
+
 void ANativeWadGuardian::FireBolt(ANativeWadPlayer& Player)
 {
     const FVector Start = GetActorLocation();
@@ -239,6 +448,14 @@ void ANativeWadGuardian::FireBolt(ANativeWadPlayer& Player)
     if (ANativeWadBolt* Bolt = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Direction.Rotation(), Parameters))
     {
         Bolt->Launch(Sprite->GetStaticMesh(), BoltMaterial, Direction * (30 * TicksPerSecond), Profile.BoltDamage);
+        Bolt->SetDamageType(EProjectileDamage(Profile.BoltElement));
+        const int32 HomingType = Profile.bHomingPlasma ? 4017 : Profile.HomingMissileType;
+        if (const FWadWandProjectile* Homing = FindHomingMissile(HomingType))
+        {
+            Bolt->SetHomingTarget(&Player);
+            Bolt->SetBlastRadius(Homing->Radius);
+            Bolt->SetDamageMask(Homing->DamageMask);
+        }
         ++BoltsFired;
     }
 }
@@ -269,6 +486,13 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     const FVector Start = GetActorLocation();
+    if (const AActor* Target = HomingTarget.Get())
+    {
+        constexpr float TurnSpeed = 22.5f * TicksPerSecond / 6.0f;
+        const FRotator Heading = FMath::RInterpConstantTo(Velocity.Rotation(),
+            (Target->GetActorLocation() - Start).Rotation(), DeltaSeconds, TurnSpeed);
+        Velocity = Heading.Vector() * Velocity.Size();
+    }
     const FVector End = Start + Velocity * DeltaSeconds;
     FHitResult Hit;
     FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeWadBoltFlight), true, this);
@@ -276,11 +500,15 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
     if (GetWorld()->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Visibility,
         FCollisionShape::MakeSphere(5.0f), Query))
     {
-        if (ANativeWadPlayer* Shooter = Cast<ANativeWadPlayer>(GetOwner()))
+        if (BlastRadius > 0.0f)
+        {
+            ApplyBlast(Hit.Location);
+        }
+        else if (ANativeWadPlayer* Shooter = Cast<ANativeWadPlayer>(GetOwner()))
         {
             if (ANativeWadGuardian* Guardian = Cast<ANativeWadGuardian>(Hit.GetActor()))
             {
-                Guardian->TakeMeleeHit(*Shooter, Damage);
+                Guardian->TakeHit(Damage, Shooter, DamageMask);
             }
         }
         else if (Effect == EWadBoltEffect::LockDoor)
@@ -301,7 +529,7 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
                 Player->ReceiveTrapParalysis();
                 break;
             case EWadBoltEffect::Damage:
-                Player->ReceiveEncounterHit(Damage);
+                DamagePlayer(*Player);
                 break;
             case EWadBoltEffect::LockDoor:
                 break;
@@ -316,6 +544,49 @@ void ANativeWadBolt::Tick(float DeltaSeconds)
     }
     SetActorLocation(End);
     FacePlayer(*Sprite);
+}
+
+void ANativeWadBolt::ApplyForce(ACharacter& Target, const FVector& Origin) const
+{
+    const bool bPush = DamageMask == SpecialDamageFlag(ESpecialDamage::Push);
+    const bool bPull = DamageMask == SpecialDamageFlag(ESpecialDamage::Pull);
+    if (!bPush && !bPull) { return; }
+    // SERVERSH.C adds damage/90 in source velocity units. OBJMOVE.C advances XV*delta/8 at 70 Hz.
+    const float ImpulseSpeed = (Damage / 90) * TicksPerSecond / 8.0f;
+    const FVector Direction = (Target.GetActorLocation() - Origin).GetSafeNormal2D();
+    Target.GetCharacterMovement()->AddImpulse(Direction * ImpulseSpeed * (bPull ? -1.0f : 1.0f), true);
+}
+
+void ANativeWadBolt::ApplyBlast(const FVector& Origin)
+{
+    ANativeWadPlayer* Shooter = Cast<ANativeWadPlayer>(GetOwner());
+    for (TActorIterator<ANativeWadGuardian> Target(GetWorld()); Target; ++Target)
+    {
+        if (*Target != GetOwner() && !Target->IsHidden() && IsWithinDamageRadius(**Target, Origin, BlastRadius))
+        {
+            ApplyForce(**Target, Origin);
+            Target->TakeHit(Damage, Shooter, DamageMask);
+        }
+    }
+    for (TActorIterator<ANativeWadPlayer> Player(GetWorld()); Player; ++Player)
+    {
+        if (Player->GetHealth() > 0 && IsWithinDamageRadius(**Player, Origin, BlastRadius))
+        {
+            ApplyForce(**Player, Origin);
+            DamagePlayer(**Player);
+        }
+    }
+}
+
+void ANativeWadBolt::DamagePlayer(ANativeWadPlayer& Player) const
+{
+    const bool bWasAlive = Player.GetHealth() > 0;
+    Player.ReceiveTypedHit(Damage, DamageMask);
+    if (bWasAlive && Player.GetHealth() <= 0)
+    {
+        UE_LOG(LogTemp, Display, TEXT("A missile from %s defeated the player for %d raw damage."),
+            GetOwner() ? *GetOwner()->GetActorNameOrLabel() : TEXT("an authored script"), Damage);
+    }
 }
 
 ANativeWadPickup::ANativeWadPickup()
@@ -422,7 +693,7 @@ bool ANativeWadPickup::Collect(ANativeWadPlayer& Player)
     {
         return false;
     }
-    if (!Player.CollectItem(ItemType))
+    if (!(AmmoIndex == INDEX_NONE ? Player.CollectItem(ItemType) : Player.CollectAmmo(AmmoIndex, AmmoQuantity)))
     {
         return false;
     }

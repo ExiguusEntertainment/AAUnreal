@@ -1,5 +1,6 @@
 #include "NativeWadPlayer.h"
 
+#include "Algo/AnyOf.h"
 #include "Algo/Count.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -22,6 +23,12 @@
 #include "NativeWadTown.h"
 #include "TimerManager.h"
 
+namespace
+{
+    const FKey RuneKeys[] = {EKeys::NumPadOne, EKeys::NumPadTwo, EKeys::NumPadThree, EKeys::NumPadFour, EKeys::NumPadFive,
+        EKeys::NumPadSix, EKeys::NumPadSeven, EKeys::NumPadEight, EKeys::NumPadNine};
+}
+
 using namespace NativeWadRules;
 
 ANativeWadPlayer::ANativeWadPlayer(const FObjectInitializer& ObjectInitializer)
@@ -30,6 +37,7 @@ ANativeWadPlayer::ANativeWadPlayer(const FObjectInitializer& ObjectInitializer)
     GetCapsuleComponent()->InitCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
     GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
     GetCapsuleComponent()->SetCollisionResponseToChannel(ANativeWadLevel::WaterSurfaceChannel, ECR_Ignore);
+    GetCapsuleComponent()->SetCollisionResponseToChannel(ANativeWadLevel::LavaSurfaceChannel, ECR_Ignore);
     BaseEyeHeight = 22.0f;
     bUseControllerRotationYaw = true;
     GetCharacterMovement()->MaxWalkSpeed = 190.0f;
@@ -49,13 +57,18 @@ void ANativeWadPlayer::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
 void ANativeWadPlayer::BeginPlay()
 {
     Super::BeginPlay();
+    ReviveTransform = GetActorTransform();
+    if (auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>())
+    {
+        Travel->UpdateBackgroundMusic(*GetWorld());
+    }
     if (TActorIterator<ANativeWadLevel> Level(GetWorld()); Level)
     {
         NativeLevel = *Level;
     }
     ReadTravelOptions(GetWorld()->URL);
     bRestoreCheckpointOnTick = GetWorld()->URL.HasOption(TEXT("WadLoad"));
-    if (!bRestoreCheckpointOnTick)
+    if (!bRestoreCheckpointOnTick && !GetWorld()->URL.HasOption(TEXT("WadPhysicalCoins")))
     {
         MoveLegacyCoinsToPurse();
     }
@@ -82,10 +95,18 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
             Stat = FMath::Clamp(Value, Low, High);
         }
     };
+    CharacterClass = PriestClass;
+    ReadStat(TEXT("WadClass="), CharacterClass, 0, UE_ARRAY_COUNT(CharacterClasses) - 1);
+    const FWadCharacterClass& Class = CharacterClasses[CharacterClass];
+    FMemory::Memcpy(Attributes, Class.Base, sizeof(Attributes));
+    const int32 ClassHealth = (10 + Class.Base[ConstitutionAttribute] / 2) * 100;
+    const int32 ClassMana = Class.Base[MagicAttribute] * 100;
+    MaxHealth = Health = ClassHealth;
+    MaxMana = Mana = ClassMana;
     ReadStat(TEXT("WadLevel="), CharacterLevel, 1, 100);
     ReadStat(TEXT("WadNextXP="), ExperienceNeeded, FirstLevelThreshold, MAX_int32);
-    ReadStat(TEXT("WadMaxHealth="), MaxHealth, NativeWadRules::MaxHealth, 30000);
-    ReadStat(TEXT("WadMaxMana="), MaxMana, NativeWadRules::MaxMana, 30000);
+    ReadStat(TEXT("WadMaxHealth="), MaxHealth, ClassHealth, 30000);
+    ReadStat(TEXT("WadMaxMana="), MaxMana, ClassMana, 30000);
     ReadStat(TEXT("WadHealth="), Health, 1, MaxHealth);
     ReadStat(TEXT("WadMana="), Mana, 0, MaxMana);
     ReadStat(TEXT("WadFood="), Food, 0, MaxFood);
@@ -93,6 +114,18 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
     ReadStat(TEXT("WadXP="), Experience, 0, MAX_int32);
     ReadStat(TEXT("WadCasts="), SuccessfulCasts, 0, MAX_int32);
     ReadStat(TEXT("WadPoison="), PoisonLevel, 0, MAX_int16);
+    SelectedAmmo = 0;
+    FMemory::Memzero(AmmoReserve);
+    ReadStat(TEXT("WadAmmo="), SelectedAmmo, 0, UE_ARRAY_COUNT(CrossbowAmmo) - 1);
+    if (const TCHAR* Value = URL.GetOption(TEXT("WadAmmoReserve="), nullptr))
+    {
+        TArray<FString> Values;
+        FString(Value).ParseIntoArray(Values, TEXT(","));
+        for (int32 Index = 0; Index < FMath::Min(Values.Num(), int32(UE_ARRAY_COUNT(AmmoReserve))); ++Index)
+        {
+            AmmoReserve[Index] = FMath::Clamp(FCString::Atoi(*Values[Index]), 0, int32(MAX_uint16));
+        }
+    }
     const auto ReadDuration = [&URL](const TCHAR* Key, double Limit)
     {
         double Seconds = 0.0;
@@ -104,11 +137,16 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
         return 0.0;
     };
     FlightSeconds = ReadDuration(TEXT("WadFlight="), FlyingScrollSeconds);
-    WaterWalkSeconds = ReadDuration(TEXT("WadWaterWalk="), WaterWalkPotionSeconds);
+    WaterWalkSeconds = ReadDuration(TEXT("WadWaterWalk="), 8400.0 / TicksPerSecond);
     FeatherfallSeconds = ReadDuration(TEXT("WadFeatherfall="), FeatherfallPotionSeconds);
     for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
     {
         ShieldSeconds[Index] = ReadDuration(*FString::Printf(TEXT("WadShield%d="), Index), ShieldPotionSeconds);
+    }
+    for (int32 Index = 0; Index < ItemStatusCount; ++Index)
+    {
+        ItemStatusSeconds[Index] = ReadDuration(*FString::Printf(TEXT("WadEffect%d="), Index), 1200.0);
+        ReadStat(*FString::Printf(TEXT("WadEffectPower%d="), Index), ItemStatusPower[Index], -100, 100);
     }
     if (const TCHAR* Option = URL.GetOption(TEXT("WadParalysis="), nullptr))
     {
@@ -129,7 +167,7 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
                 int32 Attribute = 0;
                 if (LexTryParseString(Attribute, *Values[Index]))
                 {
-                    Attributes[Index] = FMath::Clamp(Attribute, PriestAttributes[Index], 100);
+                    Attributes[Index] = FMath::Clamp(Attribute, Class.Base[Index], 100);
                 }
             }
         }
@@ -158,6 +196,25 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
             ReadySlot = CarriedItems.Find(IronDagger);
         }
     }
+    if (CarriedItems.IsValidIndex(ReadySlot) && !CanUseWadItem(CarriedItems[ReadySlot]))
+    {
+        ReadySlot = INDEX_NONE;
+    }
+    const TCHAR* Created = URL.GetOption(TEXT("WadCreated="), nullptr);
+    bWadCharacterCreated = Created ? FCString::Atoi(Created) != 0
+        : URL.HasOption(TEXT("WadCreated")) || !CarriedItems.IsEmpty() || Experience > 0 || CharacterLevel > 1;
+    if (bWadCharacterCreated && !URL.HasOption(TEXT("WadRuneRules")))
+    {
+        // Earlier port saves assumed unrestricted rune access. Install only the original class's starter runes once.
+        if (const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog(); Catalog && Catalog->StartingEquipment.IsValidIndex(CharacterClass))
+        {
+            for (const int32 Type : Catalog->StartingEquipment[CharacterClass].Items)
+            {
+                if (IsRuneItem(Type) && GetItemCount(Type) == 0) { CarriedItems.Add(Type); }
+            }
+        }
+    }
+    if (CarriedItems.IsValidIndex(ReadySlot) && IsRuneItem(CarriedItems[ReadySlot])) { ReadySlot = INDEX_NONE; }
     for (int32& Worn : WornSlots)
     {
         Worn = INDEX_NONE;
@@ -173,7 +230,8 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
                 && !IsWornInventorySlot(Slot))
             {
                 const FWadInventoryDetails* Details = GetItemRules(CarriedItems[Slot]);
-                if (Details && (Details->ArmorSlot == Location || (Location == RightArmSlot && Details->ArmorSlot == LeftArmSlot)))
+                if (Details && CanUseWadItem(CarriedItems[Slot])
+                    && (Details->ArmorSlot == Location || (Location == RightArmSlot && Details->ArmorSlot == LeftArmSlot)))
                 {
                     WornSlots[Location] = Slot;
                 }
@@ -188,6 +246,8 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
     if (IsInWadTown())
     {
         SetMouseLook(false);
+        Input->BindKey(EKeys::F5, IE_Pressed, this, &ANativeWadPlayer::WadSave);
+        Input->BindKey(EKeys::F9, IE_Pressed, this, &ANativeWadPlayer::WadLoad);
         Input->BindKey(EKeys::Left, IE_Pressed, this, &ANativeWadPlayer::TownSelectPrevious);
         Input->BindKey(EKeys::Right, IE_Pressed, this, &ANativeWadPlayer::TownSelectNext);
         Input->BindKey(EKeys::Up, IE_Pressed, this, &ANativeWadPlayer::TownScrollUp);
@@ -195,7 +255,11 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
         Input->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &ANativeWadPlayer::TownScrollUp);
         Input->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &ANativeWadPlayer::TownScrollDown);
         Input->BindKey(FInputChord(EKeys::Q, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownQuest);
+        Input->BindKey(FInputChord(EKeys::N, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownCharacter);
         Input->BindKey(FInputChord(EKeys::I, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownInn);
+        Input->BindKey(FInputChord(EKeys::C, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownInnCommons);
+        Input->BindKey(FInputChord(EKeys::L, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownInnLarge);
+        Input->BindKey(FInputChord(EKeys::U, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownInnSuite);
         Input->BindKey(FInputChord(EKeys::S, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownStore);
         Input->BindKey(FInputChord(EKeys::B, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::TownBank);
         Input->BindKey(EKeys::Enter, IE_Pressed, this, &ANativeWadPlayer::TownConfirm);
@@ -204,9 +268,12 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
         return;
     }
     Input->BindKey(EKeys::E, IE_Pressed, this, &ANativeWadPlayer::UsePressed);
+    Input->BindKey(EKeys::F5, IE_Pressed, this, &ANativeWadPlayer::WadSave);
+    Input->BindKey(EKeys::F9, IE_Pressed, this, &ANativeWadPlayer::WadLoad);
     Input->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ANativeWadPlayer::ClickPressed);
     Input->BindKey(EKeys::LeftControl, IE_Pressed, this, &ANativeWadPlayer::UseReadyHand);
-    Input->BindKey(EKeys::NumPadSeven, IE_Pressed, this, &ANativeWadPlayer::ToggleInventory);
+    Input->BindKey(FInputChord(EKeys::NumPadSeven, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::ToggleInventory);
+    Input->BindKey(FInputChord(EKeys::NumPadSix, EModifierKey::Alt), IE_Pressed, this, &ANativeWadPlayer::ToggleFinances);
     Input->BindKey(EKeys::I, IE_Pressed, this, &ANativeWadPlayer::ToggleInventory);
     Input->BindKey(EKeys::G, IE_Pressed, this, &ANativeWadPlayer::DropInventoryItem);
     Input->BindKey(EKeys::PageUp, IE_Pressed, this, &ANativeWadPlayer::InventoryPageUp);
@@ -214,14 +281,16 @@ void ANativeWadPlayer::SetupPlayerInputComponent(UInputComponent* Input)
     Input->BindKey(EKeys::MouseScrollUp, IE_Pressed, this, &ANativeWadPlayer::InventoryPageUp);
     Input->BindKey(EKeys::MouseScrollDown, IE_Pressed, this, &ANativeWadPlayer::InventoryPageDown);
     Input->BindKey(EKeys::Tab, IE_Pressed, this, &ANativeWadPlayer::ToggleMouseLook);
-    Input->BindKey(EKeys::NumPadFour, IE_Pressed, this, &ANativeWadPlayer::EnterRuneFour);
-    Input->BindKey(EKeys::NumPadFive, IE_Pressed, this, &ANativeWadPlayer::EnterRuneFive);
+    for (const FKey& Key : RuneKeys)
+    {
+        Input->BindKey(Key, IE_Pressed, this, &ANativeWadPlayer::EnterRuneKey);
+    }
     Input->BindKey(EKeys::BackSpace, IE_Pressed, this, &ANativeWadPlayer::RuneBackspace);
     Input->BindKey(EKeys::Enter, IE_Pressed, this, &ANativeWadPlayer::CastRejuvenate);
     Input->BindKey(EKeys::RightMouseButton, IE_Pressed, this, &ANativeWadPlayer::CastRejuvenate);
     Input->BindAxisKey(EKeys::MouseX, this, &ANativeWadPlayer::LookYaw);
     Input->BindAxisKey(EKeys::MouseY, this, &ANativeWadPlayer::LookPitch);
-    Input->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ANativeWadPlayer::Jump);
+    Input->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ANativeWadPlayer::JumpOrRevive);
     Input->BindKey(EKeys::SpaceBar, IE_Released, this, &ANativeWadPlayer::StopJumping);
 }
 
@@ -268,6 +337,7 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         {
             Seconds = FMath::Max(0.0, Seconds - DeltaSeconds);
         }
+        TickItemStatuses(DeltaSeconds);
         UCharacterMovementComponent* Movement = GetCharacterMovement();
         const bool bFlying = CanFly();
         if (bFlying && !Movement->IsFlying())
@@ -291,6 +361,11 @@ void ANativeWadPlayer::Tick(float DeltaSeconds)
         if (const ANativeWadLevel* Level = NativeLevel.Get())
         {
             UpdateWaterWalking(*Level);
+            UpdateLavaWalking(*Level, DeltaSeconds);
+            if (Health <= 0)
+            {
+                return;
+            }
             const FVector Feet = GetActorLocation() - FVector(0, 0, CapsuleHalfHeight);
             const FVector2D CurrentInput = Level->GetCurrentInput(Feet, bOnWaterSurface);
             AddMovementInput(FVector(CurrentInput.GetSafeNormal(), 0), CurrentInput.Size());
@@ -377,12 +452,30 @@ FString ANativeWadPlayer::MakeTravelOptions() const
             Options += FString::Printf(TEXT("?%s=%.6f"), Key, Seconds);
         }
     };
+    Options += FString::Printf(TEXT("?WadClass=%d"), CharacterClass);
     WriteDuration(TEXT("WadFlight"), FlightSeconds);
+    if (SelectedAmmo != 0)
+    {
+        Options += FString::Printf(TEXT("?WadAmmo=%d"), SelectedAmmo);
+    }
+    if (Algo::AnyOf(AmmoReserve, [](int32 Quantity) { return Quantity > 0; }))
+    {
+        Options += TEXT("?WadAmmoReserve=") + FString::JoinBy(MakeArrayView(AmmoReserve), TEXT(","),
+            [](int32 Quantity) { return LexToString(Quantity); });
+    }
     WriteDuration(TEXT("WadWaterWalk"), WaterWalkSeconds);
     WriteDuration(TEXT("WadFeatherfall"), FeatherfallSeconds);
     for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
     {
         WriteDuration(*FString::Printf(TEXT("WadShield%d"), Index), ShieldSeconds[Index]);
+    }
+    for (int32 Index = 0; Index < ItemStatusCount; ++Index)
+    {
+        if (ItemStatusSeconds[Index] > 0.0)
+        {
+            WriteDuration(*FString::Printf(TEXT("WadEffect%d"), Index), ItemStatusSeconds[Index]);
+            Options += FString::Printf(TEXT("?WadEffectPower%d=%d"), Index, ItemStatusPower[Index]);
+        }
     }
     if (const ANativeWadLevel* Level = NativeLevel.Get(); Level && Level->HasDaySky())
     {
@@ -396,7 +489,12 @@ FString ANativeWadPlayer::MakeTravelOptions() const
     {
         Options += TEXT("?WadItems=") + FString::JoinBy(CarriedItems, TEXT(","), [](int32 Type) { return LexToString(Type); });
         Options += TEXT("?WadWorn=") + FString::JoinBy(MakeArrayView(WornSlots), TEXT(","), [](int32 Slot) { return LexToString(Slot); });
+        if (CarriedItems.ContainsByPredicate([](int32 Type) { return CoinValueCopper(Type) > 0; }))
+        {
+            Options += TEXT("?WadPhysicalCoins");
+        }
     }
+    Options += FString::Printf(TEXT("?WadCreated=%d?WadRuneRules=1"), bWadCharacterCreated);
     return Options;
 }
 
@@ -478,7 +576,7 @@ void ANativeWadPlayer::AttackPressed()
     const int32 BaseSpeed = bAuthored ? Details->WeaponSpeed : bDagger ? DaggerWeaponSpeed : 0;
     const int32 HitFrame = bAuthored ? Details->HitFrame : bDagger ? 30 : 32;
     const int32 SwingFrames = bAuthored ? Details->SwingFrames : bDagger ? 50 : 46;
-    const int32 Damage = Attributes[StrengthAttribute] * BaseDamage / 2;
+    const int32 Damage = FMath::Max(0, Attributes[StrengthAttribute] + GetStatusPower(StrengthStatus)) * BaseDamage / 2;
     // STATS.C supplies the 16.16 overlay speed, and the weapon's ANI supplies the timing.
     const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute] + BaseSpeed, 0, 100) * 1100;
     const auto SecondsToFrame = [FrameSpeed](int32 Frame)
@@ -534,25 +632,86 @@ void ANativeWadPlayer::ShowInteractionMessage(FString Message)
 
 void ANativeWadPlayer::ReceiveEncounterHit(int32 Damage)
 {
+    if (Health <= 0 || Damage <= 0)
+    {
+        return;
+    }
     Health = FMath::Max(0, Health - Damage);
     if (Health == 0)
     {
+        UE_LOG(LogTemp, Display, TEXT("WAD player defeated at %s by %d damage; poison %d, flight %.2f seconds."),
+            *GetActorLocation().ToCompactString(), Damage, PoisonLevel, FlightSeconds);
         GetCharacterMovement()->DisableMovement();
-        ShowInteractionMessage(TEXT("Defeated"));
+        DropDefeatedItems();
+        Runes.Reset();
+        if (bInventoryOpen)
+        {
+            ToggleInventory();
+        }
+        ShowInteractionMessage(TEXT("Defeated. Press Space to revive."));
     }
+}
+
+void ANativeWadPlayer::JumpOrRevive()
+{
+    if (Health > 0)
+    {
+        Jump();
+        return;
+    }
+    if (!NativeLevel.IsValid() || !GetController())
+    {
+        return;
+    }
+    SetActorTransform(ReviveTransform, false, nullptr, ETeleportType::TeleportPhysics);
+    GetController()->SetControlRotation(ReviveTransform.Rotator());
+    GetCharacterMovement()->StopMovementImmediately();
+    GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+    Health = MaxHealth;
+    Mana = MaxMana / 2;
+    PoisonLevel = 0;
+    ParalysisSeconds = 0.0;
+    LastActivitySector = INDEX_NONE;
+    LastLevelLink = INDEX_NONE;
+    ShowInteractionMessage(TEXT("Revived at the level entrance."));
 }
 
 void ANativeWadPlayer::ReceivePhysicalHit(int32 Damage)
 {
-    const int32 ArmorReduction = GetArmorRating() / 2;
-    ReceiveEncounterHit(int32(int64(FMath::Max(0, Damage)) * (100 - ArmorReduction) / 100));
+    ReceiveTypedHit(Damage, NormalDamage);
+}
+
+void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
+{
+    if (Health <= 0 || Damage <= 0) { return; }
+    if (DamageMask & SpecialDamage)
+    {
+        if (DamageMask == SpecialDamageFlag(ESpecialDamage::Confuse) && GetController())
+        {
+            // EFFECT_REORIENT turns left by rand() in the original 16-bit angle space.
+            FRotator Rotation = GetController()->GetControlRotation();
+            Rotation.Yaw -= FMath::RandRange(0, 32767) * (360.0 / 65536.0);
+            GetController()->SetControlRotation(Rotation);
+            ShowInteractionMessage(TEXT("You feel dizzy"));
+        }
+        return;
+    }
+    // The source rolls one of the six armor locations for electricity, including the shield hand.
+    const int32 ArmorClass = DamageMask & DamageFlag(EProjectileDamage::Electricity)
+        ? GetArmorClass(FMath::RandRange(0, EquipmentSlotCount - 1)) : 0;
+    const FWadPlayerDamage Hit = ResolvePlayerDamage(Damage, DamageMask, GetResistanceMask(), ArmorClass, GetArmorRating());
+    if (Hit.Poison > 0)
+    {
+        PoisonLevel = FMath::Min(MAX_int16, PoisonLevel + Hit.Poison);
+        ShowInteractionMessage(TEXT("Poisoned"));
+    }
+    if (Hit.Mana > 0) { RestoreWadVital(10, -Hit.Mana); }
+    ReceiveEncounterHit(Hit.Health);
 }
 
 void ANativeWadPlayer::ReceiveTrapPoison(int32 Damage)
 {
-    PoisonLevel = FMath::Min(MAX_int16, PoisonLevel + Damage / 10);
-    ShowInteractionMessage(TEXT("Poisoned"));
-    ReceiveEncounterHit(Damage);
+    ReceiveTypedHit(Damage, DamageFlag(EProjectileDamage::Poison));
 }
 
 void ANativeWadPlayer::ReceiveTrapParalysis()
@@ -608,6 +767,65 @@ void ANativeWadPlayer::UpdateWaterWalking(const ANativeWadLevel& Level)
     }
 }
 
+void ANativeWadPlayer::TickItemStatuses(float DeltaSeconds)
+{
+    for (double& Seconds : ItemStatusSeconds)
+    {
+        Seconds = FMath::Max(0.0, Seconds - DeltaSeconds);
+    }
+    const int32 Concealment = GetStatusPower(InvisibleStatus) ? 190 : GetStatusPower(TranslucentStatus) ? 100 : 0;
+    if (Concealment == 0)
+    {
+        bConcealed = false;
+        NextConcealmentRoll = 0.0;
+    }
+    else if (const double Now = GetWorld()->GetTimeSeconds(); Now >= NextConcealmentRoll)
+    {
+        bConcealed = FMath::RandRange(0, 199) < FMath::Max(Concealment, Attributes[StealthAttribute] / 2);
+        NextConcealmentRoll = Now + (GetVelocity().IsNearlyZero() ? 3.0 : 1.0);
+    }
+}
+
+void ANativeWadPlayer::UpdateLavaWalking(const ANativeWadLevel& Level, float DeltaSeconds)
+{
+    const bool bRequested = GetStatusPower(LavaWalkStatus) != 0;
+    const FVector Position = GetActorLocation();
+    const TOptional<double> Surface = Level.FindLavaSurfaceZ(Position);
+    const double HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+    if (bRequested != bOnLavaSurface)
+    {
+        const double StandingZ = Surface.Get(0.0) + HalfHeight;
+        if (bRequested && Surface.IsSet() && Position.Z < StandingZ)
+        {
+            SetActorLocation(FVector(Position.X, Position.Y, StandingZ + 1.0), true);
+            if (GetActorLocation().Z < StandingZ)
+            {
+                return;
+            }
+        }
+        bOnLavaSurface = bRequested;
+        GetCapsuleComponent()->SetCollisionResponseToChannel(ANativeWadLevel::LavaSurfaceChannel,
+            bOnLavaSurface ? ECR_Block : ECR_Ignore);
+        if (!bOnLavaSurface && Surface.IsSet() && GetCharacterMovement()->IsMovingOnGround())
+        {
+            GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+        }
+    }
+    if (!bOnLavaSurface && Surface.IsSet() && Position.Z - HalfHeight <= Surface.GetValue() + 1.0)
+    {
+        LavaDamageTime += DeltaSeconds;
+        if (LavaDamageTime >= 0.5)
+        {
+            LavaDamageTime -= 0.5;
+            ReceiveEncounterHit(200);
+        }
+    }
+    else
+    {
+        LavaDamageTime = 0.0;
+    }
+}
+
 bool ANativeWadPlayer::AddCoinsToPurse(int32 Type)
 {
     const int32 Copper = CoinValueCopper(Type);
@@ -656,6 +874,7 @@ void ANativeWadPlayer::RestoreWadVital(int32 Effect, int32 Amount)
 {
     switch (Effect)
     {
+    case 7: Food += FMath::Clamp(Amount, -Food, MaxFood - Food); break;
     case 8: Water += FMath::Clamp(Amount, 0, MaxFood - Water); break;
     case 9: Health += FMath::Clamp(Amount, 0, MaxHealth - Health); break;
     case 10:
@@ -668,6 +887,7 @@ void ANativeWadPlayer::RestoreWadVital(int32 Effect, int32 Amount)
         }
         break;
     }
+    case 11: AwardExperience(Amount); break;
     default: break;
     }
 }
@@ -690,7 +910,7 @@ void ANativeWadPlayer::AwardExperience(int32 Amount)
             int32 Roll = FMath::RandRange(0, 12);
             for (int32 Index = 0; Index < AttributeCount; ++Index)
             {
-                Roll -= PriestAdvancement[Index];
+                Roll -= CharacterClasses[CharacterClass].Advancement[Index];
                 if (Roll <= 0)
                 {
                     ++Attributes[Index];
@@ -705,8 +925,20 @@ void ANativeWadPlayer::AwardExperience(int32 Amount)
         MaxHealth = FMath::Min(30000, MaxHealth + (Attributes[ConstitutionAttribute] + 10) * 10);
         MaxMana = FMath::Min(30000, MaxMana + (Attributes[MagicAttribute] + 10) * 10);
         ShowInteractionMessage(TEXT("You feel more experienced!"));
-        UE_LOG(LogTemp, Display, TEXT("WAD priest reached level %d. XP %d, next %d, max health %d, max mana %d."),
-            CharacterLevel, Experience, ExperienceNeeded, MaxHealth, MaxMana);
+        UE_LOG(LogTemp, Display, TEXT("WAD %s reached level %d. XP %d, next %d, max health %d, max mana %d."),
+            CharacterClasses[CharacterClass].Name, CharacterLevel, Experience, ExperienceNeeded, MaxHealth, MaxMana);
+    }
+}
+
+void ANativeWadPlayer::EnterRuneKey(FKey Key)
+{
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(RuneKeys); ++Index)
+    {
+        if (Key == RuneKeys[Index])
+        {
+            EnterRune(Index + 1);
+            return;
+        }
     }
 }
 
@@ -716,9 +948,59 @@ void ANativeWadPlayer::CastRejuvenate()
     {
         return;
     }
-    if (Runes != TEXT("45"))
+    for (const TCHAR Rune : Runes)
     {
-        ShowInteractionMessage(TEXT("Enter runes 4 and 5 for Rejuvenate"));
+        if (!HasRune(Rune - TEXT('0')))
+        {
+            Runes.Reset();
+            ShowInteractionMessage(TEXT("You do not have that rune."));
+            return;
+        }
+    }
+    const ESpellSchool School = SchoolForClass(CharacterClass);
+    if (Runes != TEXT("45") || School != ESpellSchool::Cleric)
+    {
+        for (const FWadSpell& Spell : SupportedSpells)
+        {
+            if (Spell.School != School || Runes != Spell.Runes)
+            {
+                continue;
+            }
+            Runes.Reset();
+            if (Mana <= Spell.Mana)
+            {
+                ShowInteractionMessage(FString::Printf(TEXT("Insufficient mana for %s."), Spell.Name));
+                return;
+            }
+            if (FMath::RandRange(0, 99) > Attributes[MagicAttribute] + Spell.Hardness + 2 * CharacterLevel)
+            {
+                Mana -= Spell.Mana / 2;
+                ShowInteractionMessage(FString::Printf(TEXT("%s fizzled."), Spell.Name));
+                return;
+            }
+            if (Spell.Effect == ESpellEffect::Projectile)
+            {
+                const FWadWandProjectile* Projectile = FindWandProjectile(Spell.ProjectileIndex);
+                if (!Projectile || !LaunchWadProjectile(*Projectile)) { return; }
+            }
+            Mana -= Spell.Mana;
+            const double Duration = Spell.DurationTicks / double(TicksPerSecond);
+            switch (Spell.Effect)
+            {
+            case ESpellEffect::Projectile: break;
+            case ESpellEffect::WaterWalk: WaterWalkSeconds = FMath::Max(WaterWalkSeconds, Duration); break;
+            case ESpellEffect::FeatherFall: FeatherfallSeconds = FMath::Max(FeatherfallSeconds, Duration); break;
+            case ESpellEffect::Shield:
+                ItemStatusSeconds[SpellShieldStatus] = Duration;
+                ItemStatusPower[SpellShieldStatus] = Spell.Power;
+                break;
+            }
+            ++SuccessfulCasts;
+            ShowInteractionMessage(Spell.Name);
+            UE_LOG(LogTemp, Display, TEXT("Cast %s for %d mana."), Spell.Name, Spell.Mana);
+            return;
+        }
+        ShowInteractionMessage(TEXT("No known spell matches those runes."));
         Runes.Reset();
         return;
     }
@@ -750,7 +1032,8 @@ void ANativeWadPlayer::TickNeeds(float DeltaSeconds)
     {
         NeedsTime -= 6.0;
         const int32 HealthRecovery = (Attributes[ConstitutionAttribute] * (CharacterLevel + 5) >> 3) * Food / MaxFood;
-        const int32 ManaRecovery = (Attributes[MagicAttribute] * (CharacterLevel + 5) * 3 >> 2) * Water / MaxFood;
+        const int32 ManaBase = Attributes[MagicAttribute] * (CharacterLevel + 5) * CharacterClasses[CharacterClass].ManaRecoveryPercent / 100;
+        const int32 ManaRecovery = (ManaBase >> 2) * Water / MaxFood;
         Health = FMath::Min(MaxHealth, Health + HealthRecovery);
         Mana = FMath::Min(MaxMana, Mana + ManaRecovery);
         Food = FMath::Max(0, Food - 1);

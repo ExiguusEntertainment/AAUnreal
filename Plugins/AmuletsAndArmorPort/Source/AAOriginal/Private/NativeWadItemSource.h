@@ -22,5 +22,6 @@ struct FWadAuthoredItem
 
 bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthoredItem>& Items, FOutputDevice& Output);
 bool ReadWadShopStock(bool bBank, TMap<int32, int32>& Tiers, FOutputDevice& Output);
+bool ReadWadStartingEquipment(TArray<FWadStartingEquipment>& Equipment, FOutputDevice& Output);
 
 #endif

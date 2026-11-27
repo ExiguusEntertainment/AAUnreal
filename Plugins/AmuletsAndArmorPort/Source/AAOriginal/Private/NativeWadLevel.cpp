@@ -319,9 +319,9 @@ void ANativeWadLevel::InitializeWaterSurfaces()
 {
     for (const FAAWadNativeSector& Sector : Sectors)
     {
-        if (Sector.bWater && Sector.Floor && Sector.WalkingFloor)
+        if ((Sector.bWater || Sector.bLava) && Sector.Floor && Sector.WalkingFloor)
         {
-            Sector.Floor->SetCollisionObjectType(WaterSurfaceChannel);
+            Sector.Floor->SetCollisionObjectType(Sector.bLava ? LavaSurfaceChannel : WaterSurfaceChannel);
             Sector.Floor->SetCollisionResponseToAllChannels(ECR_Ignore);
             Sector.Floor->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
             Sector.Floor->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
@@ -334,6 +334,17 @@ TOptional<double> ANativeWadLevel::FindWaterSurfaceZ(const FVector& Position) co
     const int32 Index = FindWadSector(FVector2D(Position));
     if (const FAAWadNativeSector* Sector = Sectors.IsValidIndex(Index) ? &Sectors[Index] : nullptr;
         Sector && Sector->bWater && Sector->Floor && Sector->WalkingFloor)
+    {
+        return Sector->Floor->GetComponentLocation().Z;
+    }
+    return {};
+}
+
+TOptional<double> ANativeWadLevel::FindLavaSurfaceZ(const FVector& Position) const
+{
+    const int32 Index = FindWadSector(FVector2D(GetActorTransform().InverseTransformPosition(Position)));
+    if (const FAAWadNativeSector* Sector = Sectors.IsValidIndex(Index) ? &Sectors[Index] : nullptr;
+        Sector && Sector->bLava && Sector->Floor && Sector->WalkingFloor)
     {
         return Sector->Floor->GetComponentLocation().Z;
     }

@@ -8,6 +8,10 @@ namespace NativeWadInventoryView
     inline constexpr int32 SlotsPerPage = Columns * 8;
     inline const FBox2D Bag({213, 16}, {315, 128});
     inline const FBox2D Ready({94, 156}, {130, 184});
+    inline const FBox2D ArmorBoxes[] = {
+        {{242, 19}, {259, 30}}, {{253, 28}, {272, 54}}, {{230, 28}, {245, 65}},
+        {{241, 50}, {259, 83}}, {{244, 29}, {253, 51}}, {{258, 47}, {268, 62}},
+    };
 
     inline FBox2D SlotBox(int32 Slot)
     {
@@ -41,6 +45,7 @@ namespace NativeWadInventoryView
                     continue;
                 }
                 const int32 Type = Items[Slot];
+                if (NativeWadRules::IsRuneItem(Type)) { continue; }
                 const FWadInventoryDetails* Details = Data.ItemDetails.Find(Type);
                 const int32 Limit = Details ? Details->StackLimit : 1;
                 const int32* Previous = LastStackByType.Find(Type);

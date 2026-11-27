@@ -44,3 +44,10 @@ Script/  # if present
 
 # Don’t ever commit the Engine
 Engine/
+
+# Local review and Git LFS caches
+/lfs/objects/
+__pycache__/
+*.pyc
+**/WritePermissions.*.temp
+/topdown-write-probe.tmp

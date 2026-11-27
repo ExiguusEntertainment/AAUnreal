@@ -307,11 +307,11 @@ bool LoadWadInterfacePicture(const FString& PicturePath, FIntPoint& Size, TArray
     return true;
 }
 
-bool LoadWadSprite(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels)
+bool LoadWadSprite(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels, TConstArrayView<uint8> ColorTable)
 {
     TArray<FColor> Palette;
     TArray<uint8> Picture;
-    if (!LoadGamePalette(Palette)
+    if ((!ColorTable.IsEmpty() && ColorTable.Num() != 256) || !LoadGamePalette(Palette)
         || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(TEXT("OBJS") / PicturePath))
         || Picture.Num() < 4)
     {
@@ -344,7 +344,7 @@ bool LoadWadSprite(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& 
             const uint8 Color = Picture[Offset + Y - Top];
             if (Color != 0)
             {
-                Pixels[Y * Size.X + X] = Palette[Color];
+                Pixels[Y * Size.X + X] = Palette[ColorTable.IsEmpty() ? Color : ColorTable[Color]];
             }
         }
     }

@@ -1,17 +1,21 @@
 #include "NativeWadCheckpoint.h"
 
+#include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Engine/AssetManager.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/PackageName.h"
 #include "NativeWadEncounter.h"
+#include "NativeWadHudData.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
 #include "NativeWadScenery.h"
 #include "NativeWadTown.h"
 #include "TimerManager.h"
+#include "Sound/SoundWave.h"
 #include "UObject/Package.h"
 
 namespace
@@ -27,6 +31,59 @@ namespace
             Slot.IsEmpty() ? UNativeWadCheckpoint::Slot : Slot, 0));
         return Save && Save->Version == UNativeWadCheckpoint::CurrentVersion ? Save : nullptr;
     }
+}
+
+void UNativeWadTravelState::UpdateBackgroundMusic(UWorld& World)
+{
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    const FName Map(*UGameplayStatics::GetCurrentLevelName(&World, true));
+    const FSoftObjectPath Path = Catalog ? Catalog->MusicByMap.FindRef(Map).ToSoftObjectPath() : FSoftObjectPath();
+    if (Path == RequestedMusic)
+    {
+        return;
+    }
+    RequestedMusic = Path;
+    if (BackgroundMusic)
+    {
+        BackgroundMusic->FadeOut(0.2f, 0.0f);
+        BackgroundMusic = nullptr;
+    }
+    if (Path.IsValid())
+    {
+        TWeakObjectPtr<UWorld> PlaybackWorld(&World);
+        auto Start = FStreamableDelegate::CreateWeakLambda(this, [this, PlaybackWorld, Path, Map]
+        {
+            USoundWave* Track = Cast<USoundWave>(Path.ResolveObject());
+            if (!Track || RequestedMusic != Path)
+            {
+                return;
+            }
+            UWorld* Current = GetWorld();
+            if (!Current || !Current->IsGameWorld())
+            {
+                Current = PlaybackWorld.Get();
+            }
+            if (Current)
+            {
+                BackgroundMusic = UGameplayStatics::SpawnSound2D(Current, Track, 0.45f, 1.0f, 0.0f, nullptr, true);
+                if (BackgroundMusic)
+                {
+                    UE_LOG(LogTemp, Display, TEXT("Started WAD music %s for %s."), *Track->GetName(), *Map.ToString());
+                }
+            }
+        });
+        UAssetManager::GetStreamableManager().RequestAsyncLoad(Path, MoveTemp(Start));
+    }
+}
+
+bool UNativeWadTravelState::IsBackgroundMusicPlaying() const
+{
+    return IsValid(BackgroundMusic) && BackgroundMusic->IsPlaying();
+}
+
+FName UNativeWadTravelState::BackgroundMusicName() const
+{
+    return IsValid(BackgroundMusic) && BackgroundMusic->Sound ? BackgroundMusic->Sound->GetFName() : NAME_None;
 }
 
 bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDiscardProjectiles) const
@@ -87,7 +144,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     {
         if (Item->IsDropped())
         {
-            Checkpoint.DroppedItems.Add({Item->GetItemType(), Item->GetActorLocation()});
+            Checkpoint.DroppedItems.Add({Item->GetItemType(), Item->GetActorLocation(), Item->GetAmmoIndex(), Item->GetAmmoQuantity()});
         }
         else if (!Item->Tags.IsEmpty())
         {
@@ -98,7 +155,8 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     {
         if (!Encounter->IsHidden() && !Encounter->Tags.IsEmpty())
         {
-            Checkpoint.Encounters.Add(Encounter->Tags[0], {Encounter->GetActorTransform(), Encounter->GetEncounterHealth()});
+            Checkpoint.Encounters.Add(Encounter->Tags[0], {Encounter->GetActorTransform(), Encounter->GetEncounterHealth(),
+                Encounter->GetPoisonLevel(), Encounter->GetPoisonTime()});
         }
     }
     return true;
@@ -121,9 +179,9 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     for (const auto& [Id, State] : Checkpoint.CreatureGenerators)
     {
         const FWadCreatureGenerator* Generator = CreatureGenerators.Find(Id);
-        if (!Generator || State.Released < 0 || State.Released > Generator->Creatures.Num()
+        if (!Generator || State.Released < 0 || (!Generator->bInfinite && State.Released > Generator->NumReleases())
             || !FMath::IsFinite(State.Remaining) || State.Remaining < 0 || State.Remaining > Generator->Interval + Generator->RandomInterval
-            || (State.Released < Generator->Creatures.Num()) != (State.Remaining > 0))
+            || (!Generator->IsExhausted(State.Released)) != (State.Remaining > 0))
         {
             return false;
         }
@@ -253,6 +311,10 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     }
     for (const auto& [Id, Generator] : CreatureGenerators)
     {
+        if (Generator.bStartsActive && !CreatureGeneratorStates.Contains(Id))
+        {
+            ActivateCreatureGenerator(Id);
+        }
         const int32 Released = CreatureGeneratorStates.FindRef(Id).Released;
         for (int32 Index = 0; Index < Generator.Creatures.Num(); ++Index)
         {
@@ -286,6 +348,21 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
     LightOverrides = Checkpoint.LightLevels;
     RefreshSectorLights();
     TSet<const ANativeWadPickup*> DormantPickups;
+    for (const auto& [Id, Generator] : CreatureGenerators)
+    {
+        const int32 Released = CreatureGeneratorStates.FindRef(Id).Released;
+        for (int32 Index = 0; Index < Generator.Pickups.Num(); ++Index)
+        {
+            if (ANativeWadPickup* Pickup = Generator.Pickups[Index]; IsValid(Pickup))
+            {
+                Pickup->SetAvailable(Index < Released);
+                if (Index >= Released)
+                {
+                    DormantPickups.Add(Pickup);
+                }
+            }
+        }
+    }
     for (const auto& [Id, Generator] : PickupGenerators)
     {
         if (IsValid(Generator.Pickup))
@@ -318,6 +395,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
             }
             return false;
         }
+        Item->SetAuthoredAmmo(Drop.AmmoIndex, Drop.AmmoQuantity);
         RestoredDrops.Add(Item);
     }
     for (ANativeWadPickup* Item : OldDrops)
@@ -340,6 +418,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
             {
                 Encounter->SetActorTransform(State->Transform, false, nullptr, ETeleportType::TeleportPhysics);
                 Encounter->RestoreEncounterHealth(State->Health);
+                Encounter->RestorePoison(State->Poison, State->PoisonTime);
             }
         }
     }
@@ -427,7 +506,10 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
         Travel->JournalPages = Save->JournalPages;
         Travel->ArrivingFromMap = 0;
     }
-    MoveLegacyCoinsToPurse();
+    if (!SavedURL.HasOption(TEXT("WadPhysicalCoins")))
+    {
+        MoveLegacyCoinsToPurse();
+    }
     bCheckpointRestored = true;
     UE_LOG(LogTemp, Display, TEXT("Restored WAD checkpoint in %s."), *Save->LevelPackage);
 }

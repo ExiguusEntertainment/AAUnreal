@@ -14,6 +14,7 @@
 namespace
 {
     using NativeWadInventoryView::Ready;
+    using NativeWadInventoryView::ArmorBoxes;
     using NativeWadInventoryView::SlotBox;
     using NativeWadInventoryView::SlotsPerPage;
     using FInventoryView = NativeWadInventoryView::FView;
@@ -26,13 +27,51 @@ namespace
     const FBox2D Use({93, 186}, {131, 196});
     const FBox2D CastButton({240, 181}, {259, 196});
     const FBox2D InventoryButton({5, 155}, {21, 168});
+    const FBox2D EquipmentButton({22, 155}, {38, 168});
     const FBox2D StatisticsButton({39, 155}, {55, 168});
+    const FBox2D FinancesButton({39, 169}, {55, 182});
+    const FBox2D AmmoButton({5, 183}, {21, 196});
     const FBox2D JournalButton({22, 183}, {38, 196});
     const FBox2D Close({304, 4}, {315, 15});
     const FBox2D PreviousPage({267, 129}, {277, 137});
     const FBox2D NextPage({277, 129}, {287, 137});
-    const FBox2D RuneFour({265, 169}, {281, 182});
-    const FBox2D RuneFive({282, 169}, {298, 182});
+    const FBox2D BagEquipmentButton({214, 140}, {315, 149});
+    const FBox2D FinancesPanel({214, 18}, {315, 147});
+    const TCHAR* const CoinButtons[][2] = {
+        {TEXT("PGET1"), TEXT("PGET5")}, {TEXT("GGET1"), TEXT("GGET5")},
+        {TEXT("SGET1"), TEXT("SGET5")}, {TEXT("CGET1"), TEXT("CGET5")},
+    };
+    constexpr int32 RuneCount = 9;
+
+    FVector2D CoinButtonPosition(int32 Row, int32 Column)
+    {
+        return {215.0 + 12.0 * Column, 32.0 + 12.0 * Row};
+    }
+
+    FBox2D RuneButton(int32 Index)
+    {
+        const FVector2D Corner(265 + 17 * (Index % 3), 183 - 14 * (Index / 3));
+        return {Corner, Corner + FVector2D(16, 13)};
+    }
+
+    FName RunePicture(int32 Index, NativeWadRules::ESpellSchool School, bool bPressed)
+    {
+        static const TArray<FName> Pictures = []
+        {
+            TArray<FName> Names;
+            for (const TCHAR* Prefix : {TEXT("RUNBUT"), TEXT("RUDBUT")})
+            {
+                for (int32 Art = 0; Art < 2 * RuneCount; ++Art)
+                {
+                    Names.Emplace(*FString::Printf(TEXT("%s%02d"), Prefix, Art));
+                }
+            }
+            return Names;
+        }();
+        using NativeWadRules::ESpellSchool;
+        const int32 Offset = School == ESpellSchool::Cleric ? RuneCount : School == ESpellSchool::Arcane && Index >= 4 ? 5 : 0;
+        return Pictures[Index + Offset + (bPressed ? 2 * RuneCount : 0)];
+    }
 
     struct FJournalButton
     {
@@ -229,6 +268,18 @@ void ANativeWadHUD::ChangeInventoryPage(int32 Offset)
     }
 }
 
+void ANativeWadHUD::ToggleForm(EForm Requested)
+{
+    if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn()))
+    {
+        if (!Player->IsInventoryOpen() || Form == Requested)
+        {
+            Player->ToggleInventory();
+        }
+        Form = Player->IsInventoryOpen() ? Requested : EForm::Inventory;
+    }
+}
+
 void ANativeWadHUD::ClickHUD(const FVector2D& Position)
 {
     if (!ClassicData)
@@ -245,15 +296,14 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
     const FVector2D Point = (Position - Layout.Origin) / Layout.Scale;
     const auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
     const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
-    if (InventoryButton.IsInside(Point) || StatisticsButton.IsInside(Point) || (bHasJournal && JournalButton.IsInside(Point)))
+    if (InventoryButton.IsInside(Point) || EquipmentButton.IsInside(Point) || StatisticsButton.IsInside(Point)
+        || FinancesButton.IsInside(Point) || AmmoButton.IsInside(Point)
+        || (bHasJournal && JournalButton.IsInside(Point)))
     {
-        const EForm Requested = InventoryButton.IsInside(Point) ? EForm::Inventory
-            : StatisticsButton.IsInside(Point) ? EForm::Statistics : EForm::Journal;
-        if (!Player->IsInventoryOpen() || Form == Requested)
-        {
-            Player->ToggleInventory();
-        }
-        Form = Player->IsInventoryOpen() ? Requested : EForm::Inventory;
+        const EForm Requested = InventoryButton.IsInside(Point) ? EForm::Inventory : EquipmentButton.IsInside(Point) ? EForm::Equipment
+            : StatisticsButton.IsInside(Point) ? EForm::Statistics : FinancesButton.IsInside(Point) ? EForm::Finances
+            : AmmoButton.IsInside(Point) ? EForm::Ammo : EForm::Journal;
+        ToggleForm(Requested);
         return;
     }
     if (!Player->IsInventoryOpen())
@@ -266,19 +316,43 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
         {
             Player->CastRejuvenate();
         }
-        else if (RuneFour.IsInside(Point))
+        else
         {
-            Player->EnterRuneFour();
-        }
-        else if (RuneFive.IsInside(Point))
-        {
-            Player->EnterRuneFive();
+            for (int32 Index = 0; Index < RuneCount; ++Index)
+            {
+                if (RuneButton(Index).IsInside(Point))
+                {
+                    Player->EnterRune(Index + 1);
+                    break;
+                }
+            }
         }
         return;
     }
     if (Close.IsInside(Point))
     {
         Player->ToggleInventory();
+        return;
+    }
+    if ((Form == EForm::Inventory || Form == EForm::Equipment) && BagEquipmentButton.IsInside(Point))
+    {
+        Form = Form == EForm::Inventory ? EForm::Equipment : EForm::Inventory;
+        return;
+    }
+    if (Form == EForm::Equipment)
+    {
+        for (int32 Location = 0; Location < UE_ARRAY_COUNT(ArmorBoxes); ++Location)
+        {
+            const int32 Slot = Player->WornSlots[Location];
+            if (ArmorBoxes[Location].IsInside(Point) && Player->GetCarriedItems().IsValidIndex(Slot))
+            {
+                if (const FWadInventoryDetails* Item = Player->GetItemRules(Player->GetCarriedItems()[Slot]))
+                {
+                    Player->EquipArmor(Slot, *Item);
+                    break;
+                }
+            }
+        }
         return;
     }
     if (Form == EForm::Journal)
@@ -295,6 +369,44 @@ void ANativeWadHUD::ClickHUD(const FVector2D& Position)
     }
     if (Form == EForm::Statistics)
     {
+        return;
+    }
+    if (Form == EForm::Finances)
+    {
+        for (int32 Row = 0; Row < UE_ARRAY_COUNT(CoinButtons); ++Row)
+        {
+            for (int32 Column = 0; Column < UE_ARRAY_COUNT(CoinButtons[Row]); ++Column)
+            {
+                const FVector2D Start = CoinButtonPosition(Row, Column);
+                if (FBox2D(Start, Start + FVector2D(11, 10)).IsInside(Point))
+                {
+                    Player->RetrieveCoin(106 - 2 * Row + Column);
+                    return;
+                }
+            }
+        }
+        if (FinancesPanel.IsInside(Point))
+        {
+            Player->ReturnSelectedCoin();
+        }
+        return;
+    }
+    if (Form == EForm::Ammo)
+    {
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(NativeWadRules::CrossbowAmmo); ++Index)
+        {
+            const double Y = 18 + Index * 19;
+            if (FBox2D({214, Y + 8}, {268, Y + 17}).IsInside(Point))
+            {
+                Player->RetrieveAmmo(Index);
+                break;
+            }
+            if (FBox2D({296, Y}, {315, Y + 17}).IsInside(Point))
+            {
+                Player->SelectAmmo(Index);
+                break;
+            }
+        }
         return;
     }
     if (Ready.IsInside(Point))
@@ -358,14 +470,19 @@ void ANativeWadHUD::DrawHUD()
     const double Time = GetWorld()->GetTimeSeconds();
     Screen.Gauges(*Player, Time);
     Screen.Item(Player->GetReadyItem(), Ready);
-    Screen.Picture(TEXT("RUNBUT12"), RuneFour.Min);
-    Screen.Picture(TEXT("RUNBUT13"), RuneFive.Min);
+    const auto School = NativeWadRules::SchoolForClass(Player->GetCharacterClass());
+    for (int32 Index = 0; Index < RuneCount; ++Index)
+    {
+        if (Player->HasRune(Index + 1)) { Screen.Picture(RunePicture(Index, School, false), RuneButton(Index).Min); }
+        else { Screen.Rect(RuneButton(Index), FLinearColor::Black); }
+    }
     const FString Runes = Player->GetRunes();
     for (int32 Index = 0; Index < Runes.Len(); ++Index)
     {
-        if (Runes[Index] == '4' || Runes[Index] == '5')
+        const int32 Rune = Runes[Index] - '1';
+        if (Rune >= 0 && Rune < RuneCount)
         {
-            Screen.Picture(Runes[Index] == '4' ? TEXT("RUDBUT12") : TEXT("RUDBUT13"), {177.0 + Index * 15.0, 182.0});
+            Screen.Picture(RunePicture(Rune, School, true), {177.0 + Index * 15.0, 182.0});
         }
     }
 
@@ -397,7 +514,7 @@ void ANativeWadHUD::DrawHUD()
     const bool bHasJournal = Travel && !Travel->JournalPages.IsEmpty();
     for (int32 Index = 1; Index < 9; ++Index)
     {
-        if (Index == 2 || (Index == 7 && bHasJournal))
+        if (Index == 1 || Index == 2 || Index == 5 || Index == 6 || (Index == 7 && bHasJournal))
         {
             continue;
         }
@@ -406,6 +523,36 @@ void ANativeWadHUD::DrawHUD()
     }
     if (!Player->IsInventoryOpen())
     {
+        return;
+    }
+    if (Form == EForm::Equipment)
+    {
+        using namespace NativeWadRules;
+        static_assert(UE_ARRAY_COUNT(ArmorBoxes) == EquipmentSlotCount);
+        Screen.Picture(TEXT("EQPBAR"), {209, 0});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        Screen.Picture(TEXT("2INVBUTN"), BagEquipmentButton.Min);
+        const TArray<int32>& Items = Player->GetCarriedItems();
+        int32 Armor[EquipmentSlotCount] = {};
+        for (int32 Location = 0; Location < EquipmentSlotCount; ++Location)
+        {
+            const int32 Slot = Player->WornSlots[Location];
+            if (Items.IsValidIndex(Slot))
+            {
+                Screen.Item(Items[Slot], ArmorBoxes[Location]);
+                if (const FWadInventoryDetails* Item = Player->GetItemRules(Items[Slot]))
+                {
+                    Armor[Location] = Item->ArmorValue;
+                }
+            }
+        }
+        // BAN00002.FRM lists these fields in two columns.
+        const int32 Values[] = {Armor[HeadSlot], Armor[ChestSlot], Armor[LeftArmSlot], Armor[RightArmSlot],
+            Armor[LegsSlot], Armor[LegsSlot], Armor[ShieldSlot], Player->GetArmorRating()};
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(Values); ++Index)
+        {
+            Screen.Text(FString::Printf(TEXT("%d%%"), Values[Index]), Index < 4 ? 241 : 294, 99 + 9 * (Index % 4), 17, 1, true);
+        }
         return;
     }
     if (Form == EForm::Journal && bHasJournal)
@@ -448,23 +595,74 @@ void ANativeWadHUD::DrawHUD()
             TEXT("Witness"), TEXT("Apostle"), TEXT("Saint"), TEXT("Herald of Glory"), TEXT("Illuminated One")
         };
         Screen.Picture(TEXT("STABAR"), {209, 0});
-        Screen.Picture(TEXT("SMPORT04"), {215, 27});
+        const FName Portrait(*FString::Printf(TEXT("SMPORT%02d"), Player->GetCharacterClass()));
+        Screen.Picture(Portrait, {215, 27});
         Screen.Text(FString::FromInt(Player->GetCharacterLevel()), 299, 27, 14, 1, true);
         const auto Attributes = Player->GetAttributes();
         for (int32 Index = 0; Index < UE_ARRAY_COUNT(StatRows); ++Index)
         {
             Screen.Text(FString::FromInt(Attributes[StatRows[Index]]), 299, 37 + Index * 10, 14, 1, true);
         }
-        Screen.Text(TEXT("Priest"), 240, 103, 73, 1, true);
-        Screen.Text(PriestTitles[FMath::Clamp(Player->GetCharacterLevel() - 1, 0, UE_ARRAY_COUNT(PriestTitles) - 1)], 240, 113, 73, 1, true);
+        Screen.Text(CharacterClasses[Player->GetCharacterClass()].Name, 240, 103, 73, 1, true);
+        if (Player->GetCharacterClass() == PriestClass)
+        {
+            Screen.Text(PriestTitles[FMath::Clamp(Player->GetCharacterLevel() - 1, 0, UE_ARRAY_COUNT(PriestTitles) - 1)],
+                240, 113, 73, 1, true);
+        }
         Screen.Text(FString::FromInt(Player->GetExperience()), 263, 129, 50, 1, true);
         Screen.Text(FString::FromInt(Player->GetExperienceNeeded()), 263, 139, 50, 1, true);
         return;
     }
+    if (Form == EForm::Finances && Travel)
+    {
+        Screen.Picture(TEXT("MONBAR2"), {209, 0});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        const auto DrawCount = [&](int64 Coins, int32 Type, FVector2D Start, int32 FieldWidth)
+        {
+            const FString Count = LexToString(NativeWadRules::CoinDenominationCount(Coins, Type));
+            DrawWadBitmapText(*Canvas, ClassicData->Medium, ClassicData->Palette, Count, Screen.Layout.At(Start),
+                Screen.Layout.Scale, FieldWidth, 1, 0, true, White);
+        };
+        for (int32 Row = 0; Row < UE_ARRAY_COUNT(CoinButtons); ++Row)
+        {
+            const int32 Type = 106 - 2 * Row;
+            DrawCount(Travel->Quest.GetWalletCopper(), Type, {284, 32.0 + 12.0 * Row}, 28);
+            DrawCount(Travel->Quest.BankCopper, Type, {260, 101.0 + 12.0 * Row}, 52);
+            for (int32 Column = 0; Column < UE_ARRAY_COUNT(CoinButtons[Row]); ++Column)
+            {
+                Screen.Picture(CoinButtons[Row][Column], CoinButtonPosition(Row, Column));
+            }
+        }
+        FVector2D Cursor;
+        const int32 Selected = Player->GetSelectedInventorySlot();
+        if (Player->GetCarriedItems().IsValidIndex(Selected) && GetOwningPlayerController()->GetMousePosition(Cursor.X, Cursor.Y))
+        {
+            Cursor = (Cursor - Screen.Layout.Origin) / Screen.Layout.Scale;
+            Screen.Item(Player->GetCarriedItems()[Selected], {Cursor + FVector2D(1, 1), Cursor + FVector2D(19, 19)});
+        }
+        return;
+    }
+    if (Form == EForm::Ammo)
+    {
+        Screen.Picture(TEXT("AMMBAR"), {209, 0});
+        Screen.Picture(TEXT("CLOSEWIN"), Close.Min);
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(NativeWadRules::CrossbowAmmo); ++Index)
+        {
+            const int32 Y = 18 + Index * 19;
+            const auto& Ammo = NativeWadRules::CrossbowAmmo[Index];
+            Screen.Text(Ammo.Name, 214, Y, 78, 1, true);
+            Screen.Text(FString::FromInt(Player->GetAmmoCount(Index)), 270, Y + 8, 22, 1, true);
+            if (Player->GetAmmoReserve(Index) > 0)
+            {
+                Screen.Picture(TEXT("AMMGET"), {214, double(Y + 8)});
+            }
+            Screen.Picture(Index == Player->GetSelectedAmmo() ? TEXT("AMMSELDN") : TEXT("AMMSELUP"), {296, double(Y)});
+        }
+        return;
+    }
 
     Screen.Picture(TEXT("INVBAR3"), {209, 0});
-    Screen.Rect({{214, 140}, {315, 149}}, FLinearColor::FromSRGBColor(FColor(39, 22, 15)));
-    Screen.Text(TEXT("READY ITEM     G DROP"), 214, 141, 101, 1, true);
+    Screen.Picture(TEXT("2EQBUTN"), BagEquipmentButton.Min);
     const FInventoryView View(*Player, *ClassicData);
     const int32 Pages = View.PageCount();
     InventoryPage = FMath::Min(InventoryPage, Pages - 1);

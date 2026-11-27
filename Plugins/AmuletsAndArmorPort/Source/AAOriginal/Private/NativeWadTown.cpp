@@ -53,6 +53,12 @@ namespace
 
     constexpr FTownButton QuestButton{TEXT("QUEST"), 6, 17};
     constexpr FTownButton InnButton{TEXT("INN"), 57, 17};
+    constexpr FTownButton RoomButtons[] = {
+        {TEXT("ROOMBTN1"), 45, 24}, {TEXT("ROOMBTN2"), 45, 52},
+        {TEXT("ROOMBTN3"), 45, 80}, {TEXT("ROOMBTN4"), 45, 108}
+    };
+    constexpr int32 RoomPrices[] = {0, 200, 1000, 2000};
+    constexpr const TCHAR* RoomPriceLabels[] = {TEXT("Free"), TEXT("2 gold"), TEXT("1 platinum"), TEXT("2 platinum")};
     constexpr FTownButton StoreButton{TEXT("STORE"), 107, 17};
     constexpr FTownButton BankButton{TEXT("BANK"), 157, 17};
     constexpr FTownButton LastButton{TEXT("LAST"), 41, 35};
@@ -104,7 +110,7 @@ namespace
 
     int64 CoinCount(int64 Total, int32 Row)
     {
-        return Row == 0 ? Total / Coins[Row] : Total / Coins[Row] % 10;
+        return NativeWadRules::CoinDenominationCount(Total, 106 - 2 * Row);
     }
 
     FString FormatMoney(int64 Amount)
@@ -436,13 +442,112 @@ void ANativeWadPlayer::CompleteTownArrival()
 void ANativeWadPlayer::TownSelectPrevious() { if (auto* HUD = TownHUD(*this)) { HUD->SelectQuest(-1); } }
 void ANativeWadPlayer::TownSelectNext() { if (auto* HUD = TownHUD(*this)) { HUD->SelectQuest(1); } }
 void ANativeWadPlayer::TownQuest() { if (auto* HUD = TownHUD(*this)) { HUD->OpenQuest(); } }
+void ANativeWadPlayer::TownCharacter() { if (auto* HUD = TownHUD(*this)) { HUD->OpenCharacterPicker(); } }
 void ANativeWadPlayer::TownConfirm() { if (auto* HUD = TownHUD(*this)) { HUD->ConfirmAction(); } }
 void ANativeWadPlayer::TownCancel() { if (auto* HUD = TownHUD(*this)) { HUD->CancelAction(); } }
 void ANativeWadPlayer::TownScrollUp() { if (auto* HUD = TownHUD(*this)) { HUD->Scroll(-1); } }
 void ANativeWadPlayer::TownScrollDown() { if (auto* HUD = TownHUD(*this)) { HUD->Scroll(1); } }
 void ANativeWadPlayer::TownInn() { if (auto* HUD = TownHUD(*this)) { HUD->OpenService(TEXT("Inn")); } }
-void ANativeWadPlayer::TownStore() { if (auto* HUD = TownHUD(*this)) { HUD->OpenService(TEXT("Store")); } }
+void ANativeWadPlayer::TownInnCommons() { if (auto* HUD = TownHUD(*this)) { HUD->RentRoom(0); } }
+void ANativeWadPlayer::TownInnLarge() { if (auto* HUD = TownHUD(*this)) { HUD->RentRoom(2); } }
+void ANativeWadPlayer::TownInnSuite() { if (auto* HUD = TownHUD(*this)) { HUD->RentRoom(3); } }
+void ANativeWadPlayer::TownStore()
+{
+    if (auto* HUD = TownHUD(*this); HUD && !HUD->RentRoom(1))
+    {
+        HUD->OpenService(TEXT("Store"));
+    }
+}
 void ANativeWadPlayer::TownBank() { if (auto* HUD = TownHUD(*this)) { HUD->OpenService(TEXT("Bank")); } }
+
+bool ANativeWadPlayer::RentWadRoom(int32 Room)
+{
+    UNativeWadTravelState* Travel = TownTravel(*GetWorld());
+    if (!IsInWadTown() || !Travel || Room < 0 || Room >= UE_ARRAY_COUNT(RoomPrices))
+    {
+        return false;
+    }
+    const int64 Wallet = Travel->Quest.GetWalletCopper();
+    if (Wallet < RoomPrices[Room])
+    {
+        ShowInteractionMessage(TEXT("You cannot afford that room."));
+        return false;
+    }
+    Travel->Quest.SetWalletCopper(Wallet - RoomPrices[Room]);
+    if (Room > 0)
+    {
+        constexpr int32 RecoveryDivisors[] = {1, 4, 3, 1};
+        Health = FMath::Min(MaxHealth, Health + MaxHealth / RecoveryDivisors[Room]);
+        Mana = FMath::Min(MaxMana, Mana + MaxMana / RecoveryDivisors[Room]);
+        Food = FMath::Min(NativeWadRules::MaxFood, Food + (Room == 1 ? 1000 : 2000));
+        Water = FMath::Min(NativeWadRules::MaxFood, Water + (Room == 1 ? 1000 : 2000));
+        PoisonLevel = Room == 3 ? 0 : Room == 2 ? PoisonLevel / 2 : PoisonLevel;
+    }
+    ShowInteractionMessage(SaveWadCheckpoint() ? TEXT("Rested at the inn. Checkpoint saved.") : TEXT("Rested at the inn."));
+    return true;
+}
+
+bool ANativeWadPlayer::CanChooseWadClass() const
+{
+    const UNativeWadTravelState* Travel = TownTravel(*GetWorld());
+    return IsInWadTown() && !bWadCharacterCreated && Experience == 0 && CharacterLevel == 1 && Travel
+        && Travel->Quest.Active == INDEX_NONE && Travel->VisitedLevels.IsEmpty();
+}
+
+bool ANativeWadPlayer::ChooseWadClass(int32 Index)
+{
+    using namespace NativeWadRules;
+    if (Index < 0 || Index >= UE_ARRAY_COUNT(CharacterClasses) || !CanChooseWadClass())
+    {
+        return false;
+    }
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    if (!Catalog || !Catalog->StartingEquipment.IsValidIndex(Index))
+    {
+        ShowInteractionMessage(TEXT("Starting equipment is unavailable."));
+        return false;
+    }
+    const FWadCharacterClass& Class = CharacterClasses[Index];
+    CharacterClass = Index;
+    FMemory::Memcpy(Attributes, Class.Base, sizeof(Attributes));
+    MaxMana = Mana = Class.Base[MagicAttribute] * 100;
+    MaxHealth = Health = (10 + Class.Base[ConstitutionAttribute] / 2) * 100;
+    const FWadStartingEquipment& Equipment = Catalog->StartingEquipment[Index];
+    CarriedItems.Append(Equipment.Items);
+    CarriedItems.Add(StartingWaterGourd);
+    for (int32 FoodIndex = 0; FoodIndex < 5; ++FoodIndex)
+    {
+        CarriedItems.Add(StartingFoods[FMath::RandHelper(UE_ARRAY_COUNT(StartingFoods))]);
+    }
+    ReadySlot = SelectedInventorySlot = INDEX_NONE;
+    for (int32& Slot : WornSlots)
+    {
+        Slot = INDEX_NONE;
+    }
+    for (int32 Ammo = 0; Ammo < UE_ARRAY_COUNT(AmmoReserve); ++Ammo)
+    {
+        AmmoReserve[Ammo] = Equipment.Ammo.IsValidIndex(Ammo) ? Equipment.Ammo[Ammo] : 0;
+    }
+    for (int32 Slot = 0; Slot < CarriedItems.Num(); ++Slot)
+    {
+        const FWadInventoryDetails* Item = GetItemRules(CarriedItems[Slot]);
+        if (!Item || !CanUseWadItem(CarriedItems[Slot]))
+        {
+            continue;
+        }
+        if (Item->ArmorSlot >= 0 && Item->ArmorSlot < EquipmentSlotCount)
+        {
+            EquipArmor(Slot, *Item);
+        }
+        else if (ReadySlot == INDEX_NONE && (Item->WeaponDamage > 0 || CarriedItems[Slot] == Crossbow))
+        {
+            ReadySlot = Slot;
+        }
+    }
+    bWadCharacterCreated = true;
+    ShowInteractionMessage(FString::Printf(TEXT("Starting as a %s."), Class.Name));
+    return true;
+}
 
 bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBank)
 {
@@ -500,6 +605,12 @@ void ANativeWadPlayer::TownClick()
 
 void ANativeWadTownHUD::SelectQuest(int32 Direction)
 {
+    if (bCharacterPicker)
+    {
+        constexpr int32 Count = UE_ARRAY_COUNT(NativeWadRules::CharacterClasses);
+        ChosenClass = (ChosenClass + Direction + Count) % Count;
+        return;
+    }
     const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
     UNativeWadTravelState* Travel = TownTravel(*GetWorld());
     if (Content && !Content->Quests.IsEmpty() && Travel && !Travel->Quest.bShowResult && !bDialogue && Service.IsNone())
@@ -557,6 +668,10 @@ void ANativeWadTownHUD::StartQuest()
             Travel->VisitedLevels.Remove(NativeWadTown::MapPackage(QuestMap));
         }
     }
+    if (Player->CanChooseWadClass() && !Player->ChooseWadClass(Player->GetCharacterClass()))
+    {
+        return;
+    }
     Travel->Quest.Active = Travel->Quest.Selected;
     bDialogue = false;
     UE_LOG(LogTemp, Display, TEXT("Starting WAD quest %d at L%d from town."), Travel->Quest.Active, Map);
@@ -565,6 +680,14 @@ void ANativeWadTownHUD::StartQuest()
 
 void ANativeWadTownHUD::ConfirmAction()
 {
+    if (bCharacterPicker)
+    {
+        if (auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn()); Player && Player->ChooseWadClass(ChosenClass))
+        {
+            bCharacterPicker = false;
+        }
+        return;
+    }
     const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
     UNativeWadTravelState* Travel = TownTravel(*GetWorld());
     if (!Content || !Travel)
@@ -595,6 +718,11 @@ void ANativeWadTownHUD::ConfirmAction()
 
 void ANativeWadTownHUD::CancelAction()
 {
+    if (bCharacterPicker)
+    {
+        bCharacterPicker = false;
+        return;
+    }
     Service = NAME_None;
     HeldSlot = INDEX_NONE;
     if (bDialogue)
@@ -634,21 +762,46 @@ void ANativeWadTownHUD::OpenService(FName Name)
 {
     const UNativeWadTravelState* Travel = TownTravel(*GetWorld());
     if (ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
-        Player && Travel && !Travel->Quest.bShowResult && !bDialogue)
+        Player && Travel && !Travel->Quest.bShowResult && !bDialogue && !bCharacterPicker)
     {
         const UNativeWadTownData* Content = NativeWadTown::FindContent(*GetWorld());
-        if (Content && (Name == TEXT("Bank") || Name == TEXT("Store"))
-            && Content->Pictures.Contains(Name == TEXT("Bank") ? TEXT("BANKBACK") : TEXT("STORBACK")))
+        const TCHAR* Backdrop = Name == TEXT("Bank") ? TEXT("BANKBACK") : Name == TEXT("Store") ? TEXT("STORBACK")
+            : Name == TEXT("Inn") ? TEXT("INNBACK") : nullptr;
+        if (Content && Backdrop && Content->Pictures.Contains(Backdrop))
         {
             Service = Name;
             StockPage = BagPage = 0;
             HeldSlot = INDEX_NONE;
             ServiceBanner = EServiceBanner::Bag;
-            Player->ShowInteractionMessage(Name == TEXT("Bank") ? TEXT("Welcome to the bank!") : TEXT("Welcome to the store!"));
+            Player->ShowInteractionMessage(Name == TEXT("Bank") ? TEXT("Welcome to the bank!")
+                : Name == TEXT("Inn") ? TEXT("Welcome to the inn!") : TEXT("Welcome to the store!"));
             return;
         }
         Player->ShowInteractionMessage(FString::Printf(TEXT("The %s form is pending."), *Name.ToString()));
     }
+}
+
+void ANativeWadTownHUD::OpenCharacterPicker()
+{
+    if (const auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn());
+        Player && Player->CanChooseWadClass() && Service.IsNone() && !bDialogue)
+    {
+        ChosenClass = Player->GetCharacterClass();
+        bCharacterPicker = true;
+    }
+}
+
+bool ANativeWadTownHUD::RentRoom(int32 Room)
+{
+    if (Service != TEXT("Inn"))
+    {
+        return false;
+    }
+    if (auto* Player = Cast<ANativeWadPlayer>(GetOwningPawn()))
+    {
+        Player->RentWadRoom(Room);
+    }
+    return true;
 }
 
 void ANativeWadTownHUD::ClickAction(const FVector2D& Position)
@@ -668,6 +821,14 @@ void ANativeWadTownHUD::ClickAction(const FVector2D& Position)
     }
     const FVector2D Point = (Position - Layout.Origin) / Layout.Scale;
     const auto Clicked = [&](const FTownButton& Button) { return ContainsButton(*Content, Point, Button); };
+    if (bCharacterPicker)
+    {
+        if (Clicked(AcceptButton)) { ConfirmAction(); }
+        else if (Clicked(CancelButton)) { CancelAction(); }
+        else if (Clicked(LastButton)) { SelectQuest(-1); }
+        else if (Clicked(NextButton)) { SelectQuest(1); }
+        return;
+    }
     if (!Service.IsNone())
     {
         ClickService(*Content, Travel->Quest, Point);
@@ -720,6 +881,18 @@ void ANativeWadTownHUD::ClickService(const UNativeWadTownData& Content, FWadQues
 
     const auto Clicked = [&](const FTownButton& Button) { return ContainsButton(Content, Point, Button); };
     if (Clicked(ServiceClose)) { CancelAction(); return; }
+    if (Service == TEXT("Inn"))
+    {
+        for (int32 Room = 0; Room < UE_ARRAY_COUNT(RoomButtons); ++Room)
+        {
+            if (Clicked(RoomButtons[Room]))
+            {
+                RentRoom(Room);
+                break;
+            }
+        }
+        return;
+    }
     if (Clicked(StockPrevious)) { Scroll(-1); return; }
     if (Clicked(StockNext)) { Scroll(1); return; }
     if (Clicked(BannerClose) && ServiceBanner != EServiceBanner::Closed)
@@ -820,6 +993,21 @@ void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWa
 {
     using namespace NativeWadInventoryView;
     const FTownCanvas Screen{*Canvas, Content, FTownLayout(Canvas->ClipX, Canvas->ClipY)};
+    if (Service == TEXT("Inn"))
+    {
+        Screen.Picture(TEXT("INNBACK"), 4, 3);
+        Screen.Button(ServiceClose);
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(RoomButtons); ++Index)
+        {
+            const FTownButton& Button = RoomButtons[Index];
+            Screen.Button(Button);
+            Screen.FormField(RoomPriceLabels[Index], Content.Medium, 45, Button.Y + 13, 110, Button.Y + 22);
+            const int32 Y = 32 + Index * 11;
+            Screen.FormField(LexToString(CoinCount(Progress.GetWalletCopper(), Index)), Content.Medium, 164, Y, 204, Y + 9);
+        }
+        Screen.Text(Player.GetInteractionMessage(), Content.Tiny, 215, 28, 96, 4);
+        return;
+    }
     const bool bBank = IsBankOpen();
     Screen.Picture(bBank ? TEXT("BANKBACK") : TEXT("STORBACK"), 4, 3);
     Screen.Button(ServiceClose);
@@ -903,10 +1091,6 @@ void ANativeWadTownHUD::DrawService(const UNativeWadTownData& Content, const FWa
         Screen.Picture(TEXT("EQPBAR"), 209, 0);
         Screen.Button(BannerClose);
         Screen.Button(BagButton);
-        const FBox2D ArmorBoxes[] = {
-            {{242, 19}, {259, 30}}, {{253, 28}, {272, 54}}, {{230, 28}, {245, 65}},
-            {{241, 50}, {259, 83}}, {{244, 29}, {253, 51}}, {{258, 47}, {268, 62}},
-        };
         static_assert(UE_ARRAY_COUNT(ArmorBoxes) == NativeWadRules::EquipmentSlotCount);
         for (int32 Location = 0; Location < NativeWadRules::EquipmentSlotCount; ++Location)
         {
@@ -1003,6 +1187,24 @@ void ANativeWadTownHUD::DrawHUD()
         return;
     }
     Screen.Picture(TEXT("TWNBACK2"), 4, 3);
+    if (bCharacterPicker)
+    {
+        const auto& Class = NativeWadRules::CharacterClasses[ChosenClass];
+        Screen.Picture(TEXT("DLGBACK"), 26, 16);
+        Screen.Text(Class.Name, Content->Medium, 72, 35, 110, 1, 0, true);
+        const TCHAR* Names[] = {TEXT("Strength"), TEXT("Speed"), TEXT("Magic"), TEXT("Accuracy"), TEXT("Stealth"), TEXT("Constitution")};
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(Names); ++Index)
+        {
+            const int32 Y = 55 + Index * 12;
+            Screen.Text(Names[Index], Content->Tiny, 80, Y, 80, 1);
+            Screen.Text(FString::FromInt(Class.Base[Index]), Content->Tiny, 170, Y, 32, 1);
+        }
+        for (const FTownButton& Button : {LastButton, NextButton, AcceptButton, CancelButton})
+        {
+            Screen.Button(Button);
+        }
+        return;
+    }
     for (const FTownButton& Button : {QuestButton, InnButton, StoreButton, BankButton, LastButton, NextButton, UpButton, DownButton})
     {
         Screen.Button(Button);
@@ -1039,6 +1241,10 @@ void ANativeWadTownHUD::DrawHUD()
     }
     else if (const ANativeWadPlayer* Player = Cast<ANativeWadPlayer>(GetOwningPawn()))
     {
+        if (Player->CanChooseWadClass())
+        {
+            Screen.Text(TEXT("Alt+N Choose character"), Content->Tiny, 215, 18, 96, 1);
+        }
         Screen.Text(Player->GetInteractionMessage(), Content->Tiny, 215, 28, 96, 4);
     }
 }

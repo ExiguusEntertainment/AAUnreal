@@ -7,6 +7,7 @@
 #include "NativeWadCheckpoint.generated.h"
 
 class UTexture2D;
+class UAudioComponent;
 
 USTRUCT()
 struct FWadSavedEncounter
@@ -18,6 +19,10 @@ struct FWadSavedEncounter
 
     UPROPERTY()
     int32 Health = 0;
+    UPROPERTY()
+    int32 Poison = 0;
+    UPROPERTY()
+    double PoisonTime = 5.0;
 };
 
 USTRUCT()
@@ -80,6 +85,10 @@ struct FWadSavedDrop
     int32 Type = 0;
     UPROPERTY()
     FVector Position = FVector::ZeroVector;
+    UPROPERTY()
+    int32 AmmoIndex = INDEX_NONE;
+    UPROPERTY()
+    int32 AmmoQuantity = 0;
 };
 
 USTRUCT()
@@ -250,9 +259,17 @@ class UNativeWadTravelState : public UGameInstanceSubsystem
     GENERATED_BODY()
 
 public:
+    void UpdateBackgroundMusic(UWorld& World);
+    bool IsBackgroundMusicPlaying() const;
+    FName BackgroundMusicName() const;
     TMap<FString, FWadLevelCheckpoint> VisitedLevels;
     TSet<FString> CompletedLevels;
     FWadQuestProgress Quest;
     TMap<int32, TSoftObjectPtr<UTexture2D>> JournalPages;
     int32 ArrivingFromMap = 0;
+
+private:
+    UPROPERTY(Transient)
+    TObjectPtr<UAudioComponent> BackgroundMusic;
+    FSoftObjectPath RequestedMusic;
 };

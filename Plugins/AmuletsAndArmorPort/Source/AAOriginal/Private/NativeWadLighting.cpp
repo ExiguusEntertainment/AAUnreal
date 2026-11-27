@@ -55,6 +55,13 @@ void ANativeWadLevel::BeginPlay()
                 Creature->SetSpawned(false);
             }
         }
+        for (ANativeWadPickup* Pickup : Generator.Pickups)
+        {
+            if (IsValid(Pickup))
+            {
+                Pickup->SetAvailable(false);
+            }
+        }
         if (Generator.bStartsActive)
         {
             ActivateCreatureGenerator(Id);

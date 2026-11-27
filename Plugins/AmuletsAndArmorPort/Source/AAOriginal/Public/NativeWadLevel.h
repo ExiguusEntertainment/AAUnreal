@@ -64,6 +64,8 @@ struct FAAWadNativeSector
 
     UPROPERTY()
     bool bWater = false;
+    UPROPERTY()
+    bool bLava = false;
 
     UPROPERTY()
     FVector2D FlowImpulse = FVector2D::ZeroVector;
@@ -171,6 +173,18 @@ struct FWadCreatureGenerator
 
     UPROPERTY()
     TArray<TObjectPtr<ANativeWadGuardian>> Creatures;
+    UPROPERTY()
+    TArray<TObjectPtr<ANativeWadPickup>> Pickups;
+    UPROPERTY()
+    TObjectPtr<ANativeWadGuardian> Summoner;
+
+    int32 NumReleases() const { return Creatures.Num() + Pickups.Num(); }
+    bool IsExhausted(int32 Released) const { return NumReleases() == 0 || (!bInfinite && Released >= NumReleases()); }
+
+    UPROPERTY()
+    bool bInfinite = false;
+    UPROPERTY()
+    FVector2D SpawnXY = FVector2D::ZeroVector;
 
     UPROPERTY()
     int32 Sector = INDEX_NONE;
@@ -261,7 +275,9 @@ public:
     int32 FindActivitySector(const FVector2D& Position, double Radius = 0.0, int32 PreviousSector = INDEX_NONE) const;
     int32 FindWadSector(const FVector2D& Position) const;
     static constexpr ECollisionChannel WaterSurfaceChannel = ECC_GameTraceChannel2;
+    static constexpr ECollisionChannel LavaSurfaceChannel = ECC_GameTraceChannel3;
     TOptional<double> FindWaterSurfaceZ(const FVector& Position) const;
+    TOptional<double> FindLavaSurfaceZ(const FVector& Position) const;
     double GetWalkingHeight(int32 Sector) const;
     bool AttachActorToWadFloor(AActor& Actor, int32 Sector) const;
     FVector2D GetCurrentInput(const FVector& Feet, bool bWaterWalking = false) const;

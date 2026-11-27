@@ -407,7 +407,17 @@ void ANativeWadLevel::TickCreatureGenerators(float DeltaSeconds)
     for (auto& [Id, State] : CreatureGeneratorStates)
     {
         const FWadCreatureGenerator& Generator = CreatureGenerators.FindChecked(Id);
-        if (State.bPaused || !Generator.Creatures.IsValidIndex(State.Released))
+        if (State.bPaused || Generator.IsExhausted(State.Released))
+        {
+            continue;
+        }
+        ANativeWadGuardian* Summoner = Generator.Summoner.Get();
+        if (Summoner && Summoner->IsDefeated())
+        {
+            State.bPaused = true;
+            continue;
+        }
+        if (Summoner && !Summoner->HasAcquiredTarget())
         {
             continue;
         }
@@ -417,12 +427,35 @@ void ANativeWadLevel::TickCreatureGenerators(float DeltaSeconds)
             continue;
         }
         State.Remaining = Generator.Interval + FMath::RandHelper(Generator.RandomInterval);
+        if (Generator.Pickups.IsValidIndex(State.Released))
+        {
+            int32 Active = 0;
+            for (TActorIterator<ANativeWadPickup> Item(GetWorld()); Item && Active < Generator.MaxActive; ++Item)
+            {
+                Active += Item->GetItemType() == Generator.SourceType && Item->IsAvailable();
+            }
+            if (Generator.MaxActive > 0 && Active >= Generator.MaxActive)
+            {
+                continue;
+            }
+            if (ANativeWadPickup* Pickup = Generator.Pickups[State.Released]; IsValid(Pickup))
+            {
+                Pickup->SetAvailable(true);
+                UE_LOG(LogTemp, Display, TEXT("WAD generator %d released item %d (%d/%d)."),
+                    Id, Generator.SourceType, State.Released + 1, Generator.NumReleases());
+            }
+            if (++State.Released == Generator.NumReleases())
+            {
+                State.Remaining = 0.0f;
+            }
+            continue;
+        }
         if (Generator.MaxActive > 0)
         {
             int32 Active = 0;
             for (TActorIterator<ANativeWadGuardian> It(GetWorld()); It && Active < Generator.MaxActive; ++It)
             {
-                if (!It->IsHidden() && !It->IsDefeated() && It->GetSourceType() == Generator.SourceType)
+                if (!It->IsHidden() && !It->IsDefeated() && (Summoner || It->GetSourceType() == Generator.SourceType))
                 {
                     ++Active;
                 }
@@ -432,36 +465,87 @@ void ANativeWadLevel::TickCreatureGenerators(float DeltaSeconds)
                 continue;
             }
         }
-        ANativeWadGuardian* Creature = Generator.Creatures[State.Released];
+        int32 CreatureIndex = State.Released;
+        if (Generator.bInfinite)
+        {
+            CreatureIndex = INDEX_NONE;
+            for (int32 Offset = 0; Offset < Generator.Creatures.Num(); ++Offset)
+            {
+                const int32 Index = (State.Released % Generator.Creatures.Num() + Offset) % Generator.Creatures.Num();
+                ANativeWadGuardian* Candidate = Generator.Creatures[Index];
+                if (IsValid(Candidate) && (Candidate->IsHidden() || Candidate->IsDefeated()))
+                {
+                    CreatureIndex = Index;
+                    break;
+                }
+            }
+            if (CreatureIndex == INDEX_NONE) { continue; }
+        }
+        ANativeWadGuardian* Creature = Generator.Creatures[CreatureIndex];
         if (!IsValid(Creature))
         {
             UE_LOG(LogTemp, Warning, TEXT("WAD generator %d is missing creature %d in %s."),
                 Id, State.Released, *GetWorld()->GetMapName());
             ++State.Released;
-            if (!Generator.Creatures.IsValidIndex(State.Released))
+            if (Generator.IsExhausted(State.Released))
             {
                 State.Remaining = 0.0f;
             }
             continue;
         }
-        FVector Spawn = Creature->GetActorLocation();
+        FVector Spawn = Generator.bInfinite ? GetActorLocation() + FVector(Generator.SpawnXY, 0.0)
+            : Creature->GetActorLocation();
         const UCapsuleComponent* Capsule = Creature->GetCapsuleComponent();
-        Spawn.Z = GetActorLocation().Z + GetWalkingHeight(Generator.Sector) + Capsule->GetScaledCapsuleHalfHeight() + 2.0;
+        int32 Sector = Generator.Sector;
+        if (Summoner)
+        {
+            const ANativeWadPlayer* Target = Cast<ANativeWadPlayer>(UGameplayStatics::GetPlayerPawn(this, 0));
+            if (!Target || !Summoner->CanSeePlayer(*Target))
+            {
+                State.Remaining = 0.1f;
+                continue;
+            }
+            const FVector SummonerLocation = Summoner->GetActorLocation();
+            Spawn = SummonerLocation + (Target->GetActorLocation() - SummonerLocation).GetSafeNormal2D() * 75.0;
+            Sector = FindWadSector(FVector2D(Spawn - GetActorLocation()));
+            if (Sector == INDEX_NONE)
+            {
+                State.Remaining = 0.1f;
+                continue;
+            }
+            const double Feet = SummonerLocation.Z - Summoner->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+            const double Difference = GetActorLocation().Z + GetWalkingHeight(Sector) - Feet;
+            if (Difference < -16.0 || Difference > 30.0)
+            {
+                State.Remaining = 0.1f;
+                continue;
+            }
+        }
+        Spawn.Z = GetActorLocation().Z + GetWalkingHeight(Sector) + Capsule->GetScaledCapsuleHalfHeight() + 2.0;
         const FCollisionQueryParams Query(SCENE_QUERY_STAT(WadCreatureGenerator), false, Creature);
         if (GetWorld()->OverlapBlockingTestByChannel(Spawn, FQuat::Identity, ECC_Pawn,
             FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), Query))
         {
+            if (Summoner)
+            {
+                State.Remaining = 0.1f;
+            }
             continue;
         }
         Creature->SetActorLocation(Spawn, false, nullptr, ETeleportType::TeleportPhysics);
+        if (Generator.bInfinite) { Creature->ResetForGenerator(); }
         Creature->SetSpawned(true);
+        if (Summoner)
+        {
+            Summoner->ShowSummonPose();
+        }
         ++State.Released;
-        if (!Generator.Creatures.IsValidIndex(State.Released))
+        if (Generator.IsExhausted(State.Released))
         {
             State.Remaining = 0.0f;
         }
-        UE_LOG(LogTemp, Display, TEXT("WAD generator %d released %s (%d/%d)."), Id, *Creature->GetEncounterName(),
-            State.Released, Generator.Creatures.Num());
+        UE_LOG(LogTemp, Display, TEXT("WAD generator %d released %s (%d/%s)."), Id, *Creature->GetEncounterName(),
+            State.Released, Generator.bInfinite ? TEXT("unlimited") : *LexToString(Generator.Creatures.Num()));
     }
 }
 
@@ -689,11 +773,13 @@ int32 ANativeWadLevel::CountPlayingAmbientEmitters(int32 Sound) const
 
 void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
 {
+    const NativeWadRules::FWadWandProjectile* Homing = NativeWadRules::FindHomingMissile(Command.Target);
     const EWadBoltEffect Effect = Command.Target == 4015 || Command.Target == NativeWadRules::PoisonCrossbowBolt
         ? EWadBoltEffect::Poison
         : Command.Target == 4016 ? EWadBoltEffect::Paralyze
         : Command.Target == 4012 ? EWadBoltEffect::LockDoor : EWadBoltEffect::Damage;
-    const int32 Damage = Command.Target == NativeWadRules::PoisonCrossbowBolt ? PoisonCrossbowDamage
+    const int32 Damage = Homing ? Homing->Damage
+        : Command.Target == NativeWadRules::PoisonCrossbowBolt ? PoisonCrossbowDamage
         : Effect == EWadBoltEffect::Poison ? PoisonMissileDamage
         : Command.Target == NativeWadRules::AcidBall ? NativeWadRules::AcidBallDamage
         : Command.Target == 4005 ? 750 : Command.Target == 4006 ? 1000
@@ -705,12 +791,27 @@ void ANativeWadLevel::LaunchActivityMissile(const FWadScriptCommand& Command)
     }
     const FVector Start = GetActorTransform().TransformPosition(FVector(Command.Position));
     const FVector Destination = GetActorTransform().TransformPosition(FVector(Command.Aim));
-    const FVector Direction = (Destination - Start).GetSafeNormal();
+    const FVector Offset = Destination - Start;
+    FVector Velocity = Offset.GetSafeNormal() * (Command.Value * TicksPerSecond);
+    if (Homing)
+    {
+        // SCRIPT.C uses ServerShootBasicProjectile, which sets XY speed and Z pitch separately.
+        const double Distance = Offset.Size2D();
+        Velocity = Offset.GetSafeNormal2D() * (Command.Value * TicksPerSecond);
+        Velocity.Z = Distance > UE_SMALL_NUMBER
+            ? FMath::FloorToDouble(FMath::Clamp(40.0 * Offset.Z / Distance, -50.0, 50.0)) * TicksPerSecond
+            : 0.0;
+    }
     FActorSpawnParameters Spawn;
     Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-    if (ANativeWadBolt* Missile = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Direction.Rotation(), Spawn))
+    if (ANativeWadBolt* Missile = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Velocity.Rotation(), Spawn))
     {
-        Missile->Launch(ScriptMissileMesh, Art, Direction * (Command.Value * TicksPerSecond), Damage, Effect, this);
+        Missile->Launch(ScriptMissileMesh, Art, Velocity, Damage, Effect, this);
+        if (Homing)
+        {
+            Missile->SetBlastRadius(Homing->Radius);
+            Missile->SetDamageMask(Homing->DamageMask);
+        }
         ++ScriptMissileCount;
         ++ScriptMissilesByType.FindOrAdd(Command.Target);
         UE_LOG(LogTemp, Display, TEXT("Launched WAD script missile %d from %s."), Command.Target, *Start.ToString());

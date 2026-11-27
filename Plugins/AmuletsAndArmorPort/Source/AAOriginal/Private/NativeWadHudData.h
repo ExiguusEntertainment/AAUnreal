@@ -1,9 +1,11 @@
 #pragma once
 
 #include "NativeWadTown.h"
+#include "NativeWadRules.h"
 #include "NativeWadHudData.generated.h"
 
 class UMaterialInterface;
+class USoundWave;
 
 USTRUCT()
 struct FWadInventoryDetails
@@ -41,6 +43,17 @@ struct FWadInventoryDetails
     bool bConsumed = false;
 
     UPROPERTY()
+    int32 Status = INDEX_NONE;
+    UPROPERTY()
+    int32 StatusTicks = 0;
+    UPROPERTY()
+    int32 StatusPower = 0;
+    UPROPERTY()
+    int32 WandProjectile = INDEX_NONE;
+    UPROPERTY()
+    int32 WandManaCost = 0;
+
+    UPROPERTY()
     int32 WeaponDamage = 0;
     UPROPERTY()
     int32 WeaponSpeed = 0;
@@ -53,11 +66,28 @@ struct FWadInventoryDetails
     int32 ArmorSlot = INDEX_NONE;
     UPROPERTY()
     int32 ArmorValue = 0;
+    UPROPERTY()
+    int32 ArmorClass = 0;
+
+    UPROPERTY()
+    uint16 UsableClasses = NativeWadRules::AllClasses;
 
     UPROPERTY()
     TSoftObjectPtr<UMaterialInterface> WorldMaterial;
     UPROPERTY()
     FIntPoint SpriteSize = FIntPoint::ZeroValue;
+};
+
+USTRUCT()
+struct FWadStartingEquipment
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<int32> Items;
+
+    UPROPERTY()
+    TArray<int32> Ammo;
 };
 
 UCLASS()
@@ -82,8 +112,24 @@ public:
     TMap<int32, FWadInventoryDetails> ItemDetails;
 
     UPROPERTY()
+    TArray<FWadStartingEquipment> StartingEquipment;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInterface> PlasmaProjectile;
+
+    UPROPERTY()
+    TMap<int32, TObjectPtr<UMaterialInterface>> AmmoProjectiles;
+    UPROPERTY()
+    TMap<int32, TObjectPtr<UMaterialInterface>> WandProjectileMaterials;
+    UPROPERTY()
+    TMap<FName, TSoftObjectPtr<USoundWave>> MusicByMap;
+
+    UPROPERTY()
     TArray<FColor> Palette;
 
     UPROPERTY()
     FWadTownFont Tiny;
+
+    UPROPERTY()
+    FWadTownFont Medium;
 };

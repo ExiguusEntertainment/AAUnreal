@@ -39,6 +39,60 @@ namespace
         const int32 End = Lines.Num();
         const FString Type = Field(TEXT("TYPE"), 0, End);
         const FString Subtype = Field(TEXT("SUBTYPE"), 0, End);
+        Details.UsableClasses = AllClasses;
+        uint16 Denied = 0;
+        // INVENTOR.C applies these proficiency checks in addition to each item's useable list.
+        if (Type == TEXT("WEAPON"))
+        {
+            if (Subtype == TEXT("DAGGER")) { Denied = ClassFlag(PriestClass); }
+            else if (Subtype == TEXT("AXE"))
+            {
+                Denied = ClassFlag(MageClass) | ClassFlag(PriestClass) | ClassFlag(MagicianClass) | ClassFlag(RogueClass);
+            }
+            else if (Subtype == TEXT("LONGSWORD"))
+            {
+                Denied = ClassFlag(RogueClass) | ClassFlag(MagicianClass) | ClassFlag(MageClass) | ClassFlag(PriestClass);
+            }
+            else if (Subtype == TEXT("SHORTSWORD")) { Denied = ClassFlag(MageClass) | ClassFlag(PriestClass); }
+            else if (Subtype == TEXT("MACE"))
+            {
+                Denied = ClassFlag(MageClass) | ClassFlag(MercenaryClass) | ClassFlag(MagicianClass);
+            }
+            else if (Subtype == TEXT("CROSSBOW"))
+            {
+                Denied = ClassFlag(MageClass) | ClassFlag(WarlockClass) | ClassFlag(PriestClass)
+                    | ClassFlag(PaladinClass) | ClassFlag(MagicianClass);
+            }
+        }
+        else if (Type == TEXT("ARMOR"))
+        {
+            if (Subtype.EndsWith(TEXT("PLATE")))
+            {
+                Denied = ClassFlag(WarlockClass) | ClassFlag(PriestClass) | ClassFlag(ArcherClass)
+                    | ClassFlag(SailorClass) | ClassFlag(MageClass) | ClassFlag(RogueClass) | ClassFlag(MagicianClass);
+            }
+            else if (Subtype.EndsWith(TEXT("CHAIN")))
+            {
+                Denied = ClassFlag(MageClass) | ClassFlag(RogueClass) | ClassFlag(MagicianClass);
+            }
+        }
+        Details.UsableClasses &= uint16(~Denied);
+        const int32 UseableList = Lines.Find(TEXT("USEABLE LIST"));
+        if (UseableList != INDEX_NONE)
+        {
+            uint16 Listed = 0;
+            for (int32 Line = UseableList + 1; Line < End && Lines[Line] != TEXT("END USEABLE LIST"); ++Line)
+            {
+                for (int32 Class = 0; Class < CharacterClassCount; ++Class)
+                {
+                    if (Lines[Line].Equals(CharacterClasses[Class].Name, ESearchCase::IgnoreCase))
+                    {
+                        Listed |= ClassFlag(Class);
+                    }
+                }
+            }
+            Details.UsableClasses &= Listed;
+        }
         Details.bStoreBuys = Type == TEXT("WEAPON") || Type == TEXT("ARMOR") || Type == TEXT("POTION")
             || Type == TEXT("WAND") || Type == TEXT("SCROLL") || Type == TEXT("THING") || Type == TEXT("BOLT") || Type == TEXT("QUIVER");
         Details.bBankBuys = Type == TEXT("RING") || Type == TEXT("AMULET");
@@ -49,6 +103,7 @@ namespace
             Details.ArmorSlot = Subtype.StartsWith(TEXT("HELMET")) ? HeadSlot : Subtype.StartsWith(TEXT("BRACING")) ? LeftArmSlot
                 : Subtype.StartsWith(TEXT("LEGGINGS")) ? LegsSlot : Subtype.StartsWith(TEXT("BREASTPLATE")) ? ChestSlot
                 : Subtype == TEXT("SHIELD") ? ShieldSlot : INDEX_NONE;
+            Details.ArmorClass = Subtype.EndsWith(TEXT("CHAIN")) ? 1 : Subtype.EndsWith(TEXT("PLATE")) ? 2 : 0;
             Details.ArmorValue = FMath::Clamp(FCString::Atoi(*Field(TEXT("ARMOR VALUE"), 0, End)), 0, 100);
         }
 
@@ -67,7 +122,51 @@ namespace
             }
             const FString Trigger = Field(TEXT("EFFECT TRIGGER"), Index + 2, EndEffect);
             const int32 Power = FCString::Atoi(*Field(TEXT("EFFECT POWER"), Index + 2, EndEffect));
-            if (Trigger == TEXT("USE"))
+            if (Type == TEXT("WAND") && Trigger == TEXT("USE") && Name == TEXT("FIRE WAND"))
+            {
+                TArray<FString> Values;
+                Field(TEXT("EFFECT DATA"), Index + 2, EndEffect).ParseIntoArray(Values, TEXT(","), false);
+                int32 Projectile;
+                int32 ManaCost;
+                if (Values.Num() == 3 && LexTryParseString(Projectile, *Values[0])
+                    && LexTryParseString(ManaCost, *Values[2]) && ManaCost > 0)
+                {
+                    Details.WandProjectile = Projectile;
+                    Details.WandManaCost = ManaCost;
+                }
+            }
+            else if (Name == TEXT("ADD PLAYER EFFECT") && (Trigger == TEXT("USE") || Trigger == TEXT("READY")))
+            {
+                const FString SubEffect = Field(TEXT("EFFECT SUBTYPE"), Index + 2, EndEffect);
+                const int32 Status = SubEffect == TEXT("INVISIBLE") ? InvisibleStatus
+                    : SubEffect == TEXT("TRANSLUCENT") ? TranslucentStatus
+                    : SubEffect == TEXT("STRENGTH MOD") ? StrengthStatus
+                    : SubEffect == TEXT("LAVA WALK") ? LavaWalkStatus
+                    : SubEffect == TEXT("FIRE ATTACK") ? FireAttackStatus
+                    : SubEffect == TEXT("ELECTRICITY ATTACK") ? ElectricityAttackStatus
+                    : SubEffect == TEXT("ACID ATTACK") ? AcidAttackStatus
+                    : SubEffect == TEXT("POISON ATTACK") ? PoisonAttackStatus
+                    : SubEffect == TEXT("PIERCING ATTACK") ? PiercingAttackStatus
+                    : SubEffect == TEXT("MANA DRAIN ATTACK") ? ManaDrainAttackStatus
+                    : SubEffect == TEXT("RESIST FIRE") ? FireResistStatus
+                    : SubEffect == TEXT("RESIST ACID") ? AcidResistStatus
+                    : SubEffect == TEXT("RESIST POISON") ? PoisonResistStatus
+                    : SubEffect == TEXT("RESIST ELECTRICITY") ? ElectricityResistStatus
+                    : SubEffect == TEXT("RESIST PIERCING") ? PiercingResistStatus
+                    : SubEffect == TEXT("RESIST MANA DRAIN") ? ManaDrainResistStatus : INDEX_NONE;
+                const int32 Ticks = FCString::Atoi(*Field(TEXT("EFFECT DURATION"), Index + 2, EndEffect));
+                if (Status != INDEX_NONE && ((Trigger == TEXT("READY") && Ticks == 0) || (Trigger == TEXT("USE") && Ticks > 0)))
+                {
+                    Details.Status = Status;
+                    Details.StatusTicks = Ticks;
+                    Details.StatusPower = Status == StrengthStatus ? Power : 1;
+                }
+                else if (Trigger == TEXT("USE"))
+                {
+                    bUnknownUse = true;
+                }
+            }
+            else if (Trigger == TEXT("USE"))
             {
                 if (Name == TEXT("MOD PLAYER HEALTH")) { Details.Health += Power; }
                 else if (Name == TEXT("MOD PLAYER MANA")) { Details.Mana += Power; }
@@ -89,7 +188,8 @@ namespace
             }
             Index = EndEffect;
         }
-        Details.bUsable = !bUnknownUse && (Details.Health || Details.Mana || Details.Food || Details.Water || Details.PoisonDivisor > 1);
+        Details.bUsable = !bUnknownUse && (Details.Health || Details.Mana || Details.Food || Details.Water
+            || Details.PoisonDivisor > 1 || (Details.Status != INDEX_NONE && Details.StatusTicks > 0));
 
         if (Details.WeaponDamage <= 0)
         {
@@ -249,6 +349,76 @@ bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthore
         Items.Add(Type, MoveTemp(Item));
     }
     return true;
+}
+
+bool ReadWadStartingEquipment(TArray<FWadStartingEquipment>& Equipment, FOutputDevice& Output)
+{
+    using namespace NativeWadRules;
+    const FString File = FPaths::ProjectDir() /
+        TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Source/INVENTOR.C");
+    FString Source;
+    if (!FFileHelper::LoadFileToString(Source, *File))
+    {
+        Output.Log(TEXT("Could not read the original starting equipment."));
+        return false;
+    }
+    const int32 Begin = Source.Find(TEXT("InventorySetDefaultInventoryForClass(T_void)"));
+    const int32 End = Source.Find(TEXT("InventoryReorder"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Begin);
+    if (Begin == INDEX_NONE || End <= Begin)
+    {
+        return false;
+    }
+    Source = Source.Mid(Begin, End - Begin);
+    Equipment.SetNum(CharacterClassCount);
+    for (FWadStartingEquipment& Entry : Equipment)
+    {
+        Entry.Items.Reset();
+        Entry.Ammo.Init(0, UE_ARRAY_COUNT(CrossbowAmmo));
+    }
+    const FRegexPattern Tokens(TEXT("(?s)/\\*.*?\\*/|//[^\\r\\n]*|#ifdef\\s+COMPILE_OPTION_SHAREWARE_DEMO.*?#endif|case\\s+CLASS_([A-Z_]+)\\s*:|InventoryAddObjectToInventory\\s*\\(\\s*INVENTORY_PLAYER\\s*,\\s*([0-9]+)\\s*,\\s*([0-9]+)\\s*\\)|Effect\\s*\\(\\s*EFFECT_TAKE_AMMO\\s*,\\s*EFFECT_TRIGGER_NONE\\s*,\\s*([0-9]+)\\s*,\\s*([0-9]+)\\s*,"));
+    FRegexMatcher Match(Tokens, Source);
+    int32 Class = INDEX_NONE;
+    while (Match.FindNext())
+    {
+        const FString ClassName = Match.GetCaptureGroup(1);
+        if (!ClassName.IsEmpty())
+        {
+            Class = INDEX_NONE;
+            for (int32 Index = 0; Index < CharacterClassCount; ++Index)
+            {
+                if (ClassName.Equals(CharacterClasses[Index].Name, ESearchCase::IgnoreCase))
+                {
+                    Class = Index;
+                    break;
+                }
+            }
+        }
+        if (!Equipment.IsValidIndex(Class))
+        {
+            continue;
+        }
+        const FString Type = Match.GetCaptureGroup(2);
+        if (!Type.IsEmpty())
+        {
+            const int32 Count = FCString::Atoi(*Match.GetCaptureGroup(3));
+            for (int32 Index = 0; Index < Count; ++Index)
+            {
+                Equipment[Class].Items.Add(FCString::Atoi(*Type));
+            }
+        }
+        const FString Ammo = Match.GetCaptureGroup(4);
+        if (!Ammo.IsEmpty())
+        {
+            const int32 Index = FCString::Atoi(*Ammo);
+            if (!Equipment[Class].Ammo.IsValidIndex(Index))
+            {
+                return false;
+            }
+            Equipment[Class].Ammo[Index] += FCString::Atoi(*Match.GetCaptureGroup(5));
+        }
+    }
+    return Equipment.Num() == CharacterClassCount
+        && !Equipment.ContainsByPredicate([](const FWadStartingEquipment& Entry) { return Entry.Items.IsEmpty(); });
 }
 
 bool ReadWadShopStock(bool bBank, TMap<int32, int32>& Tiers, FOutputDevice& Output)

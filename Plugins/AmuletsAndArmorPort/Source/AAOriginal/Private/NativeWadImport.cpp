@@ -491,6 +491,7 @@ struct FAAWadNativeImport
         FOutputDevice& Output)
     {
         constexpr int32 Water = 1505;
+        constexpr int32 Lava = 1506;
         constexpr int32 Depth = 1521;
         constexpr int32 FlowSlow = 1523;
         constexpr int32 FlowFast = 1525;
@@ -534,6 +535,7 @@ struct FAAWadNativeImport
         {
             Sector.FloorDepth = 0;
             Sector.bWater = false;
+            Sector.bLava = false;
             Sector.FlowImpulse = FVector2D::ZeroVector;
             Sector.FloorScrollRate = FVector2D::ZeroVector;
         }
@@ -545,7 +547,8 @@ struct FAAWadNativeImport
         for (const FWadThing& Thing : Map.Things)
         {
             const FVector2D Position(Thing.X, Thing.Y);
-            if (Thing.Type == Water || Thing.Type == Depth || (Thing.Type >= FlowSlow && Thing.Type <= FlowFast))
+            if (Thing.Type == Water || Thing.Type == Lava || Thing.Type == Depth
+                || (Thing.Type >= FlowSlow && Thing.Type <= FlowFast))
             {
                 const int32 Index = Actor.FindWadSector(Position);
                 if (!Actor.Sectors.IsValidIndex(Index))
@@ -554,11 +557,12 @@ struct FAAWadNativeImport
                     return false;
                 }
                 FAAWadNativeSector& Sector = Actor.Sectors[Index];
-                if (Thing.Type == Water)
+                if (Thing.Type == Water || Thing.Type == Lava)
                 {
-                    Sector.bWater = true;
+                    Sector.bWater = Thing.Type == Water;
+                    Sector.bLava = Thing.Type == Lava;
                     Sector.FloorDepth = WaterDepth;
-                    ++WaterSectors;
+                    WaterSectors += Sector.bWater;
                 }
                 else if (Thing.Type == Depth)
                 {
@@ -730,6 +734,8 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
             || (bRetreatMap && (!InstallRetreatScript(Actor, Map, WadPath, MapName, Output)
                 || !InstallRetreatEncounters(World, Actor, Map, Output)))
+            || ((MapName == TEXT("L34") || MapName == TEXT("L152") || MapName == TEXT("L153"))
+                && !InstallCampaignCreatures(World, Actor, Map, WadPath, Output))
             || (bUndeadMap && !InstallUndeadQuest(World, Actor, Map, WadPath, MapName, Output))
             || (bTempleMap && !InstallTempleMap(World, Actor, Map, WadPath, MapName, Output))
             || (bLateCampaignMap && !InstallLateCampaignMap(World, Actor, Map, WadPath, MapName, Output))
@@ -901,6 +907,17 @@ struct FAAWadNativeImport
             }
             Pickup->ConfigureAuthored(Plane, ItemMaterials.FindChecked(Item->Picture), Type, FWadLevelCheckpoint::AuthoredItemsRevision,
                 Size, Item->Radius, Item->bPassable, Scenery);
+            for (int32 Index = 0; Index < UE_ARRAY_COUNT(NativeWadRules::CrossbowAmmo); ++Index)
+            {
+                const auto& Ammo = NativeWadRules::CrossbowAmmo[Index];
+                if (Ammo.Quiver == Type || Ammo.Bolt == Type)
+                {
+                    const int32 Quantity = Ammo.Bolt == Type ? 1
+                        : Thing.Flags > 0 ? Thing.Flags : NativeWadRules::NormalQuiverBolts;
+                    Pickup->SetAuthoredAmmo(Index, Quantity);
+                    break;
+                }
+            }
             USceneComponent* Surface = Item->bHanging ? Level.Sectors[Sector].Ceiling.Get() : Level.Sectors[Sector].Floor.Get();
             if (!Surface || !Pickup->AttachToComponent(Surface, FAttachmentTransformRules::KeepWorldTransform))
             {
@@ -1036,7 +1053,11 @@ struct FAAWadNativeImport
             const TCHAR* Attacking;
             const TCHAR* Bolt;
             int32 Health, Retreat, Melee, MeleeRange, Radius, Step, Vision, BoltDamage;
+            const TCHAR* OnlyMap = nullptr;
+            int32 HomingType = 0;
         };
+        constexpr int32 Apollo = 1010;
+        constexpr int32 Boulder = 1026;
         constexpr FCreatureSource Creatures[] = {
             {4080, TEXT("Evil Knight"), TEXT("EVILKNT"), TEXT("EKNTW001.CPC"), TEXT("EKNTD001.CPC"),
                 TEXT("EKNTD008.CPC"), TEXT("EKNTA001.CPC"), nullptr, 3000, 300, 400, 30, 15, 10, 180, 0},
@@ -1044,11 +1065,42 @@ struct FAAWadNativeImport
                 TEXT("SKDY1F.CPC"), TEXT("SKAT1A.CPC"), TEXT("MISSIL12/1.CPC"), 3000, 500, 600, 30, 15, 10, 180, 100},
             {1035, TEXT("Bad Knight"), TEXT("BADKNIT"), TEXT("BADBOYA1.CPC"), TEXT("BADBOYJ1.CPC"),
                 TEXT("BADBOYJ4.CPC"), TEXT("BADBOYF1.CPC"), nullptr, 5000, 500, 700, 35, 25, 10, 180, 0},
+            {Apollo, TEXT("Apollo"), TEXT("APOLLO"), TEXT("APCR001.CPC"), TEXT("APCR001.CPC"),
+                TEXT("APCR001.CPC"), TEXT("APA001.CPC"), TEXT("PBALL/PBALL001.CPC"),
+                30000, 500, 150, 30, 50, 10, 315, NativeWadRules::PlasmaDamage, TEXT("L72")},
+            {1011, TEXT("Legionary"), TEXT("ROMAN"), TEXT("RMNWLK01.CPC"), TEXT("ROMNDI01.CPC"),
+                TEXT("ROMNDI04.CPC"), TEXT("RMNATK01.CPC"), nullptr, 6000, 500, 600, 55, 20, 10, 135, 0},
+            {Boulder, TEXT("Boulder"), TEXT("BOULDER"), TEXT("BOLDR001.CPC"), TEXT("BOLDR001.CPC"),
+                TEXT("BOLDR001.CPC"), TEXT("BOLDR001.CPC"), nullptr, 5000, 0, 10000, 0, 60, 30, 0, 0},
+            {1002, TEXT("Blue Wizard"), TEXT("REDWIZ"), TEXT("NWIZW001.CPC"), TEXT("NWIZD001.CPC"),
+                TEXT("NWIZD08.CPC"), TEXT("NWIZA01.CPC"), TEXT("MISSILE5/1.CPC"), 3000, 1000, 0, 35, 20, 12, 315, 500},
+            {1006, TEXT("Evil Orange Wizard"), TEXT("WIZEVL"), TEXT("WIZEVL8.CPC"), TEXT("WIZHRT1.CPC"),
+                TEXT("WIZEVL7G.CPC"), TEXT("WIZEVL1.CPC"), TEXT("HMISS6/1.CPC"),
+                3000, 500, 400, 60, 20, 12, 315, 1000, TEXT("L41"), 4020},
+            {1014, TEXT("Eastern Archer"), TEXT("EVILARCH"), TEXT("EARCAT01.CPC"), TEXT("EARCDI02.CPC"),
+                TEXT("EARCDI04.CPC"), TEXT("EARCAT01.CPC"), TEXT("ARROW4/1.CPC"), 4000, 500, 500, 60, 20, 10, 315, 600},
+            {1015, TEXT("Mighty Hunter"), TEXT("GIANTARC"), TEXT("GODATK01.CPC"), TEXT("GODDIE01.CPC"),
+                TEXT("GODDIE04.CPC"), TEXT("GODATK01.CPC"), TEXT("MISSILE7/1.CPC"), 18000, 500, 0, 0, 30, 10, 315, 1000},
+            {1023, TEXT("Griffon"), TEXT("GRIFFON"), TEXT("GRFLY001.CPC"), TEXT("GRFDI001.CPC"),
+                TEXT("GRFDI008.CPC"), TEXT("GRIFA001.CPC"), nullptr, 5000, 500, 350, 75, 30, 15, 315, 0},
+            {1003, TEXT("Shadow"), TEXT("SHADOW"), TEXT("SHADOW1.CPC"), TEXT("SHAD_FH1.CPC"),
+                TEXT("SHAD_DEA.CPC"), TEXT("SHAD_FA1.CPC"), nullptr, 4000, 500, 150, 55, 32, 20, 315, 0},
+            {1007, TEXT("Gargoyle"), TEXT("BIFF"), TEXT("BIFFWF1.CPC"), TEXT("BIFFHTF.CPC"),
+                TEXT("BIFFDI7.CPC"), TEXT("BIFFATF.CPC"), nullptr, 5000, 100, 400, 65, 32, 10, 315, 0, TEXT("L153")},
+            {1020, TEXT("Lich"), TEXT("LICH"), TEXT("LICHW001.CPC"), TEXT("LICHD001.CPC"),
+                TEXT("LICHD008.CPC"), TEXT("LICHA001.CPC"), TEXT("MISSILE2/1.CPC"), 8000, 0, 400, 60, 20, 10, 315, 300},
+            {1036, TEXT("Elmore"), TEXT("ELMORE"), TEXT("ELWLK01.CPC"), TEXT("ELDIE01.CPC"),
+                TEXT("ELDIE08.CPC"), TEXT("ELATK01.CPC"), nullptr, 7000, 0, 400, 55, 20, 10, 315, 0, TEXT("L152")},
         };
+        const FString MapName = FPaths::GetBaseFilename(WadPath);
         Actor.CreatureGenerators.Reset();
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         for (const FCreatureSource& Creature : Creatures)
         {
+            if (Creature.OnlyMap && !MapName.Equals(Creature.OnlyMap, ESearchCase::IgnoreCase))
+            {
+                continue;
+            }
             const auto HasType = [&Creature](const auto& Entry) { return Entry.Type == Creature.Type; };
             if (!Map.Things.ContainsByPredicate(HasType) && !Source.ContainsByPredicate(HasType))
             {
@@ -1060,7 +1112,8 @@ struct FAAWadNativeImport
             auto* Hurt = SpriteMaterial(Root + TEXT("_Hurt"), Root / Creature.Hurt);
             auto* Downed = SpriteMaterial(Root + TEXT("_Down"), Root / Creature.Downed);
             auto* Attacking = SpriteMaterial(Root + TEXT("_Attack"), Root / Creature.Attacking);
-            auto* Bolt = Creature.Bolt ? SpriteMaterial(TEXT("MagicDart"), Creature.Bolt) : nullptr;
+            const FString BoltName = Creature.Type == 1025 ? TEXT("MagicDart") : Root + TEXT("_Bolt");
+            auto* Bolt = Creature.Bolt ? SpriteMaterial(BoltName, Creature.Bolt) : nullptr;
             if (!Plane || !Standing || !Hurt || !Downed || !Attacking || (Creature.Bolt && !Bolt))
             {
                 return false;
@@ -1082,6 +1135,65 @@ struct FAAWadNativeImport
             Profile.BoltDamage = Creature.BoltDamage;
             Profile.MinBoltRange = Creature.Bolt ? 250.0f : 0.0f;
             Profile.BoltRange = Creature.Bolt ? 1000 : 0;
+            Profile.HomingMissileType = Creature.HomingType;
+            using NativeWadRules::DamageFlag;
+            using NativeWadRules::EProjectileDamage;
+            Profile.ApplySourceRules();
+            if (Creature.Type == 1003)
+            {
+                Profile.RegenPerUpdate = 0;
+                Profile.ResistanceMask = DamageFlag(EProjectileDamage::Poison);
+            }
+            if (Creature.Type == 1007)
+            {
+                Profile.RegenPerUpdate = 5;
+                Profile.bResistsFire = true;
+            }
+            if (Creature.Type == 1020)
+            {
+                Profile.RegenPerUpdate = 3;
+                Profile.BoltElement = uint8(EProjectileDamage::ManaDrain);
+                Profile.ResistanceMask = DamageFlag(EProjectileDamage::ManaDrain) | DamageFlag(EProjectileDamage::Poison);
+            }
+            if (Creature.Type == 1036)
+            {
+                Profile.ArmorClass = 2;
+                Profile.RegenPerUpdate = 2;
+                Profile.ResistanceMask = uint8(0x7f & ~DamageFlag(EProjectileDamage::Electricity));
+            }
+            if (Creature.Type == 1002 || Creature.Type == 1006)
+            {
+                Profile.bKeepsBoltDistance = true;
+                Profile.bResistsFire = Creature.Type == 1006;
+                Profile.RegenPerUpdate = 2;
+            }
+            if (Creature.Type == Apollo)
+            {
+                Profile.bHomingPlasma = true;
+                Profile.bKeepsBoltDistance = true;
+                Profile.bResistsFire = true;
+                Profile.bResistsAcidAndPoison = true;
+                Profile.BoltRange = 2000;
+                Profile.RegenPerUpdate = 0;
+            }
+            if (Creature.Type == 1011)
+            {
+                Profile.UpdateTicks = 4;
+                Profile.RegenPerUpdate = 3;
+                Profile.ArmorClass = 2;
+            }
+            if (Creature.Type == Boulder)
+            {
+                const TArray<FGeneratorSource> Rail = Source.FilterByPredicate(HasType);
+                if (Rail.Num() != 2)
+                {
+                    Output.Log(TEXT("The boulder needs two authored generator positions."));
+                    return false;
+                }
+                Profile.RailStart = FVector2D(Rail[0].X, Rail[0].Y);
+                Profile.RailEnd = FVector2D(Rail[1].X, Rail[1].Y);
+            }
+            int32 Placed = 0;
             const double Offset = Profile.CollisionHalfHeight + 2.0;
             const auto Configure = [&](ANativeWadGuardian& Enemy)
             {
@@ -1106,7 +1218,9 @@ struct FAAWadNativeImport
                     return false;
                 }
                 Configure(*Enemy);
+                ++Placed;
             }
+            Output.Logf(TEXT("Imported %d placed actors for %s (type %d)."), Placed, Creature.Name, Creature.Type);
             for (int32 Id = 0; Id < Source.Num(); ++Id)
             {
                 const FGeneratorSource& Record = Source[Id];
@@ -1116,7 +1230,7 @@ struct FAAWadNativeImport
                 }
                 const FVector2D XY(Record.X, Record.Y);
                 const int32 Sector = Actor.FindWadSector(XY);
-                if (Sector == INDEX_NONE || Record.Interval <= 0 || Record.Random < 0 || Record.Count <= 0
+                if (Sector == INDEX_NONE || Record.Interval <= 0 || Record.Random < 0 || (Record.Count <= 0 && Record.Count != -1)
                     || Record.Count > 40 || Record.MaxActive <= 0 || Record.MaxLike <= 0)
                 {
                     return false;
@@ -1126,11 +1240,15 @@ struct FAAWadNativeImport
                 Generator.Interval = Record.Interval;
                 Generator.RandomInterval = Record.Random;
                 Generator.SourceType = Creature.Type;
+                Generator.bInfinite = Record.Count == -1;
+                Generator.SpawnXY = XY;
                 Generator.MaxActive = FMath::Min(Record.MaxActive, Record.MaxLike);
                 Generator.bStartsActive = Record.Active != 0;
                 const FVector Position(XY, Actor.GetWalkingHeight(Sector) + Offset);
                 const FRotator Rotation(0, Record.Angle * (360.0 / 65536.0), 0);
-                for (int32 Index = 0; Index < Record.Count; ++Index)
+                // Unlimited generators reuse inactive or defeated actors. Live actors are never overwritten.
+                const int32 PoolSize = Generator.bInfinite ? FMath::Max(40, Generator.MaxActive + 1) : Record.Count;
+                for (int32 Index = 0; Index < PoolSize; ++Index)
                 {
                     const FString Label = FString::Printf(TEXT("WAD Generator %d Creature %d"), Id, Index);
                     auto* Enemy = ImportTaggedActor<ANativeWadGuardian>(World, Position, Rotation, *Label);
@@ -1143,11 +1261,49 @@ struct FAAWadNativeImport
                     Enemy->SetSpawned(false);
                     Generator.Creatures.Add(Enemy);
                 }
-                Output.Logf(TEXT("Imported generator %d with %d %s releases."), Id, Record.Count, Creature.Name);
+                Output.Logf(TEXT("Imported generator %d with %d %s releases (unlimited=%d, pool=%d)."),
+                    Id, Record.Count, Creature.Name, Generator.bInfinite, PoolSize);
             }
         }
         for (int32 Id = 0; Id < Source.Num(); ++Id)
         {
+            const FGeneratorSource& Record = Source[Id];
+            if (MapName.Equals(TEXT("L75"), ESearchCase::IgnoreCase) && Record.Type == NativeWadRules::FlyingPotion)
+            {
+                const FVector2D XY(Record.X, Record.Y);
+                const int32 Sector = Actor.FindWadSector(XY);
+                FIntPoint Size;
+                UMaterialInterface* Material = SpriteMaterial(TEXT("GeneratedFlyingPotion"), TEXT("POTION05/POTION05.CPC"), &Size);
+                if (!Plane || !Material || !Actor.Sectors.IsValidIndex(Sector) || !Actor.Sectors[Sector].Floor
+                    || Record.Count <= 0 || Record.Count > 40 || Record.Interval <= 0)
+                {
+                    Output.Logf(TEXT("Could not configure the flying potion generator %d."), Id);
+                    return false;
+                }
+                FWadCreatureGenerator& Generator = Actor.CreatureGenerators.FindOrAdd(Id);
+                Generator.Sector = Sector;
+                Generator.Interval = Record.Interval;
+                Generator.RandomInterval = Record.Random;
+                Generator.SourceType = Record.Type;
+                Generator.MaxActive = FMath::Min(Record.MaxActive, Record.MaxLike);
+                Generator.bStartsActive = Record.Active != 0;
+                for (int32 Index = 0; Index < Record.Count; ++Index)
+                {
+                    const FVector Position = Actor.GetActorLocation() + FVector(XY, Actor.GetWalkingHeight(Sector) + Size.Y * 0.5);
+                    const FString Label = FString::Printf(TEXT("WAD Generator %d Pickup %d"), Id, Index);
+                    auto* Pickup = ImportTaggedActor<ANativeWadPickup>(World, Position, FRotator::ZeroRotator, *Label);
+                    if (!Pickup)
+                    {
+                        return false;
+                    }
+                    Pickup->ConfigureAuthored(Plane, Material, Record.Type, FWadLevelCheckpoint::AuthoredItemsRevision,
+                        Size, 0, true, nullptr);
+                    Pickup->AttachToComponent(Actor.Sectors[Sector].Floor, FAttachmentTransformRules::KeepWorldTransform);
+                    Pickup->SetAvailable(false);
+                    Generator.Pickups.Add(Pickup);
+                }
+                Output.Logf(TEXT("Imported generator %d with %d flying potion releases."), Id, Record.Count);
+            }
             if (!Actor.CreatureGenerators.Contains(Id))
             {
                 Output.Logf(TEXT("Deferred original generator %d (thing type %d)."), Id, Source[Id].Type);
@@ -1205,11 +1361,27 @@ struct FAAWadNativeImport
         const FVector2D XY(Thing.X, Thing.Y);
         const int32 Sector = Actor.FindWadSector(XY);
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+        TArray<uint8> ColorTable;
+        if (bElymas)
+        {
+            const FString ColorPath = FPaths::ProjectDir() /
+                TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/COLORIZE");
+            const FString File = FString::Printf(TEXT("COLORT%02d"), CreatureType >> 12);
+            if (!FFileHelper::LoadFileToArray(ColorTable, *(ColorPath / File)) || ColorTable.Num() != 256)
+            {
+                Output.Logf(TEXT("Could not load Elymas's palette table %s."), *File);
+                return false;
+            }
+        }
         FIntPoint Size;
-        UMaterial* Standing = SpriteMaterial(TEXT("WIZORNG"), TEXT("WIZORNG/OWWALK01.CPC"), &Size);
-        UMaterial* Hurt = SpriteMaterial(TEXT("WIZORNG_Hurt"), TEXT("WIZORNG/OWDIE01.CPC"));
-        UMaterial* Downed = SpriteMaterial(TEXT("WIZORNG_Down"), TEXT("WIZORNG/OWDIE08.CPC"));
-        UMaterial* Attacking = SpriteMaterial(TEXT("WIZORNG_Attack"), TEXT("WIZORNG/OWA01.CPC"));
+        UMaterial* Standing = bElymas ? SpriteMaterial(TEXT("Elymas"), TEXT("WIZEVL/WIZEVL8.CPC"), &Size, ColorTable)
+            : SpriteMaterial(TEXT("WIZORNG"), TEXT("WIZORNG/OWWALK01.CPC"), &Size);
+        UMaterial* Hurt = bElymas ? SpriteMaterial(TEXT("Elymas_Hurt"), TEXT("WIZEVL/WIZHRT1.CPC"), nullptr, ColorTable)
+            : SpriteMaterial(TEXT("WIZORNG_Hurt"), TEXT("WIZORNG/OWDIE01.CPC"));
+        UMaterial* Downed = bElymas ? SpriteMaterial(TEXT("Elymas_Down"), TEXT("WIZEVL/WIZEVL7G.CPC"), nullptr, ColorTable)
+            : SpriteMaterial(TEXT("WIZORNG_Down"), TEXT("WIZORNG/OWDIE08.CPC"));
+        UMaterial* Attacking = bElymas ? SpriteMaterial(TEXT("Elymas_Attack"), TEXT("WIZEVL/WIZEVL1.CPC"), nullptr, ColorTable)
+            : SpriteMaterial(TEXT("WIZORNG_Attack"), TEXT("WIZORNG/OWA01.CPC"));
         UMaterial* DropImage = bElymas ? SpriteMaterial(TEXT("ElymasNotes"), TEXT("SCRL8/SCRL8.CPC"))
             : SpriteMaterial(TEXT("OrbOfTheUndead"), TEXT("ORB6/ORB6.CPC"));
         UMaterial* Bolt = bElymas ? SpriteMaterial(TEXT("HomingFireball"), TEXT("HMISS6/1.CPC")) : nullptr;
@@ -1226,6 +1398,8 @@ struct FAAWadNativeImport
         Profile.MeleeDelayUpdates = 10;
         Profile.MeleeRange = 60.0f;
         Profile.BoltDamage = bElymas ? 1000 : 0;
+        Profile.HomingMissileType = bElymas ? 4020 : 0;
+        Profile.bResistsFire = bElymas;
         Profile.BoltRange = bElymas ? 5000 : 0;
         Profile.RangedDelayUpdates = bElymas ? 10 : 50;
         Profile.RegenPerUpdate = 0;
@@ -1247,6 +1421,43 @@ struct FAAWadNativeImport
         Drop->Configure(Plane, DropImage, DropType);
         Wizard->Configure(Plane, Standing, Downed, Attacking, Hurt, Bolt, Profile);
         Wizard->SetDefeatPickup(Drop);
+        if (!bElymas)
+        {
+            ANativeWadGuardian* Skeleton = nullptr;
+            for (TActorIterator<ANativeWadGuardian> Enemy(&World); Enemy; ++Enemy)
+            {
+                if (Enemy->GetSourceType() == 1025 && !Enemy->IsHidden())
+                {
+                    Skeleton = *Enemy;
+                    break;
+                }
+            }
+            if (!Skeleton)
+            {
+                Output.Log(TEXT("Exiguus needs an imported Electric Skeleton to summon."));
+                return false;
+            }
+            constexpr int32 ExiguusSummonGenerator = 1000;
+            FWadCreatureGenerator& Generator = Actor.CreatureGenerators.FindOrAdd(ExiguusSummonGenerator);
+            Generator.Summoner = Wizard;
+            Generator.Sector = Sector;
+            Generator.Interval = 5.0f;
+            Generator.MaxActive = 50;
+            Generator.SourceType = 1025;
+            Generator.bStartsActive = true;
+            for (int32 Index = 0; Index < Generator.MaxActive; ++Index)
+            {
+                const FString Label = FString::Printf(TEXT("WAD Exiguus Summon %d"), Index);
+                auto* Minion = ImportTaggedActor<ANativeWadGuardian>(World, Wizard->GetActorLocation(), Wizard->GetActorRotation(), *Label);
+                if (!Minion)
+                {
+                    return false;
+                }
+                Minion->ConfigureFrom(*Skeleton);
+                Minion->SetSpawned(false);
+                Generator.Creatures.Add(Minion);
+            }
+        }
         Output.Logf(TEXT("Imported %s from Thing %d in sector %d with quest drop %d."), Name, Id, Sector, DropType);
         return true;
     }
@@ -1314,7 +1525,9 @@ struct FAAWadNativeImport
                 }
                 else if (Command.Operation == EWadScriptOperation::LaunchMissile && !Actor.ScriptMissileMaterials.Contains(Command.Target))
                 {
-                    const TCHAR* Resource = Command.Target == NativeWadRules::AcidBall ? TEXT("MISSILE5/1.CPC")
+                    const auto* Homing = NativeWadRules::FindHomingMissile(Command.Target);
+                    const TCHAR* Resource = Homing ? Homing->Art
+                        : Command.Target == NativeWadRules::AcidBall ? TEXT("MISSILE5/1.CPC")
                         : Command.Target == 4005 ? TEXT("MISSILE6/1.CPC") : Command.Target == 4006 ? TEXT("MISSILE7/1.CPC")
                         : Command.Target == 4012 ? TEXT("MISSIL13/1.CPC") : Command.Target == 4015 ? TEXT("MISSIL16/1.CPC")
                         : Command.Target == 4016 ? TEXT("EARTHBND/1.CPC")
@@ -2109,11 +2322,12 @@ struct FAAWadNativeImport
         AssetsToSave.AddUnique(&Asset);
     }
 
-    UMaterial* SpriteMaterial(const FString& Name, const FString& PicturePath, FIntPoint* OutSize = nullptr)
+    UMaterial* SpriteMaterial(const FString& Name, const FString& PicturePath, FIntPoint* OutSize = nullptr,
+        TConstArrayView<uint8> ColorTable = {})
     {
         FIntPoint Size;
         TArray<FColor> Pixels;
-        if (!LoadWadSprite(PicturePath, Size, Pixels))
+        if (!LoadWadSprite(PicturePath, Size, Pixels, ColorTable))
         {
             return nullptr;
         }
@@ -2934,8 +3148,38 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     {
         return false;
     }
+    if (!ReadWadStartingEquipment(Catalog->StartingEquipment, Output))
+    {
+        Output.Log(TEXT("Could not import all eleven original starting inventories."));
+        return false;
+    }
     TSet<int32> Types;
+    Types.Add(NativeWadRules::StartingWaterGourd);
+    Types.Add(234); // Original electric mace, also used by the ready/unready review.
+    for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
+    {
+        Types.Add(Type); // Source protection scrolls and amulets are not all sold in Town.
+    }
+    for (const int32 Type : {900, 901, 902, 903, 904, 905, 906, 907, 908, 912, 913, 915, 916, 918})
+    {
+        Types.Add(Type); // Include source projectile wands absent from ordinary shop stock.
+    }
+    for (const int32 Type : NativeWadRules::StartingFoods)
+    {
+        Types.Add(Type);
+    }
+    for (const FWadStartingEquipment& Entry : Catalog->StartingEquipment)
+    {
+        for (const int32 Type : Entry.Items)
+        {
+            Types.Add(Type);
+        }
+    }
     for (const auto& [Type, Icon] : Catalog->Items)
+    {
+        Types.Add(Type);
+    }
+    for (int32 Type = 100; Type <= 107; ++Type)
     {
         Types.Add(Type);
     }
@@ -2961,6 +3205,45 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     int32 Armor = 0;
     FAAWadNativeImport Import;
     Import.AssetRoot = TEXT("/Game/WadInterface/Inventory");
+    auto LoadOrImportProjectile = [&Import](const FString& Name, const TCHAR* Art)
+    {
+        const FString Package = Import.AssetRoot / TEXT("Things/M_") + Name;
+        const FString Object = Package + TEXT(".M_") + Name;
+        return FPackageName::DoesPackageExist(Package)
+            ? LoadObject<UMaterialInterface>(nullptr, *Object) : Import.SpriteMaterial(Name, Art);
+    };
+    Catalog->PlasmaProjectile = LoadOrImportProjectile(TEXT("PlasmaProjectile"), TEXT("PBALL/PBALL001.CPC"));
+    if (!Catalog->PlasmaProjectile)
+    {
+        Output.Log(TEXT("Could not load the wand's plasma projectile art."));
+        return false;
+    }
+    for (const NativeWadRules::FWadAmmo& Ammo : NativeWadRules::CrossbowAmmo)
+    {
+        const FString Name = FString::Printf(TEXT("Ammo%d"), Ammo.Missile);
+        UMaterialInterface* Material = LoadOrImportProjectile(Name, Ammo.Art);
+        if (!Material)
+        {
+            Output.Logf(TEXT("Could not import crossbow missile %d."), Ammo.Missile);
+            return false;
+        }
+        Catalog->AmmoProjectiles.Add(Ammo.Missile, Material);
+    }
+    for (const NativeWadRules::FWadWandProjectile& Projectile : NativeWadRules::WandProjectiles)
+    {
+        if (Projectile.Type == 4017)
+        {
+            continue;
+        }
+        const FString Name = FString::Printf(TEXT("Wand%d"), Projectile.Type);
+        UMaterialInterface* Material = LoadOrImportProjectile(Name, Projectile.Art);
+        if (!Material)
+        {
+            Output.Logf(TEXT("Could not import wand missile %d."), Projectile.Type);
+            return false;
+        }
+        Catalog->WandProjectileMaterials.Add(Projectile.Type, Material);
+    }
     for (const auto& [Type, Item] : Items)
     {
         if (!Catalog->Items.Contains(Type))
@@ -2988,6 +3271,12 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
         FWadInventoryDetails& Details = Catalog->ItemDetails.Add(Type, Item.Details);
         const FString MaterialPackage = Item.WorldMaterialPackage();
         const FString MaterialPath = MaterialPackage + TEXT(".") + FPackageName::GetShortName(MaterialPackage);
+        if (NativeWadRules::CoinValueCopper(Type) > 0 && !FindObject<UMaterialInterface>(nullptr, *MaterialPath)
+            && !FPackageName::DoesPackageExist(MaterialPackage) && !Import.SpriteMaterial(Item.AssetName(), Item.Picture))
+        {
+            Output.Logf(TEXT("Could not import the world art for coin %d."), Type);
+            return false;
+        }
         if (FindObject<UMaterialInterface>(nullptr, *MaterialPath) || FPackageName::DoesPackageExist(MaterialPackage))
         {
             Details.WorldMaterial = TSoftObjectPtr<UMaterialInterface>(FSoftObjectPath(MaterialPath));
@@ -3010,6 +3299,32 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
         }
     }
     Catalog->MarkPackageDirty();
+    const FString SourceMaps = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe");
+    TArray<FString> MapInfoFiles;
+    IFileManager::Get().FindFiles(MapInfoFiles, *(SourceMaps / TEXT("L*.I")), true, false);
+    Catalog->MusicByMap.Reset();
+    for (const FString& File : MapInfoFiles)
+    {
+        FString Contents;
+        if (!FFileHelper::LoadFileToString(Contents, *(SourceMaps / File)))
+        {
+            continue;
+        }
+        TArray<FString> Fields;
+        Contents.ParseIntoArrayWS(Fields);
+        if (Fields.IsEmpty())
+        {
+            continue;
+        }
+        const FString Track = FPaths::GetBaseFilename(Fields[0]).ToUpper();
+        const FString Package = TEXT("/Game/WadInterface/Music/") + Track;
+        if (FPackageName::DoesPackageExist(Package))
+        {
+            Catalog->MusicByMap.Add(FName(*FPaths::GetBaseFilename(File)),
+                TSoftObjectPtr<USoundWave>(FSoftObjectPath(Package + TEXT(".") + Track)));
+        }
+    }
+    Output.Logf(TEXT("Identified authored music for %d levels."), Catalog->MusicByMap.Num());
     if (!SaveAsset(*Catalog, *FPackageName::GetAssetPackageExtension()))
     {
         return false;
@@ -3238,6 +3553,7 @@ namespace
             TEXT("UI/PROMPT/PMPTBULL"), TEXT("UI/PROMPT/BULLSB"), TEXT("UI/PROMPT/DLGBACK"), TEXT("UI/PROMPT/DLGSB"),
             TEXT("UI/PROMPT/BULLUP"), TEXT("UI/PROMPT/BULLDN"), TEXT("UI/PROMPT/OK"), TEXT("UI/PROMPT/ACCEPT"), TEXT("UI/PROMPT/CANCEL"),
             TEXT("UI/STORE/STORBACK"), TEXT("UI/BANK/BANKBACK"), TEXT("UI/COMMON/LTARROW"), TEXT("UI/COMMON/RTARROW"),
+            TEXT("UI/INN/INNBACK"), TEXT("UI/INN/ROOMBTN1"), TEXT("UI/INN/ROOMBTN2"), TEXT("UI/INN/ROOMBTN3"), TEXT("UI/INN/ROOMBTN4"),
             TEXT("UI/COMMON/CLOSEWIN"), TEXT("UI/3DUI/CLOSEDBA"), TEXT("UI/3DUI/EQPBAR"),
             TEXT("UI/3DUI/2EQBUTN"), TEXT("UI/3DUI/2INVBUTN"),
         };
@@ -3300,19 +3616,33 @@ bool SaveNativeWadHud(FOutputDevice& Output)
     const FString Fonts = FPaths::ProjectDir() /
         TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/FONTS");
     if (!Data || !LoadWadInterfacePalette(Data->Palette)
-        || !ImportInterfaceFont(Import, Folder, Fonts, TEXT("TINY"), Data->Tiny))
+        || !ImportInterfaceFont(Import, Folder, Fonts, TEXT("TINY"), Data->Tiny)
+        || !ImportInterfaceFont(Import, Folder, Fonts, TEXT("MEDIUM"), Data->Medium))
     {
         return false;
     }
     TArray<FString> Pictures = {
-        TEXT("UI/3DUI/MAINBACK"), TEXT("UI/3DUI/INVBAR3"), TEXT("UI/3DUI/STABAR"), TEXT("UI/3DUI/SMPORT04"),
-        TEXT("UI/3DUI/RUNBUT12"), TEXT("UI/3DUI/RUNBUT13"), TEXT("UI/3DUI/RUDBUT12"), TEXT("UI/3DUI/RUDBUT13"),
+        TEXT("UI/3DUI/MAINBACK"), TEXT("UI/3DUI/INVBAR3"), TEXT("UI/3DUI/STABAR"),
+        TEXT("UI/3DUI/EQPBAR"), TEXT("UI/3DUI/2EQBUTN"), TEXT("UI/3DUI/2INVBUTN"),
         TEXT("UI/3DUI/JNLBAR"), TEXT("UI/3DUI/RWND"), TEXT("UI/3DUI/FFWD"),
+        TEXT("UI/3DUI/AMMBAR"), TEXT("UI/3DUI/AMMSELUP"), TEXT("UI/3DUI/AMMSELDN"), TEXT("UI/3DUI/AMMGET"),
+        TEXT("UI/3DUI/MONBAR2"), TEXT("UI/3DUI/PGET1"), TEXT("UI/3DUI/PGET5"),
+        TEXT("UI/3DUI/GGET1"), TEXT("UI/3DUI/GGET5"), TEXT("UI/3DUI/SGET1"),
+        TEXT("UI/3DUI/SGET5"), TEXT("UI/3DUI/CGET1"), TEXT("UI/3DUI/CGET5"),
         TEXT("UI/COMMON/LTARROW"), TEXT("UI/COMMON/RTARROW"), TEXT("UI/COMMON/CLOSEWIN")
     };
     for (int32 Frame = 0; Frame < 8; ++Frame)
     {
         Pictures.Add(FString::Printf(TEXT("UI/3DUI/POTION%d"), Frame));
+    }
+    for (int32 Class = 0; Class < UE_ARRAY_COUNT(NativeWadRules::CharacterClasses); ++Class)
+    {
+        Pictures.Add(FString::Printf(TEXT("UI/3DUI/SMPORT%02d"), Class));
+    }
+    for (int32 Picture = 0; Picture < 18; ++Picture)
+    {
+        Pictures.Add(FString::Printf(TEXT("UI/3DUI/RUNBUT%02d"), Picture));
+        Pictures.Add(FString::Printf(TEXT("UI/3DUI/RUDBUT%02d"), Picture));
     }
     Data->Pictures.Reset();
     FIntPoint Size;
@@ -3325,19 +3655,30 @@ bool SaveNativeWadHud(FOutputDevice& Output)
             return false;
         }
         const FString Name = FPaths::GetCleanFilename(Picture);
-        if (Name == TEXT("STABAR"))
+        if (Name == TEXT("STABAR") || Name == TEXT("EQPBAR") || Name == TEXT("MONBAR2"))
         {
             if (Size != FIntPoint(111, 152))
             {
-                Output.Log(TEXT("The classic statistics art has unexpected dimensions."));
+                Output.Logf(TEXT("The classic HUD art %s has unexpected dimensions."), *Name);
                 return false;
             }
-            // BAN00003.FRM replaces the demonstration text inside these fields.
-            const struct { int32 X; int32 Y; int32 Width; } Fields[] = {
+            // The original forms replace the values printed on their artwork.
+            struct FField { int32 X; int32 Y; int32 Width; };
+            constexpr FField StatisticsFields[] = {
                 {5, 16, 99}, {90, 26, 14}, {90, 36, 14}, {90, 46, 14}, {90, 56, 14},
                 {90, 66, 14}, {90, 76, 14}, {90, 86, 14}, {31, 102, 73}, {31, 112, 73},
                 {54, 128, 50}, {54, 138, 50}
             };
+            constexpr FField EquipmentFields[] = {
+                {32, 99, 17}, {32, 108, 17}, {32, 117, 17}, {32, 126, 17},
+                {85, 99, 17}, {85, 108, 17}, {85, 117, 17}, {85, 126, 17},
+            };
+            constexpr FField FinanceFields[] = {
+                {75, 31, 28}, {75, 43, 28}, {75, 55, 28}, {75, 67, 28},
+                {51, 100, 52}, {51, 112, 52}, {51, 124, 52}, {51, 136, 52},
+            };
+            const TConstArrayView<FField> Fields = Name == TEXT("STABAR")
+                ? MakeArrayView(StatisticsFields) : Name == TEXT("EQPBAR") ? MakeArrayView(EquipmentFields) : MakeArrayView(FinanceFields);
             for (const auto& Field : Fields)
             {
                 for (int32 Row = Field.Y + 1; Row < Field.Y + 7; ++Row)

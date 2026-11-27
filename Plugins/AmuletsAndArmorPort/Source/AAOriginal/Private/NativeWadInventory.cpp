@@ -3,10 +3,12 @@
 #include "Algo/Find.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInterface.h"
+#include "NativeWadCheckpoint.h"
 #include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
 #include "NativeWadLevel.h"
@@ -87,6 +89,19 @@ const FWadInventoryDetails* ANativeWadPlayer::GetItemRules(int32 Type) const
     return Catalog ? Catalog->ItemDetails.Find(Type) : nullptr;
 }
 
+bool ANativeWadPlayer::CanUseWadItem(int32 Type) const
+{
+    const FWadInventoryDetails* Rules = GetItemRules(Type);
+    return !Rules || (Rules->UsableClasses & ClassFlag(CharacterClass)) != 0;
+}
+
+int32 ANativeWadPlayer::GetStatusPower(EItemStatus Status) const
+{
+    const FWadInventoryDetails* Ready = GetItemRules(GetReadyItem());
+    const int32 Passive = Ready && CanUseWadItem(GetReadyItem()) && Ready->Status == Status && Ready->StatusTicks == 0 ? Ready->StatusPower : 0;
+    return Passive + (ItemStatusSeconds[Status] > 0.0 ? ItemStatusPower[Status] : 0);
+}
+
 bool ANativeWadPlayer::ConsumeItem(int32 Type)
 {
     return RemoveInventorySlot(CarriedItems.Find(Type));
@@ -127,12 +142,48 @@ int32 ANativeWadPlayer::GetEquippedWeapon() const
 {
     const int32 Type = GetReadyItem();
     const FWadInventoryDetails* Details = GetItemRules(Type);
-    return Type == IronDagger || Type == Crossbow || (Details && Details->WeaponDamage > 0 && Details->HitFrame > 0) ? Type : 0;
+    return CanUseWadItem(Type) && (Type == IronDagger || Type == Crossbow
+        || (Details && Details->WeaponDamage > 0 && Details->HitFrame > 0)) ? Type : 0;
 }
 
 bool ANativeWadPlayer::IsWornInventorySlot(int32 Slot) const
 {
     return Slot >= 0 && Algo::Find(WornSlots, Slot) != nullptr;
+}
+
+uint8 ANativeWadPlayer::GetMeleeDamageMask() const
+{
+    uint8 Mask = NormalDamage;
+    constexpr EItemStatus Statuses[] = {PoisonAttackStatus, PiercingAttackStatus, FireAttackStatus,
+        ElectricityAttackStatus, ManaDrainAttackStatus, AcidAttackStatus};
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(Statuses); ++Index)
+    {
+        if (GetStatusPower(Statuses[Index]) > 0)
+        {
+            Mask |= DamageFlag(EProjectileDamage(Index + 1));
+        }
+    }
+    return Mask;
+}
+
+int32 ANativeWadPlayer::GetArmorClass(int32 Location) const
+{
+    if (Location < 0 || Location >= EquipmentSlotCount) { return 0; }
+    const int32 Slot = WornSlots[Location];
+    const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Slot) ? GetItemRules(CarriedItems[Slot]) : nullptr;
+    return Rules && CanUseWadItem(CarriedItems[Slot]) ? Rules->ArmorClass : 0;
+}
+
+uint8 ANativeWadPlayer::GetResistanceMask() const
+{
+    uint8 Mask = 0;
+    constexpr EItemStatus Statuses[] = {PoisonResistStatus, PiercingResistStatus, FireResistStatus,
+        ElectricityResistStatus, ManaDrainResistStatus, AcidResistStatus};
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(Statuses); ++Index)
+    {
+        if (GetStatusPower(Statuses[Index]) > 0) { Mask |= DamageFlag(EProjectileDamage(Index + 1)); }
+    }
+    return Mask;
 }
 
 int32 ANativeWadPlayer::GetArmorRating() const
@@ -141,9 +192,9 @@ int32 ANativeWadPlayer::GetArmorRating() const
     {
         const int32 Slot = WornSlots[Location];
         const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Slot) ? GetItemRules(CarriedItems[Slot]) : nullptr;
-        return Rules ? Rules->ArmorValue : 0;
+        return Rules && CanUseWadItem(CarriedItems[Slot]) ? Rules->ArmorValue : 0;
     };
-    int32 Shield = Rating(ShieldSlot);
+    int32 Shield = FMath::Max(Rating(ShieldSlot), GetStatusPower(SpellShieldStatus));
     for (int32 Index = 0; Index < UE_ARRAY_COUNT(ShieldSeconds); ++Index)
     {
         if (ShieldSeconds[Index] > 0.0)
@@ -168,6 +219,11 @@ void ANativeWadPlayer::EquipArmor(int32 Slot, const FWadInventoryDetails& Detail
             return;
         }
     }
+    if (!CanUseWadItem(CarriedItems[Slot]))
+    {
+        ShowInteractionMessage(TEXT("Your class can't equip this item."));
+        return;
+    }
     if (Location == LeftArmSlot && WornSlots[LeftArmSlot] != INDEX_NONE && WornSlots[RightArmSlot] == INDEX_NONE)
     {
         Location = RightArmSlot;
@@ -182,6 +238,8 @@ void ANativeWadPlayer::EquipArmor(int32 Slot, const FWadInventoryDetails& Detail
 
 void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
 {
+    if (CarriedItems.IsValidIndex(Slot) && IsRuneItem(CarriedItems[Slot])) { return; }
+
     if (!bInventoryOpen)
     {
         return;
@@ -191,6 +249,11 @@ void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
         const int32 Selected = SelectedInventorySlot;
         SelectedInventorySlot = INDEX_NONE;
         const FWadInventoryDetails* Rules = CarriedItems.IsValidIndex(Selected) ? GetItemRules(CarriedItems[Selected]) : nullptr;
+        if (CarriedItems.IsValidIndex(Selected) && !CanUseWadItem(CarriedItems[Selected]))
+        {
+            ShowInteractionMessage(TEXT("Your class can't use this item."));
+            return;
+        }
         if (Rules && Rules->ArmorSlot >= 0 && Rules->ArmorSlot < EquipmentSlotCount)
         {
             EquipArmor(Selected, *Rules);
@@ -212,9 +275,27 @@ void ANativeWadPlayer::UseReadyHand()
         return;
     }
     const int32 Type = GetReadyItem();
+    if (!CanUseWadItem(Type))
+    {
+        ShowInteractionMessage(TEXT("Your class can't use this item."));
+        return;
+    }
     if (Type == Crossbow)
     {
         FireCrossbow();
+        return;
+    }
+    if (const FWadInventoryDetails* Rules = GetItemRules(Type); Rules && Rules->WandManaCost > 0)
+    {
+        if (const FWadWandProjectile* Projectile = FindWandProjectile(Rules->WandProjectile))
+        {
+            FireWand(*Projectile, Rules->WandManaCost);
+            return;
+        }
+    }
+    if (Type == WandOfDisintegration)
+    {
+        FireWand(*FindWandProjectile(28), DisintegrationManaCost);
         return;
     }
     if (Type == 0 || GetEquippedWeapon() != 0)
@@ -279,11 +360,24 @@ void ANativeWadPlayer::FireCrossbow()
     {
         return;
     }
-    const int32 AmmoSlot = CarriedItems.Find(NormalAmmoBolt);
-    const int32 QuiverSlot = AmmoSlot == INDEX_NONE ? CarriedItems.Find(NormalQuiver) : INDEX_NONE;
-    if (AmmoSlot == INDEX_NONE && QuiverSlot == INDEX_NONE)
+    if (GetAmmoCount(SelectedAmmo) == 0)
     {
-        ShowInteractionMessage(TEXT("No normal bolts."));
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(CrossbowAmmo); ++Index)
+        {
+            if (GetAmmoCount(Index) > 0)
+            {
+                SelectedAmmo = Index;
+                break;
+            }
+        }
+    }
+    const FWadAmmo& Ammo = CrossbowAmmo[SelectedAmmo];
+    const bool bFromReserve = AmmoReserve[SelectedAmmo] > 0;
+    const int32 AmmoSlot = CarriedItems.Find(Ammo.Bolt);
+    const int32 QuiverSlot = AmmoSlot == INDEX_NONE ? CarriedItems.Find(Ammo.Quiver) : INDEX_NONE;
+    if (!bFromReserve && AmmoSlot == INDEX_NONE && QuiverSlot == INDEX_NONE)
+    {
+        ShowInteractionMessage(TEXT("No bolts."));
         return;
     }
 
@@ -297,12 +391,16 @@ void ANativeWadPlayer::FireCrossbow()
     {
         return;
     }
-    if (QuiverSlot != INDEX_NONE)
+    if (bFromReserve)
+    {
+        --AmmoReserve[SelectedAmmo];
+    }
+    else if (QuiverSlot != INDEX_NONE)
     {
         RemoveInventorySlot(QuiverSlot);
         for (int32 Index = 1; Index < NormalQuiverBolts; ++Index)
         {
-            CarriedItems.Add(NormalAmmoBolt);
+            CarriedItems.Add(Ammo.Bolt);
         }
     }
     else
@@ -310,13 +408,146 @@ void ANativeWadPlayer::FireCrossbow()
         RemoveInventorySlot(AmmoSlot);
     }
     UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-    UMaterialInterface* Image = LoadObject<UMaterialInterface>(nullptr,
-        TEXT("/Game/Maps/L30_Assets/Things/M_GuardianBolt.M_GuardianBolt"));
-    Bolt->Launch(Plane, Image, Direction * (30.0 * TicksPerSecond), CrossbowDamage);
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    UMaterialInterface* Image = Catalog ? Catalog->AmmoProjectiles.FindRef(Ammo.Missile).Get() : nullptr;
+    if (!Image)
+    {
+        Image = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Maps/L30_Assets/Things/M_GuardianBolt.M_GuardianBolt"));
+    }
+    Bolt->Launch(Plane, Image, Direction * (30.0 * TicksPerSecond), Ammo.Damage);
+    Bolt->SetDamageType(Ammo.Effect);
     const int32 FrameSpeed = 40000 + FMath::Clamp(Attributes[SpeedAttribute], 0, 100) * 1100;
     NextMeleeTime = Now + FMath::DivideAndRoundUp(CrossbowFrames * 65536, FrameSpeed) / TicksPerSecond;
     ShowInteractionMessage(TEXT("Fired a crossbow bolt."));
-    UE_LOG(LogTemp, Display, TEXT("Fired WAD crossbow. Loose normal bolts remaining: %d."), GetItemCount(NormalAmmoBolt));
+    UE_LOG(LogTemp, Display, TEXT("Fired WAD crossbow missile %d. %s bolts remaining: %d."),
+        Ammo.Missile, Ammo.Name, GetAmmoCount(SelectedAmmo));
+}
+
+int32 ANativeWadPlayer::GetAmmoCount(int32 Index) const
+{
+    if (Index < 0 || Index >= UE_ARRAY_COUNT(CrossbowAmmo))
+    {
+        return 0;
+    }
+    const FWadAmmo& Ammo = CrossbowAmmo[Index];
+    return AmmoReserve[Index] + GetItemCount(Ammo.Bolt) + NormalQuiverBolts * GetItemCount(Ammo.Quiver);
+}
+
+void ANativeWadPlayer::SelectAmmo(int32 Index)
+{
+    if (Index >= 0 && Index < UE_ARRAY_COUNT(CrossbowAmmo) && GetAmmoCount(Index) > 0)
+    {
+        SelectedAmmo = Index;
+    }
+}
+
+bool ANativeWadPlayer::CollectAmmo(int32 Index, int32 Quantity)
+{
+    if (Index < 0 || Index >= UE_ARRAY_COUNT(AmmoReserve) || Quantity <= 0 || Quantity > MAX_uint16 - AmmoReserve[Index])
+    {
+        return false;
+    }
+    AmmoReserve[Index] += Quantity;
+    ShowInteractionMessage(FString::Printf(TEXT("Picked up %d %s bolts."), Quantity, CrossbowAmmo[Index].Name));
+    return true;
+}
+
+void ANativeWadPlayer::RetrieveAmmo(int32 Index)
+{
+    if (Health <= 0 || Index < 0 || Index >= UE_ARRAY_COUNT(AmmoReserve) || AmmoReserve[Index] <= 0)
+    {
+        return;
+    }
+    const bool bQuiver = AmmoReserve[Index] >= NormalQuiverBolts;
+    if (CollectItem(bQuiver ? CrossbowAmmo[Index].Quiver : CrossbowAmmo[Index].Bolt))
+    {
+        AmmoReserve[Index] -= bQuiver ? NormalQuiverBolts : 1;
+    }
+}
+
+void ANativeWadPlayer::RetrieveCoin(int32 Type)
+{
+    auto* Travel = GetGameInstance()->GetSubsystem<UNativeWadTravelState>();
+    if (Health <= 0 || CarriedItems.IsValidIndex(SelectedInventorySlot) || !Travel || CoinValueCopper(Type) == 0)
+    {
+        return;
+    }
+    const int64 Wallet = Travel->Quest.GetWalletCopper();
+    const int32 Count = Type % 2 == 0 ? 1 : 5;
+    if (CoinDenominationCount(Wallet, Type & ~1) >= Count)
+    {
+        Travel->Quest.SetWalletCopper(Wallet - CoinValueCopper(Type));
+        SelectedInventorySlot = CarriedItems.Add(Type);
+    }
+}
+
+void ANativeWadPlayer::ReturnSelectedCoin()
+{
+    if (CarriedItems.IsValidIndex(SelectedInventorySlot) && AddCoinsToPurse(CarriedItems[SelectedInventorySlot]))
+    {
+        RemoveInventorySlot(SelectedInventorySlot);
+    }
+}
+
+void ANativeWadPlayer::FireWand(const FWadWandProjectile& Projectile, int32 ManaCost)
+{
+    const double Now = GetWorld()->GetTimeSeconds();
+    if (IsParalyzed() || Now < NextMeleeTime)
+    {
+        return;
+    }
+    constexpr double WandDelay = 0.2;
+    const int32 ManaBefore = Mana;
+    if (Mana <= ManaCost)
+    {
+        Mana = FMath::Max(0, Mana - FMath::DivideAndRoundUp(ManaCost, 2));
+        NextMeleeTime = Now + WandDelay;
+        ShowInteractionMessage(TEXT("Nothing happens when you activate the wand."));
+        UE_LOG(LogTemp, Display, TEXT("WAD wand failed with low mana. Mana %d -> %d."), ManaBefore, Mana);
+        return;
+    }
+
+    if (!LaunchWadProjectile(Projectile)) { return; }
+    Mana -= ManaCost;
+    NextMeleeTime = Now + WandDelay;
+    const FString Name = GetInventoryItemDescription(GetReadyItem());
+    ShowInteractionMessage(FString::Printf(TEXT("Fired %s."), *Name));
+    UE_LOG(LogTemp, Display, TEXT("Fired WAD missile %d with %s. Mana %d -> %d."), Projectile.Type, *Name, ManaBefore, Mana);
+}
+
+bool ANativeWadPlayer::LaunchWadProjectile(const FWadWandProjectile& Projectile)
+{
+    const FVector Start = GetPawnViewLocation();
+    const FVector Direction = GetControlRotation().Vector();
+    const UNativeWadHudData* Catalog = UNativeWadHudData::LoadCatalog();
+    UMaterialInterface* Material = nullptr;
+    if (Catalog)
+    {
+        Material = Projectile.Type == 4017 ? Catalog->PlasmaProjectile.Get()
+            : Catalog->WandProjectileMaterials.FindRef(Projectile.Type).Get();
+    }
+
+    FActorSpawnParameters Parameters;
+    Parameters.Owner = this;
+    Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    ANativeWadBolt* Bolt = GetWorld()->SpawnActor<ANativeWadBolt>(Start, Direction.Rotation(), Parameters);
+    if (!Bolt)
+    {
+        return false;
+    }
+    UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
+    Bolt->Launch(Plane, Material, Direction * (50.0 * TicksPerSecond), Projectile.Damage);
+    if (Projectile.bHoming)
+    {
+        constexpr double TargetRange = 4000.0;
+        FHitResult Hit;
+        const FCollisionQueryParams Query(SCENE_QUERY_STAT(WadWandAim), true, this);
+        GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + Direction * TargetRange, ECC_Visibility, Query);
+        Bolt->SetHomingTarget(Cast<ANativeWadGuardian>(Hit.GetActor()));
+    }
+    Bolt->SetBlastRadius(Projectile.Radius);
+    Bolt->SetDamageMask(Projectile.DamageMask);
+    return true;
 }
 
 void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
@@ -324,20 +555,28 @@ void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
     const int32 Type = GetReadyItem();
     const int32 BeforeHealth = Health;
     const int32 BeforeFood = Food;
-    Health = FMath::Clamp(Health + Details.Health, 0, MaxHealth);
     Mana = FMath::Clamp(Mana + Details.Mana, 0, MaxMana);
     Food = FMath::Clamp(Food + Details.Food, 0, MaxFood);
     Water = FMath::Clamp(Water + Details.Water, 0, MaxFood);
     PoisonLevel /= FMath::Max(1, Details.PoisonDivisor);
+    if (Details.Status >= 0 && Details.Status < ItemStatusCount && Details.StatusTicks > 0)
+    {
+        ItemStatusSeconds[Details.Status] = Details.StatusTicks / double(TicksPerSecond);
+        ItemStatusPower[Details.Status] = Details.StatusPower;
+    }
     if (Details.bConsumed)
     {
         RemoveInventorySlot(ReadySlot);
     }
-    if (Health == 0)
+    if (Details.Health < 0)
     {
-        ReceiveEncounterHit(0);
+        ReceiveEncounterHit(-Details.Health);
     }
     else
+    {
+        Health = FMath::Min(MaxHealth, Health + Details.Health);
+    }
+    if (Health > 0)
     {
         ShowInteractionMessage(Type == Berry ? FString(TEXT("You get berry juice all over your face."))
             : FString::Printf(TEXT("Used %s"), *GetInventoryItemDescription(Type)));
@@ -375,6 +614,73 @@ void ANativeWadPlayer::DropInventoryItem()
     }
     RemoveInventorySlot(Slot);
     ShowInteractionMessage(FString::Printf(TEXT("Dropped %s"), *GetInventoryItemDescription(Type)));
+}
+
+void ANativeWadPlayer::DropDefeatedItems()
+{
+    ANativeWadLevel* Level = NativeLevel.Get();
+    if (!Level)
+    {
+        return;
+    }
+    const auto Drop = [&](int32 Type, int32 Index)
+    {
+        const FVector Origin = GetActorLocation();
+        const FVector Candidate = Origin + FRotator(0.0, Index * 137.5, 0.0).Vector() * (18.0 + Index % 4 * 7.0);
+        for (const FVector& Location : {Candidate, Origin})
+        {
+            FVector2D Heights;
+            const int32 Sector = Level->FindWadSector(FVector2D(Location - Level->GetActorLocation()));
+            if (Level->GetSectorSurfaceHeights(Sector, Heights))
+            {
+                const FWadInventoryDetails* Item = GetItemRules(Type);
+                const double Offset = Item ? Item->SpriteSize.Y * 0.5 + 1.0 : 12.0;
+                if (ANativeWadPickup* Pickup = ANativeWadPickup::SpawnDropped(*Level, Type,
+                    FVector(Location.X, Location.Y, Level->GetActorLocation().Z + Heights.X + Offset)))
+                {
+                    return Pickup;
+                }
+            }
+        }
+        return static_cast<ANativeWadPickup*>(nullptr);
+    };
+    for (int32 Slot = CarriedItems.Num() - 1; Slot >= 0; --Slot)
+    {
+        const int32 Type = CarriedItems[Slot];
+        if ((Type < 300 || Type > 317) && Drop(Type, Slot))
+        {
+            RemoveInventorySlot(Slot);
+        }
+    }
+    for (int32 Index = 0; Index < UE_ARRAY_COUNT(AmmoReserve); ++Index)
+    {
+        if (AmmoReserve[Index] > 0)
+        {
+            if (ANativeWadPickup* Quiver = Drop(CrossbowAmmo[Index].Quiver, Index))
+            {
+                Quiver->SetAuthoredAmmo(Index, AmmoReserve[Index]);
+                AmmoReserve[Index] = 0;
+            }
+        }
+    }
+    if (auto* Travel = UGameInstance::GetSubsystem<UNativeWadTravelState>(GetGameInstance()))
+    {
+        const int64 Wallet = Travel->Quest.GetWalletCopper();
+        int64 Remaining = Wallet;
+        int64 Unplaced = 0;
+        // CLIENT.C drops one five-coin pile per denomination and clears loose change.
+        for (int32 Type = 107; Type >= 101; Type -= 2)
+        {
+            const int32 Unit = CoinValueCopper(Type - 1);
+            const int64 Count = Remaining / Unit;
+            Remaining %= Unit;
+            if (Count >= 5 && !Drop(Type, Type))
+            {
+                Unplaced += Count * Unit;
+            }
+        }
+        Travel->Quest.SetWalletCopper(Unplaced);
+    }
 }
 
 void ANativeWadPlayer::ClickPressed()
@@ -420,6 +726,17 @@ void ANativeWadPlayer::ToggleInventory()
     else
     {
         SetMouseLook(bRestoreLookAfterInventory);
+    }
+}
+
+void ANativeWadPlayer::ToggleFinances()
+{
+    if (const APlayerController* LocalPlayer = GetController<APlayerController>())
+    {
+        if (ANativeWadHUD* HUD = LocalPlayer->GetHUD<ANativeWadHUD>(); HUD && HUD->HasClassicHud())
+        {
+            HUD->ToggleForm(ANativeWadHUD::EForm::Finances);
+        }
     }
 }
 
@@ -491,19 +808,18 @@ void ANativeWadPlayer::LookPitch(float Axis)
     }
 }
 
-void ANativeWadPlayer::EnterRuneFour()
+bool ANativeWadPlayer::HasRune(int32 Rune) const
 {
-    if (!bInventoryOpen && Runes.Len() < 4)
-    {
-        Runes.AppendChar(TEXT('4'));
-    }
+    const int32 Type = RuneItemForClass(CharacterClass, Rune);
+    // Direct Editor map previews can exist before the Town Hall character has been created.
+    return Type != INDEX_NONE && (!bWadCharacterCreated || GetItemCount(Type) > 0);
 }
 
-void ANativeWadPlayer::EnterRuneFive()
+void ANativeWadPlayer::EnterRune(int32 Rune)
 {
-    if (!bInventoryOpen && Runes.Len() < 4)
+    if (Health > 0 && !bInventoryOpen && Runes.Len() < 4 && HasRune(Rune))
     {
-        Runes.AppendChar(TEXT('5'));
+        Runes.AppendChar(TCHAR(TEXT('0') + Rune));
     }
 }
 
