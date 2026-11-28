@@ -16,6 +16,7 @@
 #include "NativeWadImport.h"
 #include "NativeWadLevel.h"
 #include "NativeWadReview.h"
+#include "NativeWadSourceLightingReview.h"
 #include "SectorMeshBuilderActor.h"
 #include "Engine/SceneCapture2D.h"
 #include "ProceduralMeshComponent.h"
@@ -1094,6 +1095,16 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD packed Druids refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.CREATENATIVEWADSOURCELIGHTINGCANDIDATE")))
+        {
+            const FString WadPath=ResolvePathOrProjectRelative(FParse::Token(Cmd,false));
+            const FString MapName=SanitizeMapMarker(FParse::Token(Cmd,false));
+            const FString Source=FParse::Token(Cmd,false),Candidate=FParse::Token(Cmd,false);
+            if(WadPath.IsEmpty()||MapName.IsEmpty()||Source.IsEmpty()||Candidate.IsEmpty()
+                ||!UDoomWadLoader::LoadDoomWadMap(WadPath,MapName)||!CreateNativeWadSourceLightingCandidate(Source,Candidate,WadPath,Ar))
+            {UE_LOG(LogTemp,Error,TEXT("AA.CreateNativeWadSourceLightingCandidate failed: <original.MAP> <MapName> <SourcePackage> <NEW CandidatePackage>"));}
+            UE_LOG(LogTemp,Display,TEXT("Native WAD source lighting candidate creation finished"));return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.PREFLIGHTNATIVEWADSOURCELIGHTING")))
         {
             const FString WadPath=ResolvePathOrProjectRelative(FParse::Token(Cmd,false));
@@ -1292,6 +1303,10 @@ public:
                 else if (Review == TEXT("river") || Review == TEXT("riverreload"))
                 {
                     bStarted = StartNativeWadRiverReview(InWorld, Output, ImageSize, Review == TEXT("riverreload"));
+                }
+                else if (Review == TEXT("sourcelightingb") || Review == TEXT("sourcelightingbreload"))
+                {
+                    bStarted=StartNativeWadSourceLightingReview(InWorld,Output,ImageSize,Review==TEXT("sourcelightingbreload"));
                 }
                 else if (Review == TEXT("nightvision"))
                 {

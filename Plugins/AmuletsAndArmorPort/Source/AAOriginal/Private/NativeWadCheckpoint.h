@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
 #include "NativeWadScript.h"
+#include "NativeWadLightRules.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "NativeWadCheckpoint.generated.h"
 
@@ -133,6 +134,10 @@ struct FWadLevelCheckpoint
 
     UPROPERTY()
     TMap<int32, int32> LightLevels;
+
+    // Absent in old saves: version0 starts a clean opt-in source clock only.
+    UPROPERTY()
+    FWadSourceLightState SourceLighting;
 
     UPROPERTY()
     TArray<int32> Variables;

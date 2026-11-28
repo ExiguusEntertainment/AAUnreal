@@ -115,6 +115,10 @@ FName UNativeWadTravelState::BackgroundMusicName() const
 
 bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDiscardProjectiles) const
 {
+    FString LightingError;
+    if(bUseSourceLightFeedback&&(SourceLightState.Version!=NativeWadLightRules::FeedbackStateVersion
+        ||!ValidateSourceLightCheckpoint(SourceLightState,LightingError))){return false;}
+
     if (!bDiscardProjectiles && TActorIterator<ANativeWadBolt>(GetWorld()))
     {
         return false;
@@ -135,6 +139,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
     Checkpoint.Switches = ActivitySwitchStates;
     Checkpoint.ActivityWallTextures = ActivityWallTextures;
     Checkpoint.LightLevels = LightOverrides;
+    Checkpoint.SourceLighting = bUseSourceLightFeedback?SourceLightState:FWadSourceLightState{};
     Checkpoint.PendingPickupGenerators = PendingPickupGenerators;
     Checkpoint.FiredPickupGenerators = FiredPickupGenerators;
     Checkpoint.UnlockedItemDoors = UnlockedItemDoors;
@@ -209,6 +214,10 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
 
 bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
 {
+    FString LightingError;
+    // Validate before geometry, script, encounter or other checkpoint mutation.
+    if(!ValidateSourceLightCheckpoint(Checkpoint.SourceLighting,LightingError)){return false;}
+
     if (Checkpoint.Variables.Num() != UE_ARRAY_COUNT(ScriptVariables) || Checkpoint.Flags.Num() != UE_ARRAY_COUNT(ScriptFlags))
     {
         return false;
@@ -397,6 +406,7 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
         SetTimeOfDayHours(Checkpoint.Hour);
     }
     LightOverrides = Checkpoint.LightLevels;
+    if(!RestoreSourceLightState(Checkpoint.SourceLighting,LightingError)){return false;}
     RefreshSectorLights();
     TSet<const ANativeWadPickup*> DormantPickups;
     for (const auto& [Id, Generator] : CreatureGenerators)

@@ -1,4 +1,5 @@
 #include "NativeWadLightRules.h"
+#include "Misc/SecureHash.h"
 
 namespace
 {
@@ -102,10 +103,9 @@ bool NativeWadLightRules::Validate(const FWadSourceLightingMetadata& M,FString& 
     Error.Reset();return true;
 }
 
-bool NativeWadLightRules::Recalculate(const FWadSourceLightingMetadata& M,TConstArrayView<int32> Input,
-    TConstArrayView<int32> DoorWeights,int32 Outside,TArray<int32>& Result,FString& Error)
+static bool RecalculatePrepared(const FWadSourceLightingMetadata& M,TConstArrayView<int32> Input,
+    TConstArrayView<int32> DoorWeights,int32 Outside,TArray<int32>& Result,FString& Error,TConstArrayView<int32> Centers)
 {
-    if(!Validate(M,Error)){return false;}
     const int32 Count=M.Sectors.Num();
     if(Input.Num()!=Count||DoorWeights.Num()!=Count||Outside<0||Outside>255)
     {return Fail(Error,TEXT("Source lighting input dimensions/range mismatch."));}
@@ -123,6 +123,9 @@ bool NativeWadLightRules::Recalculate(const FWadSourceLightingMetadata& M,TConst
             const int32 Across=Weighted(S.Neighbors,[&](int32 Neighbor)
             {
                 const auto& Through=M.Sectors[Neighbor];
+                // Bound the generated-door record logically. Original LIGHT.C
+                // reads adjDoors[reg] even after its initialized record count.
+
                 const int32 Others=Through.Neighbors.Num()-int32(Through.Neighbors.Contains(Sector));
                 return Through.bDoor&&Others>0
                     ? (Weighted(Through.Neighbors,[&](int32 N){return Current[N];},Sector)*DoorWeights[Neighbor])>>8
@@ -130,22 +133,25 @@ bool NativeWadLightRules::Recalculate(const FWadSourceLightingMetadata& M,TConst
             });
             Next[Sector]=S.bDoor?(Across*DoorWeights[Sector])>>8:Across;
         }
-        for(const auto& Owner:M.Illuminators)
+        for(int32 Id=0;Id<M.Illuminators.Num();++Id)
         {
+            const auto& Owner=M.Illuminators[Id];
+            const int32 Center=Centers.IsEmpty()?Owner.CenterSector:Centers[Id];
+            if(Center==INDEX_NONE){continue;} // An actually destroyed bound prop.
+
             // LIGHT.C uses a signed16 accumulator before its byte clamp.
-            const uint16 Bits=uint16(Next[Owner.CenterSector]+Owner.Illumination);
+            const uint16 Bits=uint16(Next[Center]+Owner.Illumination);
             const int32 Sum=Bits<32768?int32(Bits):int32(Bits)-65536;
-            Next[Owner.CenterSector]=FMath::Clamp(Sum,0,255);
+            Next[Center]=FMath::Clamp(Sum,0,255);
         }
         Current=MoveTemp(Next);
     }
     Result=MoveTemp(Current);Error.Reset();return true;
 }
 
-bool NativeWadLightRules::Animate(const FWadSourceLightingMetadata& M,uint16 DeltaTicks,TConstArrayView<int32> Input,
+static bool AnimatePrepared(const FWadSourceLightingMetadata& M,uint16 DeltaTicks,TConstArrayView<int32> Input,
     TConstArrayView<int32> Phases,TArray<int32>& Lights,TArray<int32>& NewPhases,FString& Error)
 {
-    if(!Validate(M,Error)){return false;}
     const int32 Count=M.Sectors.Num();
     if(Input.Num()!=Count||Phases.Num()!=Count){return Fail(Error,TEXT("Source animation state dimension mismatch."));}
     for(int32 I=0;I<Count;++I)
@@ -159,4 +165,69 @@ bool NativeWadLightRules::Animate(const FWadSourceLightingMetadata& M,uint16 Del
         Output[A.Sector]=uint8(A.Center+((int64(A.Radius)*Sine)>>16));
     }
     Lights=MoveTemp(Output);NewPhases=MoveTemp(OutputPhases);Error.Reset();return true;
+}
+
+
+bool NativeWadLightRules::Recalculate(const FWadSourceLightingMetadata& M,TConstArrayView<int32> Input,
+    TConstArrayView<int32> Doors,int32 Outside,TArray<int32>& Result,FString& Error)
+{
+    return Validate(M,Error)&&RecalculatePrepared(M,Input,Doors,Outside,Result,Error,{});
+}
+bool NativeWadLightRules::Animate(const FWadSourceLightingMetadata& M,uint16 Delta,TConstArrayView<int32> Input,
+    TConstArrayView<int32> Phases,TArray<int32>& Lights,TArray<int32>& NewPhases,FString& Error)
+{
+    return Validate(M,Error)&&AnimatePrepared(M,Delta,Input,Phases,Lights,NewPhases,Error);
+}
+FWadSourceLightState NativeWadLightRules::InitialState(const FWadSourceLightingMetadata& M)
+{
+    FWadSourceLightState S;S.Version=FeedbackStateVersion;S.SourceMapSha1=M.SourceMapSha1;
+    for(const auto& Sector:M.Sectors){S.Levels.Add(Sector.AuthoredLight);S.Phases.Add(0);}return S;
+}
+bool NativeWadLightRules::ValidateState(const FWadSourceLightingMetadata& M,const FWadSourceLightState& S,FString& Error)
+{
+    if(S.Version==0)
+    {
+        if(!S.SourceMapSha1.IsEmpty()||!S.Levels.IsEmpty()||!S.Phases.IsEmpty()||S.PendingTicks!=0.0||S.CompletedSteps!=0)
+        {return Fail(Error,TEXT("Legacy lighting state contains an unexpected modern payload."));}
+        Error.Reset();return true;
+    }
+    if(M.Sectors.IsEmpty()||M.SourceMapSha1.IsEmpty()||S.Version!=FeedbackStateVersion||S.SourceMapSha1!=M.SourceMapSha1||S.Levels.Num()!=M.Sectors.Num()
+        ||S.Phases.Num()!=M.Sectors.Num()||!FMath::IsFinite(S.PendingTicks)||S.PendingTicks<0.0
+        ||S.PendingTicks>MaximumPendingTicks||S.CompletedSteps>uint64(MAX_int64))
+    {return Fail(Error,TEXT("Source feedback checkpoint version/identity/dimensions/clock mismatch."));}
+    for(int32 I=0;I<S.Levels.Num();++I)
+    {if(S.Levels[I]<0||S.Levels[I]>255||S.Phases[I]<0||S.Phases[I]>65535){return Fail(Error,TEXT("Source feedback checkpoint byte/phase outside bounds."));}}
+    Error.Reset();return true;
+}
+bool NativeWadLightRules::FPreparedKernel::Initialize(const FWadSourceLightingMetadata& M,FString& Error)
+{
+    if(!Validate(M,Error)){return false;}Metadata=M;bReady=true;return true;
+}
+bool NativeWadLightRules::FPreparedKernel::Step(FWadSourceLightState& S,TConstArrayView<int32> Doors,int32 Outside,
+    TConstArrayView<int32> Centers,FString& Error) const
+{
+    if(!bReady||S.Version!=FeedbackStateVersion||S.CompletedSteps==uint64(MAX_int64)||!ValidateState(Metadata,S,Error)||Centers.Num()!=Metadata.Illuminators.Num())
+    {if(Error.IsEmpty()){Error=TEXT("Source feedback kernel/state/owner dimensions are not initialized.");}return false;}
+    for(int32 I=0;I<Centers.Num();++I)
+    {
+        if(Centers[I]<INDEX_NONE||Centers[I]>=Metadata.Sectors.Num()||(Centers[I]==INDEX_NONE&&Metadata.Illuminators[I].SourceType==924))
+        {return Fail(Error,TEXT("Invalid live center for an illumination owner."));}
+    }
+    TArray<int32> Next,Phases;
+    if(!RecalculatePrepared(Metadata,S.Levels,Doors,Outside,Next,Error,Centers)
+        ||!AnimatePrepared(Metadata,1,Next,S.Phases,Next,Phases,Error)){return false;}
+    S.Levels=MoveTemp(Next);S.Phases=MoveTemp(Phases);++S.CompletedSteps;return true;
+}
+
+FString NativeWadLightRules::StateDigest(const FWadSourceLightState& S)
+{
+    // Runtime/restart diagnostic, not a cross-platform network wire format.
+    FSHA1 Sha;const FTCHARToUTF8 Source(*S.SourceMapSha1);
+    Sha.Update(reinterpret_cast<const uint8*>(Source.Get()),Source.Length());
+    Sha.Update(reinterpret_cast<const uint8*>(&S.Version),sizeof(S.Version));
+    Sha.Update(reinterpret_cast<const uint8*>(S.Levels.GetData()),S.Levels.Num()*sizeof(int32));
+    Sha.Update(reinterpret_cast<const uint8*>(S.Phases.GetData()),S.Phases.Num()*sizeof(int32));
+    Sha.Update(reinterpret_cast<const uint8*>(&S.PendingTicks),sizeof(S.PendingTicks));
+    Sha.Update(reinterpret_cast<const uint8*>(&S.CompletedSteps),sizeof(S.CompletedSteps));
+    Sha.Final();FSHAHash Hash;Sha.GetHash(Hash.Hash);return Hash.ToString();
 }

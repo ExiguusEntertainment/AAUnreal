@@ -419,3 +419,20 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Strict write pass and separate-process reopening both pass all30 maps. Exact independent source/current-center metadata matches655 owners (200 markers/455 props),78 raw glow/151 effective animations,3 source selfedges and175 explicitly excluded invalid flagged references. No bound prop owners are missing.
 - All166 tests/full unity pass. Two refreshes and public positive saves per map retain actor/component transforms/tags/geometry/collision/materials, source file/asset hashes, brightness/ordinary light components, default/live CPD and legacy rendering mode. No new point lights or runtime feedback activation.
 - Readonly native primitive-data inspector closes the Python protected-field verification gap without exposing writable properties. PLAN260 complete; committing/pushing30 maps plus metadata/kernel/source QA before candidate-only runtime feedback.
+
+
+## 2026-11-27 19:42 CST - source-feedback candidate integration in verification
+
+- Pushed3a67a65a (45files,30LFSmaps/134MB). All30 metadata/source/current-center/output checks and independent reopening are complete; canonical maps remain legacy mode.
+- Integrated candidate-only B runtime: fixed70Hz feedback, retained16-step frame debt, prepared kernel/cooked lookup cache, owner movement/destruction and strict source-hash/phase/remainder checkpoint state. Added readonly cooked-byte getter for editor proof; candidate script uses the live-CPD inspector rather than protected Python fields. Existing canonical maps are not opted in.
+- Fixed C++ local Owner shadowing AActor.Owner and explicit UPackage include in review code. Build169-regression pipeline is running before L30/L64/L151 candidate creation/reopen and real GPU/restart timing proof. PLAN261 remains open.
+- Additional frozen work remains unintegrated: source SpriteLighting candidate, clouds37, ELMARK5, push40, base4080 armor44, Journal/QuickUse, ColorFlash and acid whole-item loss. Current workers audit mouse-hand throws and a possible source projectile velocity /8 conversion gap; no gameplay change or confirmed velocity-parity claim yet.
+
+
+## 2026-11-27 19:59 CST - candidate lighting GPU and restart checkpoint verified
+
+- All169 WAD/full unity pass. Three saved L30/L64/L151 B-only copies pass independent reopening with exact metadata/owner refs/cooked bytes and source/copy geometry/default-data checks. Every canonical map remains legacy and byte-identical.
+- Real editor duplication exposed two initialization requirements: populate transient world Levels/owning-world state, then rebuild ComponentToWorld caches before sampling copied owner XY. Failed diagnostic copies are preserved in FeedbackCandidateRecovery. The corrected three copies match the independently reconstructed metadata; original worlds were never initialized/modified by the copier.
+- Six muted real-RHI first/reload reviews pass, including actual accepted checkpoint state digests, continued phases/ticks, visible source-vs-legacy floor differences above3x repeated-control noise and normal player disk saves. Static surfaces/torches checked visually; L64 negative owners produce strong dark-floor contrast.
+- Lighting routine means/p95ms: L30 first0.197/0.506,reload0.111/0.174; L64 first1.069/2.185,reload0.289/0.490; L151 first0.013/0.022,reload0.015/0.021. Changed pixel counts246213..261062. These are controlled routine timings, not whole-frame/GPU/performance certification. Native RGB surface shading remains approximate; canonical sprites are unchanged.
+- PLAN261 complete,267 records eventual campaign promotion/replay. Committing/pushing runtime/source and three required candidate maps before remaining source effects/UI/gameplay packages.

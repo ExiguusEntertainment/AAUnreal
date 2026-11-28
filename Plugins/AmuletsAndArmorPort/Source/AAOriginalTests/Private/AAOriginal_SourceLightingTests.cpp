@@ -270,4 +270,3 @@ bool FWadSourceLightLegacyMode::RunTest(const FString&)
     auto Bad=M;Bad.ThingCount=0;TestFalse(TEXT("invalid install refused"),Level->InstallSourceLightingMetadata(Bad,Error));TestEqual(TEXT("good metadata survived rejection"),Level->GetSourceLightingMetadata().ThingCount,20);
     World->DestroyWorld(false);return true;
 }
-

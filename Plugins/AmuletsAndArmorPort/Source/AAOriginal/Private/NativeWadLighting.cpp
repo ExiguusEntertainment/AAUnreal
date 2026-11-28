@@ -80,6 +80,12 @@ void ANativeWadLevel::BeginPlay()
         }
         SetTimeOfDayHours(ArrivalHour);
     }
+    if(bUseSourceLightFeedback)
+    {
+        FString Error;
+        if(!InitializeSourceLightFeedback(Error)){UE_LOG(LogTemp,Error,TEXT("Source feedback initialization failed: %s"),*Error);}
+        SetActorTickEnabled(true);
+    }
     RefreshSectorLights();
     if (!ScrollingSectors.IsEmpty() || !ScrollingSides.IsEmpty() || !AmbientEmitters.IsEmpty())
     {
@@ -148,6 +154,12 @@ void ANativeWadLevel::ClearSectorLightOverride(int32 Sector)
 void ANativeWadLevel::RefreshSectorLights()
 {
     InitializeTopology();
+    if(bUseSourceLightFeedback)
+    {
+        // Door movement, sky changes and manual overrides publish the current
+        // state only; exactly one clock owner advances it from level Tick.
+        PresentSourceLightState();return;
+    }
 
     // Start each update with the imported levels so the same door position and outside value
     // reproduce the same result regardless of frame rate or the door's prior history.

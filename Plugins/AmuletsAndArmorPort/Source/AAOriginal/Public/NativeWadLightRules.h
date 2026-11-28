@@ -65,9 +65,41 @@ struct AAORIGINAL_API FWadSourceLightingMetadata
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="WAD|Lighting") TArray<FWadSourceLightDirective> Animations;
 };
 
+// Additive checkpoint payload: version0 means genuinely absent/legacy only.
+USTRUCT(BlueprintType)
+struct AAORIGINAL_API FWadSourceLightState
+{
+    GENERATED_BODY()
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="WAD|Lighting") int32 Version = 0;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="WAD|Lighting") FString SourceMapSha1;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="WAD|Lighting") TArray<int32> Levels;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="WAD|Lighting") TArray<int32> Phases;
+    // Fraction plus retained unserved fixed steps when a frame exceeds the budget.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="WAD|Lighting") double PendingTicks = 0.0;
+    UPROPERTY() uint64 CompletedSteps = 0;
+};
+
 namespace NativeWadLightRules
 {
     inline constexpr int32 MetadataVersion = 1;
+    inline constexpr int32 FeedbackStateVersion = 1;
+    inline constexpr double FeedbackHz = 70.0;
+    inline constexpr int32 MaximumStepsPerFrame = 16;
+    inline constexpr double MaximumPendingTicks = 1000000000.0;
+    AAORIGINAL_API FString StateDigest(const FWadSourceLightState& State);
+    AAORIGINAL_API FWadSourceLightState InitialState(const FWadSourceLightingMetadata& Metadata);
+    AAORIGINAL_API bool ValidateState(const FWadSourceLightingMetadata& Metadata,const FWadSourceLightState& State,FString& Error);
+    // One-time topology validation/copy; subsequent steps validate only live state/inputs.
+    class AAORIGINAL_API FPreparedKernel
+    {
+    public:
+        bool Initialize(const FWadSourceLightingMetadata& Metadata,FString& Error);
+        bool Step(FWadSourceLightState& State,TConstArrayView<int32> DoorWeights,int32 Outside,
+            TConstArrayView<int32> OwnerCenters,FString& Error) const;
+    private:
+        bool bReady=false;
+        FWadSourceLightingMetadata Metadata;
+    };
     AAORIGINAL_API bool IsIlluminatingType(int32 FullType);
     AAORIGINAL_API int32 SourceIllumination(int32 FullType, uint16 AccessoryData);
     AAORIGINAL_API bool IsAnimationDirective(int32 FullType);

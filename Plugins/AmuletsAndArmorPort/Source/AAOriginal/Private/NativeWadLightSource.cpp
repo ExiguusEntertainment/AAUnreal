@@ -109,6 +109,9 @@ bool BuildWadSourceLighting(const FDoomWadMapData& Map,TConstArrayView<uint8> By
 
 bool ANativeWadLevel::InstallSourceLightingMetadata(const FWadSourceLightingMetadata& Metadata,FString& Error)
 {
+    if(bUseSourceLightFeedback)
+    {Error=TEXT("Disable source feedback before replacing metadata; its prepared runtime cache must stay coherent.");return false;}
+
     if(Metadata.Sectors.Num()!=Sectors.Num()||!NativeWadLightRules::Validate(Metadata,Error)){return false;}
     // Deliberately no lighting refresh, mode change, live-state reset or component mutation in stage1.
     Modify();SourceLightingMetadata=Metadata;return true;

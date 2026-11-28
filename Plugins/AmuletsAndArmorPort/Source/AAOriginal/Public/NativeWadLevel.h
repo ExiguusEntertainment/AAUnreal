@@ -284,7 +284,27 @@ public:
     FWadSourceLightingMetadata GetSourceLightingMetadata() const { return SourceLightingMetadata; }
     UFUNCTION(BlueprintPure, Category="WAD|Lighting")
     bool IsSourceLightFeedbackEnabled() const { return bUseSourceLightFeedback; }
+    UFUNCTION(BlueprintPure,Category="WAD|Lighting")
+    TArray<uint8> GetCookedSourceLightingLookupBytes() const { return SourceLightLookupBytes; }
     bool InstallSourceLightingMetadata(const FWadSourceLightingMetadata& Metadata, FString& Error);
+    // Editor candidate importer/tests only; not exposed as a gameplay Blueprint toggle.
+    bool SetSourceLightFeedbackEnabled(bool bEnabled,TConstArrayView<uint8> OriginalLookupBytes,FString& Error);
+    UFUNCTION(BlueprintPure, Category="WAD|Lighting")
+    FWadSourceLightState GetSourceLightState() const { return SourceLightState; }
+    UFUNCTION(BlueprintPure, Category="WAD|Lighting")
+    int32 GetSourceLightingLastStepCount() const { return SourceLastStepCount; }
+    UFUNCTION(BlueprintPure, Category="WAD|Lighting")
+    double GetSourceLightingLastMilliseconds() const { return SourceLastMilliseconds; }
+    uint64 GetSourceLightingLookupResolutions() const { return SourceLookupResolutions; }
+    UFUNCTION(BlueprintPure, Category="WAD|Lighting")
+    int32 GetSourceIlluminationOwnerSector(int32 ThingId) const;
+    FString GetRestoredSourceLightingDigest() const { return SourceRestoredDigest; }
+
+    bool ValidateSourceLightCheckpoint(const FWadSourceLightState& State,FString& Error) const;
+    bool RestoreSourceLightState(const FWadSourceLightState& State,FString& Error);
+    // Called only by level Tick. Public C++ entry permits deterministic world fixtures.
+    void AdvanceSourceLightFeedback(double DeltaSeconds);
+
 
 
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
@@ -373,6 +393,10 @@ private:
     void ApplyLight(UStaticMeshComponent& Mesh, int32 Light, bool bPersist) const;
     void ApplySectorLight(int32 Sector, int32 Light);
     void RefreshSectorLights();
+    bool InitializeSourceLightFeedback(FString& Error);
+    bool UpdateSourceOwnerCenters(FString& Error);
+    void PresentSourceLightState();
+
     void UpdateDaySky();
     bool ContainsSectorPoint(int32 Sector, const FVector2D& LocalPosition) const;
     const FWadScriptActivity* FindWadActivity(int32 Activity) const;
@@ -540,6 +564,19 @@ private:
     FWadSourceLightingMetadata SourceLightingMetadata;
     UPROPERTY()
     bool bUseSourceLightFeedback = false;
+
+    // Cooked lookup bytes are private and absent from Details; no external MAP I/O at runtime.
+    UPROPERTY() TArray<uint8> SourceLightLookupBytes;
+    UPROPERTY(Transient) FWadSourceLightState SourceLightState;
+    TSharedPtr<NativeWadLightRules::FPreparedKernel> SourceLightKernel;
+    TArray<FVector2D> SourceOwnerPositions;
+    TArray<int32> SourceOwnerCenters;
+    uint64 SourceLookupResolutions = 0;
+    int32 SourceLastStepCount = 0;
+    double SourceLastMilliseconds = 0.0;
+    FString SourceLightingError;
+    FString SourceRestoredDigest;
+
 
     TArray<TArray<int32>> LightingNeighbors;
     TMap<int32, int32> DoorBySector;

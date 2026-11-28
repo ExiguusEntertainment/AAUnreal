@@ -42,6 +42,8 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Engine/Level.h"
+#include "Components/SceneComponent.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/WorldSettings.h"
 #include "HAL/FileManager.h"
@@ -4511,6 +4513,57 @@ bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Ou
     if (!Updates.IsEmpty() && !SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     Output.Logf(TEXT("Refreshed source auxiliary metadata on %d/%d authored pickups in %s; retained %d non-map actors and all geometry."),
         Updates.Num(), Matched, *MapPackage, Unbound);
+    return true;
+}
+
+bool CreateNativeWadSourceLightingCandidate(const FString& SourcePackage,const FString& CandidatePackage,
+    const FString& WadPath,FOutputDevice& Output)
+{
+    const FDoomWadMapData* Map=UDoomWadLoader::GetLastWadMapData();
+    if(!Map||!SourcePackage.StartsWith(TEXT("/Game/Maps/"))||!FPackageName::DoesPackageExist(SourcePackage)
+        ||!CandidatePackage.StartsWith(TEXT("/Game/Maps/SourceLightingCandidates/"))
+        ||!FPackageName::IsValidLongPackageName(CandidatePackage)||FPackageName::DoesPackageExist(CandidatePackage)
+        ||FindPackage(nullptr,*CandidatePackage))
+    {Output.Log(TEXT("Candidate needs an existing source map and a NEW /Game/Maps/SourceLightingCandidates/<Name> destination. No overwrites."));return false;}
+    auto* Original=LoadObject<UWorld>(nullptr,*(SourcePackage+TEXT(".")+FPackageName::GetShortName(SourcePackage)));
+    auto* Source=Original?FAAWadNativeImport::FindMatchingLevel(*Original,*Map):nullptr;
+    if(!Source||Source->IsSourceLightFeedbackEnabled()||(Original->WorldType!=EWorldType::Editor&&Original->WorldType!=EWorldType::Inactive))
+    {Output.Log(TEXT("Candidate source must be a matching saved legacy editor world."));return false;}
+    FAAWadNativeImport Import;
+    if(!Import.InstallSourceLightMetadata(*Original,*Source,*Map,WadPath,Output,true)){return false;}
+    // UWorld::PostDuplicate fixes contained actor/component and map-build-data references.
+    // Shared static meshes/materials are referenced, never regenerated or modified.
+    auto* Package=CreatePackage(*CandidatePackage);
+    auto* Copy=Cast<UWorld>(StaticDuplicateObject(Original,Package,FName(*FPackageName::GetShortName(CandidatePackage)),
+        RF_AllFlags,nullptr,EDuplicateMode::World));
+    if(!Copy){Output.Log(TEXT("World duplication returned no candidate."));return false;}
+    // Static duplication fixes references but does not populate UWorld's
+    // transient Levels/owning-world state used by actor iterators.
+    if(!Copy->IsInitialized())
+    {
+        Copy->WorldType=EWorldType::Inactive;
+        Copy->InitWorld(UWorld::InitializationValues().AllowAudioPlayback(false)
+            .CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false));
+    }
+    // ComponentToWorld is transient. Rebuild copied transform caches before
+    // sampling light-owner XY; no construction scripts or physics are run.
+    for(AActor* CopiedActor:Copy->PersistentLevel->Actors)
+    {
+        if(!CopiedActor){continue;}
+        TInlineComponentArray<USceneComponent*> Components;CopiedActor->GetComponents(Components);
+        for(auto* Component:Components){Component->UpdateComponentToWorld();}
+    }
+    auto* Level=Copy?FAAWadNativeImport::FindMatchingLevel(*Copy,*Map):nullptr;
+    if(!Level){Output.Log(TEXT("Initialized candidate does not contain one matching native level."));return false;}
+    if(!Import.InstallSourceLightMetadata(*Copy,*Level,*Map,WadPath,Output)){return false;}
+    for(const auto& Owner:Level->GetSourceLightingMetadata().Illuminators)
+    {if(Owner.BoundActor&&Owner.BoundActor->GetWorld()!=Copy){Output.Log(TEXT("Candidate retained a source-world light owner; refusing save."));return false;}}
+    TArray<uint8> Bytes;FString Error;
+    if(!FFileHelper::LoadFileToArray(Bytes,*WadPath)||!Level->SetSourceLightFeedbackEnabled(true,Bytes,Error))
+    {Output.Logf(TEXT("Candidate opt-in preflight failed: %s"),*Error);return false;}
+    Copy->SetFlags(RF_Public|RF_Standalone);FAssetRegistryModule::AssetCreated(Copy);
+    if(!SaveAsset(*Copy,*FPackageName::GetMapPackageExtension())){return false;}
+    Output.Logf(TEXT("Saved opt-in fixed70Hz source-light candidate %s; original %s was not modified or saved. No sprite graphs/geometry/art rebuilt."),*CandidatePackage,*SourcePackage);
     return true;
 }
 

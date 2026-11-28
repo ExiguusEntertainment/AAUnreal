@@ -41,3 +41,8 @@ bool RefreshNativeWadOrdinaryScenery(const FString& MapPackage, const FString& S
 #if WITH_EDITOR
 bool RefreshNativeWadSourceLighting(const FString& MapPackage, const FString& WadPath, FOutputDevice& Output, bool bPreflightOnly=false);
 #endif
+
+#if WITH_EDITOR
+bool CreateNativeWadSourceLightingCandidate(const FString& SourcePackage,const FString& CandidatePackage,
+    const FString& WadPath,FOutputDevice& Output);
+#endif

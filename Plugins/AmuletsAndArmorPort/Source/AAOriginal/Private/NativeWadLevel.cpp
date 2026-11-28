@@ -262,8 +262,10 @@ void ANativeWadLevel::Tick(float DeltaSeconds)
     TickCreatureGenerators(DeltaSeconds);
     TickSurfaceScroll(DeltaSeconds);
     TickAmbientEmitters(DeltaSeconds);
+    AdvanceSourceLightFeedback(DeltaSeconds);
     if (ActiveDoors.IsEmpty() && ActivitySlides.IsEmpty() && PendingPickupGenerators.IsEmpty() && !bRunDayClock
-        && ScrollingSectors.IsEmpty() && ScrollingSides.IsEmpty() && AmbientEmitters.IsEmpty() && !HasPendingCreatureGenerators())
+        && ScrollingSectors.IsEmpty() && ScrollingSides.IsEmpty() && AmbientEmitters.IsEmpty() && !HasPendingCreatureGenerators()
+        && !bUseSourceLightFeedback)
     {
         SetActorTickEnabled(false);
     }
