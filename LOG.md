@@ -373,3 +373,10 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All66 saved actors across seven maps pass source counts, exact variants/provenance, typed missiles, treasure and dipper checkpoints. Clean import/reopen verifies old art/geometry/script/checkpoint and actual generator bindings/settings; L75 potion assets equal HEAD again and the targeted path now skips all generator passes.
 - Preserved another invalid duplicate remote-ref file in RepositoryRecovery. git fsck --connectivity-only --no-dangling now passes; canonical main and origin/main matched before this new commit.
 - PLAN257 complete; committing/pushing required seven-map/art/source assets. Next are typed dangerous items and per-object carried data, with their separate journal/quick-use worker packages.
+
+
+## 2026-11-27 19:02 CST - unity-safe packed test helpers
+
+- A later header rebuild rejoined committed PackedEncounterFamilyTests into Unreal unity and exposed generic anonymous helper collisions with earlier tests. Renamed this file's helpers uniquely; test behavior and production gameplay are unchanged.
+- Explicit -DisableAdaptiveUnity build succeeds, proving the fix without dirty-file exclusions. Pushing this small standalone build fix before the harmful-item/runtime-metadata checkpoints.
+- DangerousItems and pure carried-data codec are integrated but still uncommitted/unverified at this point. Corrected private test class references, unsupported FString.Init fixture call and explicit parser output initialization; refreshed catalog and157-test run are in progress.

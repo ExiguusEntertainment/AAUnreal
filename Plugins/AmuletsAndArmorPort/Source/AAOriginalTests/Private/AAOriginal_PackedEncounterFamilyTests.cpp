@@ -27,21 +27,21 @@
 
 namespace
 {
-    const int32 Types[]={16368,24560,33803,37886,54268};
-    FString Original(){return FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor");}
-    bool Record(int32 Type,TArray<FString>& Fields)
+    const int32 PackedFamilyTypes[]={16368,24560,33803,37886,54268};
+    FString PackedFamilyOriginalRoot(){return FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor");}
+    bool ReadPackedFamilySourceRecord(int32 Type,TArray<FString>& Fields)
     {
-        FString S;if(!FFileHelper::LoadFileToString(S,*(Original()/TEXT("Include/CREDATA.H")))){return false;}
+        FString S;if(!FFileHelper::LoadFileToString(S,*(PackedFamilyOriginalRoot()/TEXT("Include/CREDATA.H")))){return false;}
         FRegexMatcher M(FRegexPattern(FString::Printf(TEXT("/\\*[^*]*\\*/\\s*(%d\\s*,[^}]+)"),Type)),S);if(!M.FindNext()){return false;}
         M.GetCaptureGroup(1).TrimStartAndEnd().ParseIntoArray(Fields,TEXT(","),true);for(auto& F:Fields){F.TrimStartAndEndInline();}return Fields.Num()==43;
     }
-    const FWadCampaignCreatureSource* Source(int32 Type)
+    const FWadCampaignCreatureSource* FindPackedFamilySource(int32 Type)
     {for(const auto& S:GetWadCampaignCreatureSources()){if(S.Type==Type){return &S;}}return nullptr;}
-    struct FFixture
+    struct FPackedFamilyFixture
     {
         double Volume=FApp::GetVolumeMultiplier();UGameInstance* Instance=NewObject<UGameInstance>(GEngine);
         UWorld* World=nullptr;ANativeWadLevel* Level=nullptr;ANativeWadPlayer* Player=nullptr;
-        explicit FFixture(bool Water=false)
+        explicit FPackedFamilyFixture(bool Water=false)
         {
             FApp::SetVolumeMultiplier(0.0);Instance->InitializeStandalone();World=Instance->GetWorld();if(!World){return;}
             World->URL=FURL(nullptr,TEXT("/Game/Maps/L61?WadCreated=1?WadClass=0?WadLevel=1?WadMaxHealth=30000?WadHealth=30000?WadMaxMana=30000?WadMana=30000?WadFood=2000?WadWater=2000?WadItems=?WadReady=-1"),TRAVEL_Absolute);
@@ -56,7 +56,7 @@ namespace
             World->AddController(C);C->Possess(Player);Player->DispatchBeginPlay();
             Player->GetCharacterMovement()->Activate(true);
         }
-        ~FFixture(){Instance->Shutdown();if(World){GEngine->DestroyWorldContext(World);World->DestroyWorld(false);}FApp::SetVolumeMultiplier(Volume);}
+        ~FPackedFamilyFixture(){Instance->Shutdown();if(World){GEngine->DestroyWorldContext(World);World->DestroyWorld(false);}FApp::SetVolumeMultiplier(Volume);}
         ANativeWadGuardian* Enemy(int32 Type,double Y=0)
         {
             const double Half=Type==37886||Type==1022?60.0:Type==33803?29.5:Type==54268?31.5:31.0;
@@ -75,10 +75,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalPackedFamilySource,"AAOriginal.WAD.G
 bool FAAOriginalPackedFamilySource::RunTest(const FString& Parameters)
 {
     using namespace NativeWadRules;
-    FFixture Fixture;if(!Fixture.Player){return false;}
-    for(int32 Type:Types)
+    FPackedFamilyFixture Fixture;if(!Fixture.Player){return false;}
+    for(int32 Type:PackedFamilyTypes)
     {
-        TArray<FString> F;if(!Record(Type,F)){return false;}
+        TArray<FString> F;if(!ReadPackedFamilySourceRecord(Type,F)){return false;}
         auto* Actor=Fixture.Enemy(Type);if(!Actor){return false;}const auto& P=Actor->GetEncounterProfile();
         TestEqual(TEXT("Full source identity is not masked"),P.SourceType,FCString::Atoi(*F[0]));
         TestTrue(TEXT("Source families are grounded and blocked by walls"),F[3]==TEXT("FALSE")&&F[4]==TEXT("FALSE")&&!P.bCanFly);
@@ -94,9 +94,9 @@ bool FAAOriginalPackedFamilySource::RunTest(const FString& Parameters)
         TestEqual(TEXT("Actual CREDATA armor type is respected"),P.ArmorClass,Plate?2:0);
         TestTrue(TEXT("Plate mapping is proven by source enum"),!Plate||F[22]==TEXT("EQUIP_ARMOR_TYPE_BREASTPLATE_PLATE"));
         TestEqual(TEXT("Only sourceDIPPER retains dipper navigation"),P.bDipper,Type==37886);
-        const auto* S=Source(Type);if(!TestNotNull(TEXT("Shared enabled recipe used by actual importer"),S)){return false;}TestTrue(TEXT("Gameplay enablement follows runtime implementation"),S->bGameplayEnabled);
+        const auto* S=FindPackedFamilySource(Type);if(!TestNotNull(TEXT("Shared enabled recipe used by actual importer"),S)){return false;}TestTrue(TEXT("Gameplay enablement follows runtime implementation"),S->bGameplayEnabled);
         FWadCreatureArtSet Art;if(!ResolveWadCampaignCreatureArt(*S,Art,*GLog)){return false;}TArray<uint8> Table;
-        if(!FFileHelper::LoadFileToArray(Table,*(Original()/TEXT("Resources/ArtFinal/COLORIZE")/FString::Printf(TEXT("COLORT%02d"),Type>>12)))){return false;}
+        if(!FFileHelper::LoadFileToArray(Table,*(PackedFamilyOriginalRoot()/TEXT("Resources/ArtFinal/COLORIZE")/FString::Printf(TEXT("COLORT%02d"),Type>>12)))){return false;}
         TestTrue(TEXT("Actual importer and manifest share the exact source variant bytes"),Art.Standing.ColorTable==Table&&Art.Hurt.ColorTable==Table&&Art.Downed.ColorTable==Table&&Art.Attacking.ColorTable==Table);
         TestFalse(TEXT("Source static front frame is not guessed mirrored"),Art.Standing.bMirrored);
         TestTrue(TEXT("Art provenance retains full identity"),Art.Standing.SourceTypes.Contains(Type));
@@ -120,8 +120,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalPackedFamilyTyped,"AAOriginal.WAD.Ga
 bool FAAOriginalPackedFamilyTyped::RunTest(const FString& Parameters)
 {
     using namespace NativeWadRules;
-    FFixture F;if(!F.Player){return false;}
-    for(int32 Type:Types)
+    FPackedFamilyFixture F;if(!F.Player){return false;}
+    for(int32 Type:PackedFamilyTypes)
     {
         auto* E=F.Enemy(Type);if(!E){return false;}int32 HP=E->GetEncounterHealth();
         const int32 Bonus=CreaturePiercingBonus(100,E->GetEncounterProfile().ArmorClass,Type);
@@ -142,7 +142,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalPackedFamilyTreasure,"AAOriginal.WAD
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FAAOriginalPackedFamilyTreasure::RunTest(const FString& Parameters)
 {
-    FString SourceText;if(!FFileHelper::LoadFileToString(SourceText,*(Original()/TEXT("Source/CRELOGIC.C")))){return false;}
+    FString SourceText;if(!FFileHelper::LoadFileToString(SourceText,*(PackedFamilyOriginalRoot()/TEXT("Source/CRELOGIC.C")))){return false;}
     const TMap<int32,FString> Names={{16368,TEXT("bronzeEvilKnightList")},{24560,TEXT("silverEvilKnightList")},{33803,TEXT("mithrilBadKnightList")}};
     for(const auto& [Type,Name]:Names)
     {
@@ -153,7 +153,7 @@ bool FAAOriginalPackedFamilyTreasure::RunTest(const FString& Parameters)
     }
     TestEqual(TEXT("Mattan releases original mana-drain wand908"),ResolveWadCreatureTreasure(54268,0).ItemType,908);
     TestEqual(TEXT("Source Obsidian Hydra has no invented ordinary treasure"),ResolveWadCreatureTreasure(37886,0).ItemType,0);
-    FFixture F;if(!F.Player){return false;}
+    FPackedFamilyFixture F;if(!F.Player){return false;}
     for(int32 Type:{16368,24560,33803,54268})
     {
         auto* E=F.Enemy(Type);if(!E){return false;}const int32 Life=E->GetCreatureLife();
@@ -185,7 +185,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalPackedDipperCheckpoint,"AAOriginal.W
     EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
 bool FAAOriginalPackedDipperCheckpoint::RunTest(const FString& Parameters)
 {
-    FFixture F(true);if(!F.Player){return false;}TArray<ANativeWadGuardian*> Actors;
+    FPackedFamilyFixture F(true);if(!F.Player){return false;}TArray<ANativeWadGuardian*> Actors;
     for(int32 Type:{1022,37886})
     {
         auto* E=F.Enemy(Type,Type==1022?-200:200);if(!E){return false;}E->RestoreEncounterHealth(0);E->Tick(3.0f);
@@ -210,7 +210,7 @@ bool FAAOriginalPackedFamilyMissiles::RunTest(const FString& Parameters)
 {
     for(int32 Type:{37886,54268})
     {
-        FFixture F(true);if(!F.Player){return false;}F.Player->SetActorLocation(FVector(400,0,34));auto* E=F.Enemy(Type);if(!E){return false;}
+        FPackedFamilyFixture F(true);if(!F.Player){return false;}F.Player->SetActorLocation(FVector(400,0,34));auto* E=F.Enemy(Type);if(!E){return false;}
         if(Type==37886){E->RestoreEncounterHealth(100);} // The source dipper fires only while retreating.
         E->Tick(0.01f);E->Tick(1.0f);TestEqual(TEXT("Existing source AI launches the restored family projectile"),E->GetBoltsFired(),1);
         AActor* Bolt=nullptr;for(TActorIterator<AActor> I(F.World);I;++I){if(I->GetClass()->GetFName()==TEXT("NativeWadBolt")){Bolt=*I;break;}}
@@ -232,9 +232,9 @@ bool FAAOriginalPackedFamilyMissiles::RunTest(const FString& Parameters)
 
 namespace
 {
-    bool ExpectedPixels(const FWadArtRequest& Request,EWadArtPalette Domain,TArray<FColor>& Out,FIntPoint& Size)
+    bool ReadExpectedPackedFamilyPixels(const FWadArtRequest& Request,EWadArtPalette Domain,TArray<FColor>& Out,FIntPoint& Size)
     {
-        const FString Art=Original()/TEXT("Resources/ArtFinal");TArray<uint8> Cpc;TArray<FColor> Palette;
+        const FString Art=PackedFamilyOriginalRoot()/TEXT("Resources/ArtFinal");TArray<uint8> Cpc;TArray<FColor> Palette;
         if(!FFileHelper::LoadFileToArray(Cpc,*(Art/TEXT("OBJS")/Request.Picture))||Cpc.Num()<4
             ||!NativeWadArt::LoadPalette(Domain,Palette)||Palette.Num()!=256){return false;}
         const auto U16=[&](int32 I){return int32(Cpc[I])|int32(Cpc[I+1])<<8;};Size={U16(2),U16(0)};
@@ -265,15 +265,15 @@ bool FAAOriginalPackedFamilyImported::RunTest(const FString& Parameters)
         TMap<int32,int32> Counts;TSet<FName> Tags;
         for(TActorIterator<ANativeWadGuardian> I(World);I;++I)
         {
-            const int32 Type=I->GetSourceType();if(!MakeArrayView(Types).Contains(Type)){continue;}
+            const int32 Type=I->GetSourceType();if(!MakeArrayView(PackedFamilyTypes).Contains(Type)){continue;}
             ++Counts.FindOrAdd(Type);++Total;if(!TestFalse(TEXT("Every restored actor has a checkpoint identity"),I->Tags.IsEmpty())){return false;}
             TestFalse(TEXT("Primary identities do not duplicate"),Tags.Contains(I->Tags[0]));Tags.Add(I->Tags[0]);
             TestEqual(TEXT("Look retains full packed identity"),I->GetLookSourceType(),Type);TestNotNull(TEXT("Actor retains valid visible art"),I->GetPortraitMaterial());
         }
         for(int32 Index=0;Index<5;++Index)
         {
-            const int32 Type=Types[Index];TestEqual(TEXT("Exact source placement count"),Counts.FindRef(Type),Expected[Index]);if(!Expected[Index]){continue;}
-            const auto* S=Source(Type);if(!S){return false;}FWadCreatureArtSet Art;if(!ResolveWadCampaignCreatureArt(*S,Art,*GLog)){return false;}
+            const int32 Type=PackedFamilyTypes[Index];TestEqual(TEXT("Exact source placement count"),Counts.FindRef(Type),Expected[Index]);if(!Expected[Index]){continue;}
+            const auto* S=FindPackedFamilySource(Type);if(!S){return false;}FWadCreatureArtSet Art;if(!ResolveWadCampaignCreatureArt(*S,Art,*GLog)){return false;}
             const FWadArtRequest* Requests[]={&Art.Standing,&Art.Hurt,&Art.Downed,&Art.Attacking,&Art.Bolt};
             for(const auto* R:Requests)
             {
@@ -293,7 +293,7 @@ bool FAAOriginalPackedFamilyImported::RunTest(const FString& Parameters)
                 TestEqual(TEXT("Exact resource path is source-proven, never inferred fromRGB"),Provenance->ResourcePath,TEXT("OBJS/")+R->Picture);
                 TestTrue(TEXT("Original variant table is retained after world-palette materialization"),Provenance->ColorTable==R->ColorTable);
                 TArray<FColor> Pixels;FIntPoint Size;TArray64<uint8> Actual;
-                if(!ExpectedPixels(*R,Provenance->Palette,Pixels,Size)||!Texture->Source.GetMipData(Actual,0)){return false;}
+                if(!ReadExpectedPackedFamilyPixels(*R,Provenance->Palette,Pixels,Size)||!Texture->Source.GetMipData(Actual,0)){return false;}
                 TestEqual(TEXT("Original padded width"),Texture->Source.GetSizeX(),int64(Size.X));TestEqual(TEXT("Original padded height"),Texture->Source.GetSizeY(),int64(Size.Y));
                 TestTrue(TEXT("Saved stance/projectile pixels match source CPC plus exact authored variant table"),Actual.Num()==Pixels.Num()*int64(sizeof(FColor))
                     &&FMemory::Memcmp(Actual.GetData(),Pixels.GetData(),Actual.Num())==0);
