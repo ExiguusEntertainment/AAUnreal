@@ -72,6 +72,7 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #include "NativeWadPickupMetadata.h"
 #include "NativeWadScenery.h"
 #include "NativeWadScenerySource.h"
+#include "NativeWadLightSource.h"
 #include "NativeWadTown.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/ConvexElem.h"
@@ -842,6 +843,7 @@ struct FAAWadNativeImport
             || (MapName == TEXT("L20") && !InstallL20Script(Actor, Map, WadPath, Output))
             || ((bChurchQuestMap || bExtendedScenery) && !InstallScenery(World, Actor, Map, bExtendedScenery, Output))
             || !InstallOrdinaryScenery(World, Actor, Map, Output, WadPath)
+            || !InstallSourceLightMetadata(World, Actor, Map, WadPath, Output)
             || (bChurchQuestMap && !InstallChurchEncounters(World, Actor, Map, WadPath, Output))
             || (MapName == TEXT("L60") && !InstallL60Script(World, Actor, Map, WadPath, Output))
             || (bRetreatMap && (!InstallRetreatScript(Actor, Map, WadPath, MapName, Output)
@@ -2174,6 +2176,52 @@ struct FAAWadNativeImport
         Output.Logf(TEXT("Ordinary scenery: %d exact source placements (%d created, %d retained); %d unsupported full types explicitly left untouched."),
             Placements.Num(), Created, Placements.Num() - Created, Unsupported.Num());
         return !bAssetError;
+    }
+
+    bool InstallSourceLightMetadata(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
+        const FString& WadPath, FOutputDevice& Output, bool bPreflightOnly=false)
+    {
+        FString Error;
+        const auto Old=Actor.GetSourceLightingMetadata();
+        if(Old.Version!=0&&!NativeWadLightRules::Validate(Old,Error))
+        {Output.Logf(TEXT("Existing source-light metadata is ambiguous: %s"),*Error);return false;}
+        TArray<uint8> Bytes;
+        if(!FFileHelper::LoadFileToArray(Bytes,*WadPath)){Output.Log(TEXT("Original lighting MAP is unavailable."));return false;}
+        TMap<int32,FVector2D> Centers;TMap<int32,ANativeWadScenery*> Bindings;
+        // A prop's editor XY override owns its actual center. Preserve every
+        // actor/tag/transform/material/pickup; only record its current local XY.
+        for(int32 Id=0;Id<Map.Things.Num();++Id)
+        {
+            const int32 Type=uint16(Map.Things[Id].Type);
+            if(!NativeWadLightRules::IsIlluminatingType(Type)){continue;}
+            const FName Tag(*FString::Printf(TEXT("WAD Scenery Thing %d"),Id));
+            ANativeWadScenery* Found=nullptr;
+            for(TActorIterator<AActor> Other(&World);Other;++Other)
+            {
+                auto* Prop=Cast<ANativeWadScenery>(*Other);
+                if(!Other->ActorHasTag(Tag)&&!(Prop&&Prop->GetSourceThingId()==Id)){continue;}
+                if(!Prop||Found||!Prop->ActorHasTag(Tag)||Prop->GetSourceThingId()!=Id
+                    ||(Prop->GetSourceType()!=0&&Prop->GetSourceType()!=Type))
+                {Output.Logf(TEXT("Ambiguous source illumination actor/tag/ThingID %d; no metadata writes."),Id);return false;}
+                Found=Prop;
+            }
+            if(Found)
+            {
+                const FVector Local=Actor.GetActorTransform().InverseTransformPosition(Found->GetActorLocation());
+                Centers.Add(Id,FVector2D(Local.X,Local.Y));Bindings.Add(Id,Found);
+            }
+        }
+        FWadSourceLightingMetadata Metadata;
+        if(!BuildWadSourceLighting(Map,Bytes,FPaths::GetBaseFilename(WadPath).ToUpper(),Centers,Metadata,Error))
+        {Output.Logf(TEXT("Source lighting preflight failed before writes: %s"),*Error);return false;}
+        int32 Markers=0,Props=0,Glows=0;
+        for(auto& Owner:Metadata.Illuminators)
+        {Owner.BoundActor=Bindings.FindRef(Owner.ThingId);Markers+=Owner.SourceType==924;Props+=Owner.SourceType!=924;}
+        for(const auto& D:Metadata.Directives){Glows+=D.MarkerType==1526;}
+        if(!bPreflightOnly&&!Actor.InstallSourceLightingMetadata(Metadata,Error)){Output.Log(*Error);return false;}
+        Output.Logf(TEXT("%s source lighting metadata: %d invisible924 markers, %d prop owners (%d bound existing actors), %d raw glow markers, %d effective animations. %d unaddressable flagged edges excluded explicitly. Runtime feedback enabled%d (unchanged); no rendering/component/actor mutations."),
+            bPreflightOnly?TEXT("Preflight validated without writes"):TEXT("Recorded"),Markers,Props,Bindings.Num(),Glows,Metadata.Animations.Num(),Metadata.UnaddressableTwoSidedLines.Num(),Actor.IsSourceLightFeedbackEnabled());
+        return true;
     }
 
     bool InstallScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, bool bRetreat, FOutputDevice& Output)
@@ -4463,6 +4511,24 @@ bool RefreshNativeWadPickupMetadata(const FString& MapPackage, FOutputDevice& Ou
     if (!Updates.IsEmpty() && !SaveAsset(*World, *FPackageName::GetMapPackageExtension())) { return false; }
     Output.Logf(TEXT("Refreshed source auxiliary metadata on %d/%d authored pickups in %s; retained %d non-map actors and all geometry."),
         Updates.Num(), Matched, *MapPackage, Unbound);
+    return true;
+}
+
+bool RefreshNativeWadSourceLighting(const FString& MapPackage,const FString& WadPath,FOutputDevice& Output,bool bPreflightOnly)
+{
+    const FDoomWadMapData* Map=UDoomWadLoader::GetLastWadMapData();
+    if(!Map||!MapPackage.StartsWith(TEXT("/Game/"))||!FPackageName::IsValidLongPackageName(MapPackage)
+        ||!FPackageName::DoesPackageExist(MapPackage))
+    {Output.Log(TEXT("Source lighting metadata refresh needs the original loaded MAP and an existing native package."));return false;}
+    UWorld* World=LoadObject<UWorld>(nullptr,*(MapPackage+TEXT(".")+FPackageName::GetShortName(MapPackage)));
+    ANativeWadLevel* Level=World?FAAWadNativeImport::FindMatchingLevel(*World,*Map):nullptr;
+    if(!Level||(World->WorldType!=EWorldType::Editor&&World->WorldType!=EWorldType::Inactive))
+    {Output.Log(TEXT("No matching saved native editor topology for source lighting metadata."));return false;}
+    FAAWadNativeImport Import;
+    if(!Import.InstallSourceLightMetadata(*World,*Level,*Map,WadPath,Output,bPreflightOnly)){return false;}
+    if(bPreflightOnly){return true;}
+    if(!SaveAsset(*World,*FPackageName::GetMapPackageExtension())){return false;}
+    Output.Logf(TEXT("Saved only source-light metadata in %s. Existing lighting model/mode, geometry, materials, transforms, collision, actor identities and pickups were retained."),*MapPackage);
     return true;
 }
 

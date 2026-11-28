@@ -397,3 +397,25 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Both muted rendered TownServices and TownServicesReload pass after this fix: classic grid/buttons/hand/arrows/equipment, deposits/withdrawals, buying/selling, wallet, potion and bank balance survive a separate process. Profile Saved/CarriedTownProcessProfile-20261127-191207. Earlier failed real review was not counted as proof.
 - Initial compiler writes to two intermediate objects were denied; unchanged retry succeeded. No source access-policy bypass was needed. Namespaced Dangerous/Carried test fixtures also preserve full-unity safety.
 - PLAN259 complete. Committing/pushing source/save compatibility before disabled source-light metadata, candidate lighting reviews and remaining source effects.
+
+
+## 2026-11-27 19:20 CST - disabled lighting metadata tests pass; all-map persistence starting
+
+- Integrated source-light metadata/kernel and renamed four groups into the WAD suite. All166 regressions pass with full unity build. Census remains655 owners (200 signed924 markers/455 props),78 rawglow directives/151 effective animations,3 valid selfedges and175 unaddressable two-sided lines excluded as original undefined memory access. No runtime model activation yet.
+- Fixed test-only malformed UTF8 BOM text, UE5.6 TArray-versus-array-view Slice call, and invalid fixture self-aliasing Add that asserted before the validator ran. Source arithmetic/census/legacy-output checks passed before that fixture correction; final complete suite now passes.
+- Metadata refresh snapshot includes BOTH CustomPrimitiveData defaults and actual transient CustomPrimitiveDataInternal, using exact C++ reflected names for non-generated Python aliases. Per-map two refreshes now require explicit positive public saves; a separate process must verify disk/source/current-center equality and unchanged actors/components/materials/brightness/CPD/asset bytes on all30. Starting that proof now; PLAN260 remains open until it completes.
+
+
+## 2026-11-27 19:31 CST - live renderer preservation inspection and continuing map proof
+
+- Python can resolve CustomPrimitiveDataInternal by native name, but Unreal protects that runtime field from editor-property reads. The earlier preflight therefore stopped before changes. Added readonly NativeWadArtEditor.DescribePrimitiveData using public native default/live getters; existing legacy-mode test proves runtime0.125 differs from empty defaults and survives metadata installation. Build/all166 tests pass.
+- Actual all-map write pass is progressing with no missing bound prop owners or changed rendering inputs; fresh-process readback remains mandatory. No campaign map has enabled feedback.
+- Finished workers have queued SourceSpriteLighting (3tests/candidate-only exact indexed LUT/mask prototype), PushEffects40 (5tests/source blocked-motion event), Journal and bag quick-use core/real-pointer fixtures. They are not integrated or counted complete. Workers now audit earned Destruction cover/budget, source whole-item acid loss and reachable generic-effect COLOR_FLASH.
+- Corrected PLAN shorthand for opcode18: one authored stored S44 activity2 body exists, but is unreachable per the existing import audit. Generic opcode52 has18 authored effect calls; only S41 activity211 invokes effect COLOR_FLASH52, +50/+50/+50.
+
+
+## 2026-11-27 19:35 CST - all30 disabled source-light metadata verified
+
+- Strict write pass and separate-process reopening both pass all30 maps. Exact independent source/current-center metadata matches655 owners (200 markers/455 props),78 raw glow/151 effective animations,3 source selfedges and175 explicitly excluded invalid flagged references. No bound prop owners are missing.
+- All166 tests/full unity pass. Two refreshes and public positive saves per map retain actor/component transforms/tags/geometry/collision/materials, source file/asset hashes, brightness/ordinary light components, default/live CPD and legacy rendering mode. No new point lights or runtime feedback activation.
+- Readonly native primitive-data inspector closes the Python protected-field verification gap without exposing writable properties. PLAN260 complete; committing/pushing30 maps plus metadata/kernel/source QA before candidate-only runtime feedback.

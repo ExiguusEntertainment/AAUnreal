@@ -1094,6 +1094,26 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD packed Druids refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.PREFLIGHTNATIVEWADSOURCELIGHTING")))
+        {
+            const FString WadPath=ResolvePathOrProjectRelative(FParse::Token(Cmd,false));
+            const FString MapName=SanitizeMapMarker(FParse::Token(Cmd,false));
+            const FString Package=FParse::Token(Cmd,false);
+            if(WadPath.IsEmpty()||MapName.IsEmpty()||Package.IsEmpty()
+                ||!UDoomWadLoader::LoadDoomWadMap(WadPath,MapName)||!RefreshNativeWadSourceLighting(Package,WadPath,Ar,true))
+            {UE_LOG(LogTemp,Error,TEXT("AA.PreflightNativeWadSourceLighting failed. Usage: <MAP> <MapName> </Game/Maps/MapName>"));}
+            UE_LOG(LogTemp,Display,TEXT("Native WAD source lighting metadata preflight finished"));return true;
+        }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADSOURCELIGHTING")))
+        {
+            const FString WadPath=ResolvePathOrProjectRelative(FParse::Token(Cmd,false));
+            const FString MapName=SanitizeMapMarker(FParse::Token(Cmd,false));
+            const FString Package=FParse::Token(Cmd,false);
+            if(WadPath.IsEmpty()||MapName.IsEmpty()||Package.IsEmpty()
+                ||!UDoomWadLoader::LoadDoomWadMap(WadPath,MapName)||!RefreshNativeWadSourceLighting(Package,WadPath,Ar))
+            {UE_LOG(LogTemp,Error,TEXT("AA.RefreshNativeWadSourceLighting failed. Usage: <MAP> <MapName> </Game/Maps/MapName>"));}
+            UE_LOG(LogTemp,Display,TEXT("Native WAD source lighting metadata refresh finished"));return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADORDINARYSCENERY")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));

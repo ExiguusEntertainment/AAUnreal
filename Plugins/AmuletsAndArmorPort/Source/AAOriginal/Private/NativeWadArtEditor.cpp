@@ -9,6 +9,7 @@
 #include "AssetCompilingManager.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/AssetData.h"
+#include "Components/PrimitiveComponent.h"
 #include "Engine/Texture2D.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -266,6 +267,25 @@ FString UNativeWadArtEditor::DescribeInterfaceArt()
     {if(Asset.AssetClassPath==UTexture2D::StaticClass()->GetClassPathName())
         {if(auto* Texture=Cast<UTexture2D>(Asset.GetAsset())){Rows.Add(MakeShared<FJsonValueObject>(Describe(*Texture)));}}}
     Report->SetArrayField(TEXT("textures"),Rows);return Json(Report);
+#else
+    return TEXT("{}");
+#endif
+}
+
+FString UNativeWadArtEditor::DescribePrimitiveData(const UPrimitiveComponent* Component)
+{
+#if WITH_EDITOR
+    if(!Component){return TEXT("{}");}
+    auto Report=MakeShared<FJsonObject>();
+    const auto Add=[&](const TCHAR* Name,const FCustomPrimitiveData& Data)
+    {
+        TArray<TSharedPtr<FJsonValue>> Values;
+        for(float Value:Data.Data){Values.Add(MakeShared<FJsonValueNumber>(Value));}
+        Report->SetArrayField(Name,Values);
+    };
+    Add(TEXT("defaults"),Component->GetDefaultCustomPrimitiveData());
+    Add(TEXT("runtime"),Component->GetCustomPrimitiveData());
+    return Json(Report);
 #else
     return TEXT("{}");
 #endif

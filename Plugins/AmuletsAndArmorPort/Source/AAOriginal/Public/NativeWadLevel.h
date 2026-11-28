@@ -4,6 +4,7 @@
 #include "DoomWadWalls.h"
 #include "Engine/TimerHandle.h"
 #include "NativeWadScript.h"
+#include "NativeWadLightRules.h"
 #include "GameFramework/Actor.h"
 #include "NativeWadLevel.generated.h"
 
@@ -279,6 +280,12 @@ public:
     int32 GetSectorLightLevel(int32 Sector) const;
 
     int32 GetOutsideLightLevel() const { return OutsideLight; }
+    UFUNCTION(BlueprintPure, Category="WAD|Lighting")
+    FWadSourceLightingMetadata GetSourceLightingMetadata() const { return SourceLightingMetadata; }
+    UFUNCTION(BlueprintPure, Category="WAD|Lighting")
+    bool IsSourceLightFeedbackEnabled() const { return bUseSourceLightFeedback; }
+    bool InstallSourceLightingMetadata(const FWadSourceLightingMetadata& Metadata, FString& Error);
+
 
     UFUNCTION(BlueprintCallable, Category="WAD|Runtime")
     bool SetSectorTextureScrollTexels(int32 Sector, bool bCeiling, FVector2D Offset);
@@ -528,6 +535,12 @@ private:
     FDoomWadMapData WallTopology;
     TArray<FWadSectorHeightRange> Heights;
     TArray<TArray<int32>> LinesBySector;
+    // Additive source metadata only; old and refreshed maps remain legacy by default.
+    UPROPERTY()
+    FWadSourceLightingMetadata SourceLightingMetadata;
+    UPROPERTY()
+    bool bUseSourceLightFeedback = false;
+
     TArray<TArray<int32>> LightingNeighbors;
     TMap<int32, int32> DoorBySector;
     TArray<int32> AppliedLights;

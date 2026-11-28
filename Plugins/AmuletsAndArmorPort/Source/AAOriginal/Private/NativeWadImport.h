@@ -37,3 +37,7 @@ bool RefreshNativeWadMissingMaterials(const FString& MapPackage, FOutputDevice& 
 #if WITH_EDITOR
 bool RefreshNativeWadOrdinaryScenery(const FString& MapPackage, const FString& SourceWadPath, FOutputDevice& Output);
 #endif
+
+#if WITH_EDITOR
+bool RefreshNativeWadSourceLighting(const FString& MapPackage, const FString& WadPath, FOutputDevice& Output, bool bPreflightOnly=false);
+#endif
