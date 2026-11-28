@@ -53,20 +53,21 @@ int32 ANativeWadPlayer::GetBagPage() const
 void ANativeWadPlayer::SetBagPage(int32 Page)
 {EnsureBagLayout();BagPage=FMath::Clamp(Page,0,BagLayout.PageCount()-1);}
 
-bool ANativeWadPlayer::AppendBagItem(int32 Type)
+bool ANativeWadPlayer::AppendBagItem(int32 Type,bool bRecorded,int32 AccessoryData)
 {
     if(Type<=0||Type>MAX_uint16){return false;}
     EnsureBagLayout();if(!bBagLayoutInitialized||BagLayout.Num()>=FWadBagLayout::MaxSlots){return false;}
-    FWadBagLayout Candidate=BagLayout;Candidate.AddSlot();const int32 Slot=CarriedItems.Add(Type);
+    FWadBagLayout Candidate=BagLayout;if(!Candidate.AddSlot()){return false;}
+    const int32 Slot=CarriedItems.Num();if(!AppendCarriedObject(Type,bRecorded,AccessoryData)){return false;}
     const auto Items=GetBagItems();
     if(!NativeWadRules::IsRuneItem(Type)&&!Candidate.AutoPlace(Slot,Items))
-    {CarriedItems.RemoveAt(Slot);return false;}
+    {RemoveCarriedObjectAt(Slot);return false;}
     BagLayout=MoveTemp(Candidate);return true;
 }
 
 bool ANativeWadPlayer::TryPlaceMouseHandInBag(int32 Page,FVector2D Point)
 {
-    if(IsDefeated()||!CarriedItems.IsValidIndex(SelectedInventorySlot)
+    if(IsDefeated()||!EnsureCarriedObjectData()||!CarriedItems.IsValidIndex(SelectedInventorySlot)
         ||!FMath::IsFinite(Point.X)||!FMath::IsFinite(Point.Y)
         ||Point.X<213||Point.X>315||Point.Y<16||Point.Y>129){return false;}
     EnsureBagLayout();auto Items=GetBagItems();const int32 Slot=SelectedInventorySlot;Items[Slot].bOffPage=false;

@@ -1321,7 +1321,10 @@ bool ANativeWadPickup::Collect(ANativeWadPlayer& Player)
     else
     {
         const auto Ammo = NativeWadPickupMetadata::ResolveAmmo(ItemType, bAccessoryDataRecorded, AccessoryData, AmmoIndex, AmmoQuantity);
-        if (!(Ammo.Index == INDEX_NONE ? Player.CollectItem(ItemType) : Player.CollectAmmo(Ammo.Index, Ammo.Quantity))) { return false; }
+        const bool bCollected=Ammo.Index==INDEX_NONE
+            ? bAccessoryDataRecorded?Player.CollectItemWithAccessoryData(ItemType,AccessoryData):Player.CollectItem(ItemType)
+            : Player.CollectAmmo(Ammo.Index,Ammo.Quantity);
+        if(!bCollected){return false;}
         bCollectionCommitted = true;
     }
     Destroy();

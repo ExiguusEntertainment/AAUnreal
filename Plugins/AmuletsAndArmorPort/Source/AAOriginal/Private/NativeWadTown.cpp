@@ -520,6 +520,14 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
         ShowInteractionMessage(TEXT("Starting equipment is unavailable."));
         return false;
     }
+    if(!EnsureCarriedObjectData()){return false;}
+    TArray<int32> StarterItems=Catalog->StartingEquipment[Index].Items;
+    StarterItems.Add(StartingWaterGourd);
+    for(int32 FoodIndex=0;FoodIndex<5;++FoodIndex)
+    {StarterItems.Add(StartingFoods[FMath::RandHelper(UE_ARRAY_COUNT(StartingFoods))]);}
+    StarterItems.Add(NativeWadIdentification::AllScroll);
+    FWadCarriedObjectState StarterData=CarriedObjectData;
+    for(int32 Type:StarterItems){if(!StarterData.Append(Type)){return false;}}
     const FWadCharacterClass& Class = CharacterClasses[Index];
     bDefeated = false;
     CharacterClass = Index;
@@ -527,13 +535,8 @@ bool ANativeWadPlayer::ChooseWadClass(int32 Index)
     MaxMana = Mana = Class.Base[MagicAttribute] * 100;
     MaxHealth = Health = (10 + Class.Base[ConstitutionAttribute] / 2) * 100;
     const FWadStartingEquipment& Equipment = Catalog->StartingEquipment[Index];
-    CarriedItems.Append(Equipment.Items);
-    CarriedItems.Add(StartingWaterGourd);
-    for (int32 FoodIndex = 0; FoodIndex < 5; ++FoodIndex)
-    {
-        CarriedItems.Add(StartingFoods[FMath::RandHelper(UE_ARRAY_COUNT(StartingFoods))]);
-    }
-    CarriedItems.Add(NativeWadIdentification::AllScroll);
+    CarriedItems.Append(StarterItems);
+    CarriedObjectData=MoveTemp(StarterData);
     if (auto* Travel = TownTravel(*GetWorld()))
     {
         Travel->Quest.SetWalletCopper(FMath::Min(FWadQuestProgress::WalletLimit,
@@ -614,8 +617,10 @@ bool ANativeWadPlayer::TradeWadTownItem(int32 Selection, bool bSelling, bool bBa
         return false;
     }
     EnsureBagLayout();
-    if(!BagLayout.AddSlot()){return false;}
-    SelectedInventorySlot = CarriedItems.Add(Type);
+    if(!EnsureCarriedObjectData()||!BagLayout.AddSlot()){return false;}
+    const int32 Slot=CarriedItems.Num();
+    if(!AppendCarriedObject(Type)){BagLayout.RemoveAt(Slot);return false;}
+    SelectedInventorySlot = Slot;
     Progress.SetWalletCopper(Progress.GetWalletCopper() - Rules->ValueCopper);
     // STORE.C identifies the exact purchased type after the transaction succeeds.
     IdentifyItemType(Type);

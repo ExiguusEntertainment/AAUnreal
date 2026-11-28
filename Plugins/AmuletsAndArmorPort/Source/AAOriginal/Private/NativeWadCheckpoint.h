@@ -237,11 +237,13 @@ class UNativeWadCheckpoint : public USaveGame
     GENERATED_BODY()
 
 public:
-    static constexpr int32 CurrentVersion = 3;
+    static constexpr int32 CurrentVersion = 4;
     static constexpr const TCHAR* Slot = TEXT("NativeWadCheckpoint");
 
     UPROPERTY()
-    int32 Version = CurrentVersion;
+    // Keep the class default stable: tagged SaveGame serialization omits
+    // default-valued fields in old files. Writers explicitly stamp CurrentVersion.
+    int32 Version = 1;
 
     UPROPERTY()
     FString LevelPackage;

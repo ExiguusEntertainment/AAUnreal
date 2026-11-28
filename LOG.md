@@ -388,3 +388,12 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - Source825 poison1000,826 fire1000,827 normal1000 and907 READY electricity200 preserve trigger, typed defenses, identification, ordinary actions and ownership. Used harmful potions detach before immediate defeat drops; tests cover no duplicate drops, invulnerability, Death Ward, Dispel reREADY and actual firing. Native checkpoint restoration does not re-charge READY; that deliberate difference from original character-load reREADY remains explicit.
 - Pure carried-data codec passes three additional groups for ordered full-type witnesses, recorded uint16 payloads, strict modern malformed refusal, missing-only legacy migration, atomicity and bounds. Runtime append/remove/drop/travel/save wiring is not yet installed, so PLAN259 remains open.
 - PLAN258 complete; committing/pushing source, required catalog and pure codec foundation before runtime ownership integration.
+
+
+## 2026-11-27 19:13 CST - carried runtime and genuine legacy migration verified
+
+- All162 WAD tests and full unity build pass. Runtime sidecar follows central append/remove, held/Ready/worn remaps, class starters, Town money/items, exact physical world GET/drop/death and version4 disk/travel saves. Corrupted modern ownership refuses atomically; failed saves preserve earlier records. Original source type-only visual stacks stay intact; per-object auxiliary preservation intentionally improves original character saves.
+- Real old Town0 save exposed Unreal default-delta serialization: it contained no Version tag. Bumping the CDO default to4 misread it as modern. Fixed stable read default1 plus explicit production writer CurrentVersion4; strengthened Persistence to assert an actually absent serialized tag and load it through the production reader. Modern stripped-field rejection remains tested.
+- Both muted rendered TownServices and TownServicesReload pass after this fix: classic grid/buttons/hand/arrows/equipment, deposits/withdrawals, buying/selling, wallet, potion and bank balance survive a separate process. Profile Saved/CarriedTownProcessProfile-20261127-191207. Earlier failed real review was not counted as proof.
+- Initial compiler writes to two intermediate objects were denied; unchanged retry succeeded. No source access-policy bypass was needed. Namespaced Dangerous/Carried test fixtures also preserve full-unity safety.
+- PLAN259 complete. Committing/pushing source/save compatibility before disabled source-light metadata, candidate lighting reviews and remaining source effects.

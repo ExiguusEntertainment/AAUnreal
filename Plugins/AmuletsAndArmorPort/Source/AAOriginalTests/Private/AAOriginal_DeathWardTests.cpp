@@ -289,7 +289,7 @@ bool FAAOriginalDeathWardPersistence::RunTest(const FString& Parameters)
         USaveGame* RawSave = UGameplayStatics::LoadGameFromSlot(Slot, 0);
         if (!TestNotNull(TEXT("Read the actual disk checkpoint"), RawSave)) { return false; }
         const auto* Save = static_cast<UNativeWadCheckpoint*>(RawSave);
-        TestEqual(TEXT("The new liveness semantics use checkpoint version3"), Save->Version, 3);
+        TestEqual(TEXT("The current checkpoint preserves liveness semantics"), Save->Version, UNativeWadCheckpoint::CurrentVersion);
         const FString Options = Save->LevelPackage + TEXT("?") + Save->PlayerOptions;
         const FURL URL(nullptr, *Options, TRAVEL_Absolute);
         TestEqual(TEXT("Modern travel options explicitly preserve alive state"), FString(URL.GetOption(TEXT("WadDefeated="), TEXT("missing"))), FString(TEXT("0")));

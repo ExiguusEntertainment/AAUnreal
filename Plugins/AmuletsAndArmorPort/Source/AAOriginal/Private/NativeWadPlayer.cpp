@@ -279,6 +279,7 @@ void ANativeWadPlayer::ReadTravelOptions(const FURL& URL)
             && !IsWornInventorySlot(Slot) && !IsRuneItem(CarriedItems[Slot]))
         { SelectedInventorySlot = Slot; }
     }
+    RestoreCarriedObjectData(URL);
     RestoreFlightEquipmentOwners(URL);
     const TCHAR* BagPayload=URL.GetOption(TEXT("WadBagLayout="),nullptr);
     if(!BagPayload&&URL.HasOption(TEXT("WadBagLayout"))){BagPayload=TEXT("");}
@@ -543,6 +544,7 @@ FString ANativeWadPlayer::MakeTravelOptions() const
             Options += FString::Printf(TEXT("?WadEffectPower%d=%d"), Index, ItemStatusPower[Index]);
         }
     }
+    Options += TEXT("?WadObjectData=") + (HasValidCarriedObjectData() ? CarriedObjectData.Encode(CarriedItems) : FString());
     Options += TEXT("?WadBagLayout=") + GetBagLayout().Encode(GetBagItems());
     Options += FString::Printf(TEXT("?WadBagPage=%d"),GetBagPage());
     Options += TEXT("?WadOwnedEffects=") + TimedEffects.Encode();
@@ -1030,6 +1032,7 @@ bool ANativeWadPlayer::AddCoinsToPurse(int32 Type)
 
 void ANativeWadPlayer::MoveLegacyCoinsToPurse()
 {
+    if(!EnsureCarriedObjectData()){return;}
     for (int32 Slot = CarriedItems.Num() - 1; Slot >= 0; --Slot)
     {
         if (CoinValueCopper(CarriedItems[Slot]) > 0 && AddCoinsToPurse(CarriedItems[Slot]))
@@ -1040,6 +1043,12 @@ void ANativeWadPlayer::MoveLegacyCoinsToPurse()
 }
 
 bool ANativeWadPlayer::CollectItem(int32 Type)
+{return CollectCarriedItem(Type,false,0);}
+
+bool ANativeWadPlayer::CollectItemWithAccessoryData(int32 Type,int32 AccessoryData)
+{return AccessoryData>=0&&AccessoryData<=MAX_uint16&&CollectCarriedItem(Type,true,AccessoryData);}
+
+bool ANativeWadPlayer::CollectCarriedItem(int32 Type,bool bRecorded,int32 AccessoryData)
 {
     const bool bCoin = CoinValueCopper(Type) > 0;
     if (bCoin && !AddCoinsToPurse(Type))
@@ -1049,7 +1058,7 @@ bool ANativeWadPlayer::CollectItem(int32 Type)
     }
     if (!bCoin)
     {
-        if(!AppendBagItem(Type))
+        if(!AppendBagItem(Type,bRecorded,AccessoryData))
         {ShowInteractionMessage(TEXT("There is no room in your inventory."));return false;}
         UE_LOG(LogTemp, Display, TEXT("Collected WAD item type %d. Count %d."), Type, GetItemCount(Type));
     }

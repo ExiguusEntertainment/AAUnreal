@@ -195,13 +195,13 @@ bool ANativeWadPlayer::ConsumeItem(int32 Type)
 
 bool ANativeWadPlayer::RemoveInventorySlot(int32 Slot)
 {
-    if (!CarriedItems.IsValidIndex(Slot))
+    if (!CarriedItems.IsValidIndex(Slot) || !EnsureCarriedObjectData())
     {
         return false;
     }
     EnsureBagLayout();
     BagLayout.RemoveAt(Slot);
-    CarriedItems.RemoveAt(Slot);
+    RemoveCarriedObjectAt(Slot);
     if (ReadySlot == Slot)
     {
         ReadySlot = INDEX_NONE;
@@ -389,7 +389,7 @@ bool ANativeWadPlayer::EquipJewelry(int32 Slot, const FWadInventoryDetails& Deta
 
 bool ANativeWadPlayer::TakeInventoryItem(int32 Slot)
 {
-    if (IsDefeated() || !CarriedItems.IsValidIndex(Slot) || IsRuneItem(CarriedItems[Slot])) { return false; }
+    if (IsDefeated() || !EnsureCarriedObjectData() || !CarriedItems.IsValidIndex(Slot) || IsRuneItem(CarriedItems[Slot])) { return false; }
     if (SelectedInventorySlot == Slot) { return true; }
     if (CarriedItems.IsValidIndex(SelectedInventorySlot) || Slot == ReadySlot || IsWornInventorySlot(Slot)) { return false; }
     EnsureBagLayout();
@@ -400,7 +400,7 @@ bool ANativeWadPlayer::TakeInventoryItem(int32 Slot)
 
 void ANativeWadPlayer::StoreMouseHandInInventory()
 {
-    if (IsDefeated()) { return; }
+    if (IsDefeated() || !EnsureCarriedObjectData()) { return; }
     EnsureBagLayout();
     if(!CarriedItems.IsValidIndex(SelectedInventorySlot)){return;}
     auto Items=GetBagItems();Items[SelectedInventorySlot].bOffPage=false;
@@ -408,6 +408,12 @@ void ANativeWadPlayer::StoreMouseHandInInventory()
 }
 
 bool ANativeWadPlayer::CreateWadItemInMouseHand(int32 Type)
+{return CreateCarriedItemInMouseHand(Type,false,0);}
+
+bool ANativeWadPlayer::CreateWadItemInMouseHandWithAccessoryData(int32 Type,int32 AccessoryData)
+{return AccessoryData>=0&&AccessoryData<=MAX_uint16&&CreateCarriedItemInMouseHand(Type,true,AccessoryData);}
+
+bool ANativeWadPlayer::CreateCarriedItemInMouseHand(int32 Type,bool bRecorded,int32 AccessoryData)
 {
     // EFFECT.C CREATE_OBJECT checks the hand after SPELLS.C has charged mana.
     // It adds an ordinary inventory object without a GET/identify/use trigger.
@@ -424,14 +430,16 @@ bool ANativeWadPlayer::CreateWadItemInMouseHand(int32 Type)
         return false;
     }
     EnsureBagLayout();
-    if(!BagLayout.AddSlot()){return false;}
-    SelectedInventorySlot = CarriedItems.Add(Type);
+    if(!EnsureCarriedObjectData()||!BagLayout.AddSlot()){return false;}
+    const int32 Slot=CarriedItems.Num();
+    if(!AppendCarriedObject(Type,bRecorded,AccessoryData)){BagLayout.RemoveAt(Slot);return false;}
+    SelectedInventorySlot = Slot;
     return true;
 }
 
 bool ANativeWadPlayer::SwapMouseAndReady()
 {
-    if (IsDefeated()) { return false; }
+    if (IsDefeated() || !EnsureCarriedObjectData()) { return false; }
     if (CarriedItems.IsValidIndex(SelectedInventorySlot))
     {
         const int32 Type = CarriedItems[SelectedInventorySlot];
@@ -496,7 +504,7 @@ void ANativeWadPlayer::ClickInventorySlot(int32 Slot)
 
 void ANativeWadPlayer::ClickArmorSlot(int32 Location)
 {
-    if (IsDefeated() || Location < 0 || Location >= EquipmentSlotCount) { return; }
+    if (IsDefeated() || !EnsureCarriedObjectData() || Location < 0 || Location >= EquipmentSlotCount) { return; }
     const int32 Previous = WornSlots[Location];
     if (!CarriedItems.IsValidIndex(SelectedInventorySlot))
     {
@@ -522,7 +530,7 @@ void ANativeWadPlayer::ClickArmorSlot(int32 Location)
 
 void ANativeWadPlayer::ClickJewelrySlot(int32 Location)
 {
-    if (IsDefeated() || Location < 0 || Location >= JewelrySlotCount) { return; }
+    if (IsDefeated() || !EnsureCarriedObjectData() || Location < 0 || Location >= JewelrySlotCount) { return; }
     const int32 Previous = JewelrySlots[Location];
     const bool bPlacing = CarriedItems.IsValidIndex(SelectedInventorySlot);
     const int32 Slot = bPlacing ? SelectedInventorySlot : Previous;
@@ -536,7 +544,7 @@ void ANativeWadPlayer::ClickJewelrySlot(int32 Location)
 
 void ANativeWadPlayer::UseReadyHand()
 {
-    if (IsDefeated() || bInventoryOpen)
+    if (IsDefeated() || bInventoryOpen || !EnsureCarriedObjectData())
     {
         return;
     }
@@ -750,14 +758,17 @@ void ANativeWadPlayer::RetrieveCoin(int32 Type)
     if (CoinDenominationCount(Wallet, Type & ~1) >= Count)
     {
         EnsureBagLayout();
-        if(!BagLayout.AddSlot()){return;}
-        SelectedInventorySlot = CarriedItems.Add(Type);
+        if(!EnsureCarriedObjectData()||!BagLayout.AddSlot()){return;}
+        const int32 Slot=CarriedItems.Num();
+        if(!AppendCarriedObject(Type)){BagLayout.RemoveAt(Slot);return;}
+        SelectedInventorySlot = Slot;
         Travel->Quest.SetWalletCopper(Wallet - CoinValueCopper(Type));
     }
 }
 
 void ANativeWadPlayer::ReturnSelectedCoin()
 {
+    if(!EnsureCarriedObjectData()){return;}
     if (CarriedItems.IsValidIndex(SelectedInventorySlot) && AddCoinsToPurse(CarriedItems[SelectedInventorySlot]))
     {
         RemoveInventorySlot(SelectedInventorySlot);
@@ -893,23 +904,28 @@ void ANativeWadPlayer::DropInventoryItem()
 
     FVector Position = Ahead;
     Position.Z = Level->GetActorLocation().Z + Heights.X + Details->SpriteSize.Y * 0.5 + 1.0;
-    if (!ANativeWadPickup::SpawnDropped(*Level, Type, Position))
+    const FWadCarriedObjectData* Metadata=GetCarriedObjectData(Slot);
+    if(!Metadata){return;}
+    ANativeWadPickup* Dropped=ANativeWadPickup::SpawnDropped(*Level,Type,Position);
+    if(!Dropped)
     {
         ShowInteractionMessage(TEXT("Cannot drop that item here"));
         return;
     }
-    RemoveInventorySlot(Slot);
+    Dropped->RestoreAccessoryData(Metadata->AccessoryData,Metadata->bAccessoryDataRecorded);
+    if(!RemoveInventorySlot(Slot)){Dropped->Destroy();return;}
     ShowInteractionMessage(FString::Printf(TEXT("Dropped %s"), *GetInventoryItemDescription(Type)));
 }
 
 void ANativeWadPlayer::DropDefeatedItems()
 {
+    if(!EnsureCarriedObjectData()){return;}
     ANativeWadLevel* Level = NativeLevel.Get();
     if (!Level)
     {
         return;
     }
-    const auto Drop = [&](int32 Type, int32 Index)
+    const auto Drop = [&](int32 Type, int32 Index, const FWadCarriedObjectData* Metadata=nullptr)
     {
         const FVector Origin = GetActorLocation();
         const FVector Candidate = Origin + FRotator(0.0, Index * 137.5, 0.0).Vector() * (18.0 + Index % 4 * 7.0);
@@ -924,6 +940,7 @@ void ANativeWadPlayer::DropDefeatedItems()
                 if (ANativeWadPickup* Pickup = ANativeWadPickup::SpawnDropped(*Level, Type,
                     FVector(Location.X, Location.Y, Level->GetActorLocation().Z + Heights.X + Offset)))
                 {
+                    if(Metadata){Pickup->RestoreAccessoryData(Metadata->AccessoryData,Metadata->bAccessoryDataRecorded);}
                     return Pickup;
                 }
             }
@@ -933,7 +950,7 @@ void ANativeWadPlayer::DropDefeatedItems()
     for (int32 Slot = CarriedItems.Num() - 1; Slot >= 0; --Slot)
     {
         const int32 Type = CarriedItems[Slot];
-        if ((Type < 300 || Type > 317) && Drop(Type, Slot))
+        if ((Type < 300 || Type > 317) && Drop(Type, Slot, CarriedObjectData.Get(Slot)))
         {
             RemoveInventorySlot(Slot);
         }

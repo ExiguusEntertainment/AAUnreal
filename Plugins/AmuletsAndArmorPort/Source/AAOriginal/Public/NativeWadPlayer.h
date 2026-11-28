@@ -7,6 +7,7 @@
 #include "NativeWadPlayerEffects.h"
 #include "NativeWadMagicMap.h"
 #include "NativeWadBagLayout.h"
+#include "NativeWadCarriedObjectData.h"
 #include "NativeWadPlayer.generated.h"
 
 class UPrimitiveComponent;
@@ -77,6 +78,10 @@ public:
     bool CollectAmmo(int32 Index, int32 Quantity);
     void RetrieveAmmo(int32 Index);
     const TArray<int32>& GetCarriedItems() const { return CarriedItems; }
+    const FWadCarriedObjectData* GetCarriedObjectData(int32 Slot) const;
+    bool HasValidCarriedObjectData() const;
+    bool CollectItemWithAccessoryData(int32 Type, int32 AccessoryData);
+    bool CreateWadItemInMouseHandWithAccessoryData(int32 Type, int32 AccessoryData);
     TArray<FWadBagItem> GetBagItems() const;
     const FWadBagLayout& GetBagLayout() const;
     int32 GetBagPage() const;
@@ -176,7 +181,7 @@ private:
     void EnsureBagLayout();
     void RestoreBagLayout(const TCHAR* Payload);
     void InitializeCreationBagLayout();
-    bool AppendBagItem(int32 Type);
+    bool AppendBagItem(int32 Type, bool bRecorded = false, int32 AccessoryData = 0);
     FWadBagLayout BagLayout;
     bool bBagLayoutInitialized=false;
     bool bModernBagLayout=false;
@@ -304,6 +309,15 @@ private:
     TOptional<double> TravelHour;
     double NeedsTime = 0.0;
     TArray<int32> CarriedItems;
+    FWadCarriedObjectState CarriedObjectData;
+    bool bCarriedObjectDataInitialized = false;
+    bool bCarriedObjectDataValid = true;
+    bool EnsureCarriedObjectData();
+    bool AppendCarriedObject(int32 Type, bool bRecorded = false, int32 AccessoryData = 0);
+    bool RemoveCarriedObjectAt(int32 Slot);
+    bool CollectCarriedItem(int32 Type, bool bRecorded, int32 AccessoryData);
+    bool CreateCarriedItemInMouseHand(int32 Type, bool bRecorded, int32 AccessoryData);
+    void RestoreCarriedObjectData(const FURL& URL);
     // Full uint16 source type IDs: colored item variants have independent knowledge.
     TSet<int32> IdentifiedItemTypes;
     bool bItemIdentificationInitialized = false;

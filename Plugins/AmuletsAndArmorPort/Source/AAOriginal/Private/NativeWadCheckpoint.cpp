@@ -11,6 +11,7 @@
 #include "NativeWadEncounter.h"
 #include "NativeWadHudData.h"
 #include "NativeWadBagState.h"
+#include "NativeWadCarriedObjectState.h"
 #include "NativeWadLevel.h"
 #include "NativeWadOptions.h"
 #include "NativeWadPlayer.h"
@@ -47,6 +48,11 @@ namespace
             FWadPlayerEffects Effects;
             if (!Effects.Decode(Payload)) { return nullptr; }
         }
+        // Version4 writers always record both aligned payloads. A stripped
+        // modern field cannot masquerade as legacy migration or grant overflow.
+        if(Save->Version>=4&&(!URL.GetOption(TEXT("WadObjectData="),nullptr)
+            ||!URL.GetOption(TEXT("WadBagLayout="),nullptr))){return nullptr;}
+        if(!NativeWadCarriedObjectState::ValidateOptions(URL)){return nullptr;}
         if(!NativeWadBagState::ValidateOptions(URL,NativeWadBagState::CatalogRule)){return nullptr;}
         return Save;
     }
@@ -482,9 +488,11 @@ bool ANativeWadLevel::RestoreCheckpoint(const FWadLevelCheckpoint& Checkpoint)
 
 bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
 {
+    if(!HasValidCarriedObjectData()){return false;}
     const auto& CheckedBag=GetBagLayout();const auto CheckedItems=GetBagItems();
     if(!CheckedBag.Validate(CheckedItems)||CheckedBag.Encode(CheckedItems).IsEmpty()){return false;}
     UNativeWadCheckpoint* Save = NewObject<UNativeWadCheckpoint>();
+    Save->Version = UNativeWadCheckpoint::CurrentVersion;
     Save->bTown = IsInWadTown();
     const ANativeWadLevel* Level = NativeLevel.Get();
     if (IsDefeated() || (!Save->bTown && (QuakeTime > 0.0 || !GetCharacterMovement()->IsMovingOnGround()
@@ -498,6 +506,7 @@ bool ANativeWadPlayer::SaveWadCheckpoint(const FString& Slot) const
     Save->NeedsTime = NeedsTime;
     Save->PlayerOptions = MakeTravelOptions();
     const FURL SavedOptions(nullptr,*(Save->LevelPackage+TEXT("?")+Save->PlayerOptions),TRAVEL_Absolute);
+    if(!NativeWadCarriedObjectState::ValidateOptions(SavedOptions)){return false;}
     if(!NativeWadBagState::ValidateOptions(SavedOptions,NativeWadBagState::CatalogRule)){return false;}
     Save->bItemIdentificationRecorded = bItemIdentificationInitialized;
     Save->IdentifiedItemTypes = IdentifiedItemTypes;
@@ -547,6 +556,8 @@ void ANativeWadPlayer::RestoreWadCheckpoint()
     }
     const FURL SavedURL(nullptr, *(Save->LevelPackage + TEXT("?") + Save->PlayerOptions), TRAVEL_Absolute);
     CarriedItems.Reset();
+    CarriedObjectData=FWadCarriedObjectState();
+    bCarriedObjectDataInitialized=false;bCarriedObjectDataValid=true;
     ReadTravelOptions(SavedURL);
     RestoreItemIdentification(Save->IdentifiedItemTypes, Save->bItemIdentificationRecorded);
     NeedsTime = FMath::Clamp(Save->NeedsTime, 0.0, 6.0);

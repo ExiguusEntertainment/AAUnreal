@@ -17,9 +17,8 @@
 #include "../../AAOriginal/Private/NativeWadHudData.h"
 #include "../../AAOriginal/Private/NativeWadItemSource.h"
 
-namespace
+namespace AAOriginalDangerousItemTests
 {
-    using namespace NativeWadRules;
     struct FDangerousItemFixture
     {
         UGameInstance* Instance = nullptr;
@@ -122,6 +121,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalDangerousItemSource, "AAOriginal.WAD
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FAAOriginalDangerousItemSource::RunTest(const FString& Parameters)
 {
+    using namespace AAOriginalDangerousItemTests;
+    using namespace NativeWadRules;
     TMap<int32,FWadAuthoredItem> Items;
     FOutputDeviceNull Output;
     if (!TestTrue(TEXT("Decode actual source object resources and INVDESC"), ReadWadAuthoredItems({825,826,827,907,954},Items,Output))) { return false; }
@@ -162,6 +163,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalDangerousPotionUse, "AAOriginal.WAD.
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FAAOriginalDangerousPotionUse::RunTest(const FString& Parameters)
 {
+    using namespace AAOriginalDangerousItemTests;
+    using namespace NativeWadRules;
     const int32 Types[]={825,826,827};
     const uint8 Masks[]={DamageFlag(EProjectileDamage::Poison),DamageFlag(EProjectileDamage::Fire),NormalDamage};
     const int32 ResistAmulets[]={606,607,0};
@@ -211,6 +214,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalLightningWandReady, "AAOriginal.WAD.
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FAAOriginalLightningWandReady::RunTest(const FString& Parameters)
 {
+    using namespace AAOriginalDangerousItemTests;
+    using namespace NativeWadRules;
     FDangerousItemFixture F;
     if (!F.Valid()||!F.Wear(415,Ring1Slot)||!F.Wear(617,NeckSlot)||!F.Player->CollectItem(907)) { return false; }
     auto* P=F.Player;
@@ -282,6 +287,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAAOriginalDangerousItemOwnership, "AAOriginal.
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FAAOriginalDangerousItemOwnership::RunTest(const FString& Parameters)
 {
+    using namespace AAOriginalDangerousItemTests;
+    using namespace NativeWadRules;
     FDangerousItemFixture Fatal(nullptr,TEXT("?WadHealth=100"),true);
     if (!Fatal.Valid()||!Fatal.Player->CollectItem(825)||!Fatal.Player->CollectItem(827)||!Fatal.Ready(827)) { return false; }
     Fatal.Press(EKeys::LeftControl);
