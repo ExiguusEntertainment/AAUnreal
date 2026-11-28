@@ -2,6 +2,10 @@
 #include "DoomWadLoader.h"
 #include "DoomWadWalls.h"
 #include "WadSurfaceTextures.h"
+#if WITH_EDITOR
+#include "NativeWadArtEditor.h"
+#include "Materials/Material.h"
+#endif
 #include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
 #include "ProceduralMeshComponent.h"
@@ -201,39 +205,9 @@ namespace
             return nullptr;
         }
 
-        TArray<FColor> Pixels;
-        Pixels.SetNumUninitialized(int32(PixelCount));
-        for (int32 Y = 0; Y < Height; ++Y)
-        {
-            for (int32 X = 0; X < Width; ++X)
-            {
-                const uint8 PaletteIndex = DataPtr[4 + X * Height + Y];
-                FColor& Pixel = Pixels[Y * Width + X];
-                Pixel = GPictureResourceCache.Palette[PaletteIndex];
-                Pixel.A = PaletteIndex == 0 ? 0 : 255;
-            }
-        }
-
-        UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
-        if (!Texture)
-        {
-            return nullptr;
-        }
-
-#if WITH_EDITORONLY_DATA
-        Texture->MipGenSettings = TMGS_NoMipmaps;
-#endif
-        Texture->NeverStream = true;
-        Texture->Filter = TF_Nearest;
-        Texture->AddressX = TA_Wrap;
-        Texture->AddressY = TA_Wrap;
-        Texture->SRGB = true;
-
-        FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
-        void* DestData = Mip.BulkData.Lock(LOCK_READ_WRITE);
-        FMemory::Memcpy(DestData, Pixels.GetData(), Pixels.Num() * sizeof(FColor));
-        Mip.BulkData.Unlock();
-        Texture->UpdateResource();
+        UTexture2D* Texture=NativeWadArt::CreateSurfaceTexture(
+            MakeArrayView(ResourceBytes.GetData()+Entry->FileOffset,Entry->Size),Normalized);
+        if(!Texture){return nullptr;}
 
         GPictureResourceCache.TextureCache.Add(Normalized, Texture);
         return Texture;
@@ -266,6 +240,11 @@ namespace
         }
         UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Parent, Owner);
         Material->SetTextureParameterValue(SurfaceTextureParameter, Texture);
+        if(const auto* Source=NativeWadArt::GetSource(*Texture))
+        {Material->SetVectorParameterValue(TEXT("WadSourceMipInfo"),FLinearColor(float(Source->OriginalSize.X),float(Source->OriginalSize.Y),float(Source->MipSHA1.Num()-1),0));}
+#if WITH_EDITOR
+        ConfigureWadSurfaceMipMaterial(*Parent->GetMaterial());
+#endif
         return Material;
     }
 
@@ -283,12 +262,29 @@ bool HasWadSurfaceTexture(const FString& TextureName)
         && GPictureResourceCache.Entries.Contains(Normalized);
 }
 
-bool LoadWadBackdrop(const FString& PictureName, FIntPoint& Size, TArray<FColor>& Pixels)
+bool ReadWadSurfaceResource(const FString& Name,FString& ResolvedName,TArray<uint8>& Resource)
+{
+    const FString Key=NormalizeTextureName(Name);
+    if(!IsUsableTextureName(Key)||!EnsurePictureResourceCache()){return false;}
+    const FPictureResEntry* Entry=GPictureResourceCache.Entries.Find(Key);
+    if(!Entry)
+    {
+        if(Key.StartsWith(TEXT("F_SKY"))||Key==TEXT("DRK42")){return false;}
+        return ReadWadSurfaceResource(TEXT("DRK42"),ResolvedName,Resource);
+    }
+    TArray<uint8> Archive;
+    if(!FFileHelper::LoadFileToArray(Archive,*GetArtFinalPath(TEXT("PICS.RES")))||Entry->FileOffset<0||Entry->Size<4
+        ||int64(Entry->FileOffset)+Entry->Size>Archive.Num()){return false;}
+    TArray<uint8> Bytes;Bytes.Append(Archive.GetData()+Entry->FileOffset,Entry->Size);
+    Resource=MoveTemp(Bytes);ResolvedName=Key;return true;
+}
+
+bool LoadWadBackdrop(const FString& PictureName, FIntPoint& Size, TArray<FColor>& Pixels,EWadArtPalette Domain)
 {
     TArray<FColor> Palette;
     TArray<uint8> Picture;
     if (FPaths::GetCleanFilename(PictureName) != PictureName || !PictureName.EndsWith(TEXT(".PIC"))
-        || !LoadGamePalette(Palette) || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(TEXT("BACKDROP") / PictureName))
+        || !NativeWadArt::LoadPalette(Domain,Palette) || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(TEXT("BACKDROP") / PictureName))
         || Picture.Num() < 4)
     {
         return false;
@@ -339,11 +335,11 @@ bool LoadWadInterfacePicture(const FString& PicturePath, FIntPoint& Size, TArray
     return true;
 }
 
-bool LoadWadSprite(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels, TConstArrayView<uint8> ColorTable)
+bool LoadWadSprite(const FString& PicturePath, FIntPoint& Size, TArray<FColor>& Pixels, TConstArrayView<uint8> ColorTable,EWadArtPalette Domain)
 {
     TArray<FColor> Palette;
     TArray<uint8> Picture;
-    if ((!ColorTable.IsEmpty() && ColorTable.Num() != 256) || !LoadGamePalette(Palette)
+    if ((!ColorTable.IsEmpty() && ColorTable.Num() != 256) || !NativeWadArt::LoadPalette(Domain,Palette)
         || !FFileHelper::LoadFileToArray(Picture, *GetArtFinalPath(TEXT("OBJS") / PicturePath))
         || Picture.Num() < 4)
     {
@@ -677,6 +673,11 @@ void ASectorMeshBuilderActor::BuildWallBatch(int32 BatchIndex)
                     if (Section.Texture)
                     {
                         Instance->SetTextureParameterValue(SurfaceTextureParameter, Section.Texture);
+                        if(const auto* Source=NativeWadArt::GetSource(*Section.Texture))
+                        {Instance->SetVectorParameterValue(TEXT("WadSourceMipInfo"),FLinearColor(float(Source->OriginalSize.X),float(Source->OriginalSize.Y),float(Source->MipSHA1.Num()-1),0));}
+#if WITH_EDITOR
+                        ConfigureWadSurfaceMipMaterial(*Parent->GetMaterial());
+#endif
                     }
                     else
                     {

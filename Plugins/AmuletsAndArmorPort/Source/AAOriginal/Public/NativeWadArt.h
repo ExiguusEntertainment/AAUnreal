@@ -41,6 +41,8 @@ struct AAORIGINAL_API FWadArtProvenance
     UPROPERTY() FIntPoint OriginalSize=FIntPoint::ZeroValue;
     UPROPERTY() bool bZeroTransparent=false;
     UPROPERTY() bool bAuthoredMips=false;
+    UPROPERTY() TArray<int32> SourceTypes; // Full source identities sharing this exact frame binding.
+    UPROPERTY() bool bMirrored=false; // Binding metadata; source pixels remain unflipped.
     UPROPERTY() TArray<uint8> ColorTable; // Source object-variant mapping before palette lookup.
     UPROPERTY() FString SourceSHA1; // Exact original resource-entry/loose-file bytes.
     UPROPERTY() TArray<FString> MipSHA1; // Exact generated row-major BGRA bytes, in mip order.
@@ -72,7 +74,11 @@ namespace NativeWadArt
     // are a separate approximation and must preserve these per-surface exclusions.
     AAORIGINAL_API int32 SelectSurfaceMip(FIntPoint Size,bool bPlane,int32 StepX,int32 StepY=0);
     AAORIGINAL_API FString SHA1(TConstArrayView<uint8> Bytes);
+    AAORIGINAL_API UTexture2D* CreateSurfaceTexture(TConstArrayView<uint8> Resource,const FString& Entry,EWadArtPalette Domain=EWadArtPalette::WorldStandard);
     // Metadata only: this never regenerates pixels or changes material properties.
     AAORIGINAL_API bool RecordSource(UTexture2D& Texture,const FWadArtProvenance& Source);
     AAORIGINAL_API const FWadArtProvenance* GetSource(const UTexture2D& Texture);
+    AAORIGINAL_API bool RecordPicture(UTexture2D& Texture,EWadArtEncoding Encoding,EWadArtPalette Palette,
+        const FString& RelativePath,FIntPoint Size,TConstArrayView<FColor> Pixels,
+        bool bZeroTransparent,TConstArrayView<uint8> ColorTable={});
 }

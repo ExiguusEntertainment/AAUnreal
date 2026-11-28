@@ -18,6 +18,7 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionTextureSample.h"
 #include "NativeWadEncounter.h"
+#include "NativeWadArt.h"
 #include "../../AAOriginal/Private/NativeWadHudData.h"
 #include "NativeWadLevel.h"
 #include "NativeWadPlayer.h"
@@ -82,13 +83,19 @@ namespace
             Enemy->DispatchBeginPlay();return Enemy;
         }
     };
-    bool CpcPixels(const FString& Picture,int32 Palette,TArray<FColor>& Out,FIntPoint& Size)
+    bool CpcPixels(const FString& Picture,int32 Palette,TArray<FColor>& Out,FIntPoint& Size,EWadArtPalette Domain)
     {
         TArray<uint8> Cpc,Map,Colors;
         const FString Art=SourceRoot()/TEXT("Resources/ArtFinal");
         if (!FFileHelper::LoadFileToArray(Cpc,*(Art/TEXT("OBJS")/Picture)) || Cpc.Num()<4
             || !FFileHelper::LoadFileToArray(Colors,*(Art/TEXT("GAME.PAL"))) || Colors.Num()<768
             || !FFileHelper::LoadFileToArray(Map,*(Art/TEXT("COLORIZE")/FString::Printf(TEXT("COLORT%02d"),Palette))) || Map.Num()!=256) { return false; }
+        if(Domain==EWadArtPalette::WorldStandard)
+        {
+            TArray<uint8> View;if(!FFileHelper::LoadFileToArray(View,*(Art/TEXT("VIEW00.PAL")))||View.Num()!=768){return false;}
+            FMemory::Memcpy(Colors.GetData(),View.GetData(),224*3); // Independent original ViewSetPalette composition.
+        }
+        else if(Domain!=EWadArtPalette::InterfaceGame){return false;}
         const auto U16=[&](int32 I){return int32(Cpc[I]) | int32(Cpc[I+1])<<8;};
         Size=FIntPoint(U16(2),U16(0)); if (Size.X<=0 || Size.Y<=0 || Cpc.Num()<4+4*Size.X) { return false; }
         Out.Init(FColor(0,0,0,0),Size.X*Size.Y);
@@ -188,8 +195,17 @@ bool FAAOriginalPackedDruidArt::RunTest(const FString& Parameters)
                 { if (const auto* Sample=Cast<UMaterialExpressionTextureSample>(Expression)) { Textures.AddUnique(Sample->Texture.Get()); } }
                 UTexture2D* Texture=nullptr;for (auto* T:Textures) { if (auto* Candidate=Cast<UTexture2D>(T)) { Texture=Candidate;break; } }
                 if (!TestNotNull(TEXT("Owned generated material has its actual source texture sample"),Texture)) { return false; }
-                FIntPoint Size;TArray<FColor> Expected;TArray64<uint8> Actual;
-                if (!TestTrue(TEXT("Decode original CPC + authored COLORT08/11 independently"),CpcPixels(Pictures[State],Type>>12,Expected,Size))
+                FIntPoint Size;TArray<FColor> Expected;TArray64<uint8> Actual;EWadArtPalette Domain=EWadArtPalette::InterfaceGame;
+                if(const auto* Source=NativeWadArt::GetSource(*Texture))
+                {
+                    TArray<uint8> ExpectedTable;
+                    FFileHelper::LoadFileToArray(ExpectedTable,*(SourceRoot()/TEXT("Resources/ArtFinal/COLORIZE")/FString::Printf(TEXT("COLORT%02d"),Type>>12)));
+                    if(!TestTrue(TEXT("Saved source provenance has the exact frame/variant and a supported palette domain"),Source->IsValid()
+                        &&Source->Encoding==EWadArtEncoding::Sprite&&Source->ResourcePath.Equals(TEXT("OBJS/")+FString(Pictures[State]),ESearchCase::IgnoreCase)
+                        &&ExpectedTable.Num()==256&&Source->ColorTable==ExpectedTable)){return false;}
+                    Domain=Source->Palette;
+                }
+                if (!TestTrue(TEXT("Decode original CPC + authored COLORT08/11 and validated palette independently"),CpcPixels(Pictures[State],Type>>12,Expected,Size,Domain))
                     || !TestTrue(TEXT("Read saved texture's actual source pixels"),Texture->Source.GetMipData(Actual,0))) { return false; }
                 TestEqual(TEXT("Original sprite width"),Texture->Source.GetSizeX(),int64(Size.X));TestEqual(TEXT("Original sprite height"),Texture->Source.GetSizeY(),int64(Size.Y));
                 TestTrue(TEXT("Every saved pixel equals the source palette remap, including transparent background"),Actual.Num()==Expected.Num()*sizeof(FColor)

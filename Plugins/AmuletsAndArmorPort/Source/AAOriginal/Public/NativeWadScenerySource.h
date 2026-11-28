@@ -21,6 +21,10 @@ struct FWadScenerySource
 };
 namespace NativeWadScenerySource
 {
+    // Verbatim legacy InstallScenery producer tables. The real importer retains
+    // only INVDESC-backed decoration rows; ordinary props use the general pass.
+    AAORIGINAL_API const TMap<int32,FString>& GetLegacyBaseResources();
+    AAORIGINAL_API const TMap<int32,FString>& GetLegacyRetreatResources();
     // Exact full IDs only. Creature profiles, inventory definitions, starts,
     // map directives and invisible illumination marker924 never become props.
     AAORIGINAL_API bool LoadOrdinaryCatalog(TMap<int32, FString>& Resources, FString& Error);

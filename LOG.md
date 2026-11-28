@@ -331,3 +331,24 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All30 shield migration and independent readonly reopening pass: one currently catalog-bound icon and one world-material ref migrated, zero saved actor bindings, zero custom overrides encountered, oldPLH02 asset bytes retained. Eleven source variant IDs are eligible, not eleven existing native catalog entries.
 - Strict full-stance parser/source census, five exact palette/mip/provenance test groups, original CPC pixel/source-tag/override checks and real pickup/scenery rebind tests all pass. World palette/material mip behavior remains unchanged at this checkpoint.
 - PLAN254–255 complete. Committing source, shared catalog and the two new originalPLH01 assets before the world-only art migration batch.
+
+## 2026-11-27 18:13 CST - world-art integration and corrected source inventory audit
+
+- WorldArtProvenance/Assets/sharedCreatureCore/exactManifest/ShieldWorldCompat/DruidPaletteTests are integrated; build succeeds after adding the required FAssetData definition include. Expanded144 WAD tests and strict L30 pilot refresh are running before all30.
+- Exact manifest is shared with actual producers, not guessed RGB/name matching. Source recipes retain full types, frames, variants and mirror context. Palette/mip source arithmetic is exact; GPU derivative LOD and RGBA shade response remain native approximations. Approved UI Game pixels/file bytes are protected.
+- Corrected a mistaken backlog assumption: original Ready does NOT auto-refill. Taking splits one object; Ready USE destroys that record without a next-item search. Real remaining source feature is left+right mouse bag quick-use in LOOK mode. PLAN wording corrected; no invented refill will be added.
+- Original Journal physical transfer requires held373 AccData and strict source coordinates. Source character serialization actually loses AccData; native per-object preservation would be an explicit correction. Agent is preparing a pure sidecar/codec foundation separately before runtime changes.
+
+## 2026-11-27 18:36 CST - world migration source coverage and active workers
+
+- Expanded144 WAD regressions pass; strict L30 migration and muted rendered door/walk reviews pass with original VIEW world colors and authored mips. Shader input constructor defaults were corrected before asset rollout. Approved interface GAME pixels remain protected.
+- Readonly all30 preflight exposed four old inventory-decoration families outside the ordinary scenery catalog. Actual shared39-row producer tables now resolve exact BGVASE/JAW/SKULL/STONE frames, with tests against OBJS.FL; no guessed filenames.
+- L72 prototype T/M_PlasmaBolt has no material referencers. Preserve this explicitly audited unused legacy pair without inventing source provenance; strict live coverage must still refuse it if any saved reference appears.
+- Workers remain assigned to carried-object runtime persistence, ELMARK translucency, and source sprite-shading audit. Packed66 encounters, dangerous item effects, cloud37, source-light metadata/feedback and carried-state codec are frozen separately awaiting integration/runtime proof; none are marked completed yet.
+
+## 2026-11-27 18:43 CST - original world-art checkpoint verified
+
+- Strict all30 refresh and independent readonly reopening pass with zero unresolved live identities/custom overrides. Correct world palette and original mip chains are saved; geometry, actor/component/material-slot paths, mesh bytes and approved interface file bytes remain unchanged. The unused L72 prototype pair has zero material referencers and SHA256 equal to its HEAD LFS contents; its unknown source is reported, never guessed.
+- All144 WAD tests pass after the final legacy scenery fixes. L30 door/walk reviews passed earlier; fresh real-RHI L151 day/dusk captures show original art/mips without missing materials or geometry. Compared with the earlier captures, distant authored mip patterns now change as expected; original near-field mottling remains.
+- Repeated controlled Night Vision GPU proof passes: dark69.905?116.156, bright242.588?243.588, independent viewer max0, sky unchanged and45,180 original static HUD pixels unchanged. No shader compile errors.
+- PLAN256 complete;257–265 list the already bounded next integration checkpoints. Committing/pushing required world material/texture assets and source now. Source sprite lighting audit confirms true PALINDEX hue remapping, so candidate indexed shaders will use original lookup data rather than claim parity from an RGB gain.

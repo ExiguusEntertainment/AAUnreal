@@ -1,5 +1,6 @@
 #include "NativeWadArt.h"
 #include "Engine/Texture2D.h"
+#include "TextureResource.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/SecureHash.h"
@@ -29,15 +30,17 @@ bool FWadArtProvenance::IsValid() const
         ||OriginalSize.X<=0||OriginalSize.Y<=0||OriginalSize.X>4096||OriginalSize.Y>4096
         ||(!ColorTable.IsEmpty()&&ColorTable.Num()!=256)||!HexHash(SourceSHA1)||MipSHA1.IsEmpty()||MipSHA1.Num()>5)
     {return false;}
+    if(SourceTypes.Num()>256){return false;}TSet<int32> Identities;
+    for(int32 Type:SourceTypes){if(Type<=0||Type>MAX_uint16||Identities.Contains(Type)){return false;}Identities.Add(Type);}
     for(TCHAR C:ResourcePath){if(C<=32||C>126){return false;}}
     for(TCHAR C:ArchiveEntry){if(!((C>=TEXT('A')&&C<=TEXT('Z'))||(C>=TEXT('0')&&C<=TEXT('9'))||C==TEXT('_'))){return false;}}
     if(Encoding==EWadArtEncoding::Surface)
     {
         if(!ResourcePath.Equals(TEXT("PICS.RES"),ESearchCase::IgnoreCase)||ArchiveEntry.IsEmpty()||ArchiveEntry.Len()>8
-            ||ArchiveEntry.Contains(TEXT("/"))||ArchiveEntry.Contains(TEXT("\\"))||!bAuthoredMips){return false;}
+            ||ArchiveEntry.Contains(TEXT("/"))||ArchiveEntry.Contains(TEXT("\\"))){return false;}
         int32 Upload=0;
         for(int32 I=0;I<5;++I){if((OriginalSize.X>>I)<=0||(OriginalSize.Y>>I)<=0){break;}++Upload;}
-        if(MipSHA1.Num()!=Upload){return false;}
+        if(MipSHA1.Num()!=(bAuthoredMips?Upload:1)){return false;}
     }
     else if(!ArchiveEntry.IsEmpty()||bAuthoredMips||MipSHA1.Num()!=1){return false;}
     for(const auto& Hash:MipSHA1){if(!HexHash(Hash)){return false;}}
@@ -119,12 +122,61 @@ namespace NativeWadArt
     {
         FSHAHash Hash;FSHA1::HashBuffer(Bytes.GetData(),Bytes.Num(),Hash.Hash);return Hash.ToString();
     }
+    UTexture2D* CreateSurfaceTexture(TConstArrayView<uint8> Resource,const FString& Entry,EWadArtPalette Domain)
+    {
+        FWadIndexedMipChain Chain;TArray<FColor> Palette;
+        if(!DecodeSurfaceMips(Resource,Chain)||!LoadPalette(Domain,Palette)){return nullptr;}
+        TArray<TArray<FColor>> Pixels;
+        FWadArtProvenance Provenance;Provenance.Palette=Domain;Provenance.Encoding=EWadArtEncoding::Surface;
+        Provenance.ResourcePath=TEXT("PICS.RES");Provenance.ArchiveEntry=Entry;Provenance.OriginalSize=Chain.OriginalSize;
+        Provenance.bZeroTransparent=true;Provenance.bAuthoredMips=true;Provenance.SourceSHA1=SHA1(Resource);
+        for(int32 I=0;I<Chain.UploadMipCount();++I)
+        {
+            auto& Mip=Pixels.AddDefaulted_GetRef();if(!ExpandPixels(Chain.Mips[I].Indices,Palette,true,{},Mip)){return nullptr;}
+            const auto Bytes=MakeArrayView(reinterpret_cast<const uint8*>(Mip.GetData()),Mip.Num()*int32(sizeof(FColor)));
+            Provenance.MipSHA1.Add(SHA1(Bytes));
+        }
+        if(!Provenance.IsValid()){return nullptr;}
+        auto* Texture=UTexture2D::CreateTransient(Chain.OriginalSize.X,Chain.OriginalSize.Y,PF_B8G8R8A8);
+        if(!Texture){return nullptr;}auto* Platform=Texture->GetPlatformData();Platform->Mips.Empty();
+        for(int32 I=0;I<Pixels.Num();++I)
+        {
+            auto* Mip=new FTexture2DMipMap();Platform->Mips.Add(Mip);Mip->SizeX=Chain.Mips[I].Size.X;Mip->SizeY=Chain.Mips[I].Size.Y;Mip->SizeZ=1;
+            Mip->BulkData.Lock(LOCK_READ_WRITE);void* Data=Mip->BulkData.Realloc(Pixels[I].Num()*sizeof(FColor));
+            FMemory::Memcpy(Data,Pixels[I].GetData(),Pixels[I].Num()*sizeof(FColor));Mip->BulkData.Unlock();
+        }
+#if WITH_EDITORONLY_DATA
+        // Transient preview data stays in the explicitly populated platform mips;
+        // no editor Source compilation/placeholder can alter its dimensions.
+        Texture->MipGenSettings=TMGS_LeaveExistingMips;
+#endif
+        Texture->Filter=TF_Nearest;Texture->NeverStream=true;Texture->AddressX=TA_Wrap;Texture->AddressY=TA_Wrap;Texture->SRGB=true;
+        RecordSource(*Texture,Provenance);Texture->UpdateResource();return Texture;
+    }
     bool RecordSource(UTexture2D& Texture,const FWadArtProvenance& Source)
     {
         if(!Source.IsValid()){return false;}
         auto* Data=Cast<UNativeWadArtSource>(Texture.GetAssetUserDataOfClass(UNativeWadArtSource::StaticClass()));
         if(!Data){Data=NewObject<UNativeWadArtSource>(&Texture);Texture.AddAssetUserData(Data);}
         Data->Source=Source;return true;
+    }
+    bool RecordPicture(UTexture2D& Texture,EWadArtEncoding Encoding,EWadArtPalette Palette,
+        const FString& RelativePath,FIntPoint Size,TConstArrayView<FColor> Pixels,
+        bool bZeroTransparent,TConstArrayView<uint8> ColorTable)
+    {
+        if(Encoding==EWadArtEncoding::Surface||Size.X<=0||Size.Y<=0||int64(Size.X)*Size.Y!=Pixels.Num())
+        {return false;}
+        const FString Root=FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal");
+        FWadArtProvenance Source;Source.Encoding=Encoding;Source.Palette=Palette;Source.ResourcePath=RelativePath;
+        Source.ResourcePath.ReplaceInline(TEXT("\\"),TEXT("/"));Source.OriginalSize=Size;
+        Source.bZeroTransparent=bZeroTransparent;Source.ColorTable.Append(ColorTable.GetData(),ColorTable.Num());
+        // Validate the relative path before opening it.
+        Source.SourceSHA1=FString::ChrN(40,TEXT('0'));Source.MipSHA1.Add(Source.SourceSHA1);
+        if(!Source.IsValid()){return false;}
+        TArray<uint8> Raw;if(!FFileHelper::LoadFileToArray(Raw,*(Root/Source.ResourcePath))){return false;}
+        Source.SourceSHA1=SHA1(Raw);
+        Source.MipSHA1[0]=SHA1(MakeArrayView(reinterpret_cast<const uint8*>(Pixels.GetData()),Pixels.Num()*int32(sizeof(FColor))));
+        return RecordSource(Texture,Source);
     }
     const FWadArtProvenance* GetSource(const UTexture2D& Texture)
     {

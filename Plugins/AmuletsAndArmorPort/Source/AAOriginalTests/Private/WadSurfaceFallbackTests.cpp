@@ -20,6 +20,10 @@ bool FAAOriginal_WadSurfaceFallback::RunTest(const FString& Parameters)
     {
         return false;
     }
+    TArray<uint8> View;
+    if(!FFileHelper::LoadFileToArray(View,*(Art/TEXT("VIEW00.PAL")))||View.Num()!=768){return false;}
+    // Original ViewSetPalette updates only the lower224 entries.
+    FMemory::Memcpy(Palette.GetData(),View.GetData(),224*3);
     const auto Read = [&Resource](int32 Offset, int32 Width)
     {
         uint32 Value = 0;

@@ -1,5 +1,9 @@
 #include "NativeWadImport.h"
 #include "NativeWadAmbient.h"
+#include "NativeWadArt.h"
+#include "NativeWadArtEditor.h"
+#include "NativeWadCreatureArt.h"
+#include "Misc/FeedbackContext.h"
 #include "MaterialDomain.h"
 
 #include "Engine/Scene.h"
@@ -255,6 +259,8 @@ struct FAAWadNativeImport
     TMap<FString, UTexture2D*> Textures;
     TMap<FString, UMaterialInterface*> Materials;
     TArray<UObject*> AssetsToSave;
+    bool bArtManifestLoaded=false;
+    TMap<FString,FWadArtRequest> ArtManifest;
     TStaticArray<UMaterialInterface*, 3> Parents;
     TStaticArray<UStaticMesh*, 3> WallMeshes;
     bool bAssetError = false;
@@ -846,14 +852,10 @@ struct FAAWadNativeImport
             || (bTempleMap && !InstallTempleMap(World, Actor, Map, WadPath, MapName, Output))
             || (bLateCampaignMap && !InstallLateCampaignMap(World, Actor, Map, WadPath, MapName, Output))
             || (!bRetreatMap && !InstallRetreatEncounters(World, Actor, Map, Output, 1033))
-            || (MapName == TEXT("L152") && !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("ElmoreKey6"),
-                    TEXT("KEY6/KEY6.CPC"), TEXT("L152 Key 6"), Output, FWadLevelCheckpoint::ElmoreKeysRevision))
-            || (MapName == TEXT("L153") && (!InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("ElmoreKey3"),
-                    TEXT("KEY3/KEY3.CPC"), TEXT("L153 Key 3"), Output)
-                || !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey8, TEXT("ElmoreKey8"),
-                    TEXT("KEY8/KEY8.CPC"), TEXT("L153 Key 8"), Output)
-                || !InstallQuestPickup(World, Actor, Map, NativeWadRules::OrbOfDefense, TEXT("OrbOfDefense"),
-                    TEXT("ORB5/ORB5.CPC"), TEXT("L153 Orb of Defense"), Output)))
+            || (MapName == TEXT("L152") && !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("ElmoreKey6"), TEXT("L152 Key 6"), Output, FWadLevelCheckpoint::ElmoreKeysRevision))
+            || (MapName == TEXT("L153") && (!InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("ElmoreKey3"), TEXT("L153 Key 3"), Output)
+                || !InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey8, TEXT("ElmoreKey8"), TEXT("L153 Key 8"), Output)
+                || !InstallQuestPickup(World, Actor, Map, NativeWadRules::OrbOfDefense, TEXT("OrbOfDefense"), TEXT("L153 Orb of Defense"), Output)))
             || (MapName == TEXT("L22") && (!InstallL22Script(Actor, Map, WadPath, Output)
                 || !InstallL22Journal(World, Actor, Map, Output)))
             || (bJugurthaMap && !InstallCampaignCreatures(World, Actor, Map, WadPath, Output))
@@ -934,6 +936,7 @@ struct FAAWadNativeImport
                     ? LoadObject<UMaterial>(nullptr, *(MaterialPackage + TEXT(".") + MaterialName))
                     : SpriteMaterial(Name, Item.Picture);
             }
+            if(!InterfaceIcon(Name,Item.Picture)){return false;}
             const FString ImagePackage = AssetRoot / TEXT("Things") / ImageName;
             const FString ImagePath = ImagePackage + TEXT(".") + ImageName;
             UTexture2D* Image = FindObject<UTexture2D>(nullptr, *ImagePath);
@@ -1072,13 +1075,11 @@ struct FAAWadNativeImport
         }
         if (MapName == TEXT("L10"))
         {
-            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("Key6"),
-                TEXT("KEY6/KEY6.CPC"), TEXT("L10 Key 6"), Output, 0, true);
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("Key6"), TEXT("L10 Key 6"), Output, 0, true);
         }
         if (MapName == TEXT("L12"))
         {
-            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key1, TEXT("Key1"),
-                TEXT("KEY1/KEY1.CPC"), TEXT("L12 Key 1"), Output) && InstallWizardQuestDrop(World, Actor, Map, false, Output);
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key1, TEXT("Key1"), TEXT("L12 Key 1"), Output) && InstallWizardQuestDrop(World, Actor, Map, false, Output);
         }
         return true;
     }
@@ -1093,15 +1094,12 @@ struct FAAWadNativeImport
         }
         if (MapName == TEXT("L41"))
         {
-            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key9, TEXT("Key9"),
-                TEXT("KEY9/KEY9.CPC"), TEXT("L41 Key 9"), Output)
-                && InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("Key6"),
-                    TEXT("KEY6/KEY6.CPC"), TEXT("L41 Key 6"), Output);
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key9, TEXT("Key9"), TEXT("L41 Key 9"), Output)
+                && InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey6, TEXT("Key6"), TEXT("L41 Key 6"), Output);
         }
         if (MapName == TEXT("L44"))
         {
-            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("Key3"),
-                TEXT("KEY3/KEY3.CPC"), TEXT("L44 Key 3"), Output)
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey3, TEXT("Key3"), TEXT("L44 Key 3"), Output)
                 && InstallWizardQuestDrop(World, Actor, Map, true, Output);
         }
         return true;
@@ -1155,81 +1153,15 @@ struct FAAWadNativeImport
             Source.Add({Fields[0], Fields[1], Fields[2], Fields[3], Fields[4], Fields[5],
                 Fields[6], Fields[7], Fields[8], Fields[9]});
         }
-        struct FCreatureSource
-        {
-            int32 Type;
-            const TCHAR* Name;
-            const TCHAR* Resource;
-            const TCHAR* Standing;
-            const TCHAR* Hurt;
-            const TCHAR* Downed;
-            const TCHAR* Attacking;
-            const TCHAR* Bolt;
-            int32 Health, Retreat, Melee, MeleeRange, Radius, Step, Vision, BoltDamage;
-            const TCHAR* OnlyMap = nullptr;
-            int32 HomingType = 0;
-        };
         constexpr int32 Apollo = 1010;
         constexpr int32 Boulder = 1026;
-        constexpr FCreatureSource Creatures[] = {
-            {4080, TEXT("Evil Knight"), TEXT("EVILKNT"), TEXT("EKNTW001.CPC"), TEXT("EKNTD001.CPC"),
-                TEXT("EKNTD008.CPC"), TEXT("EKNTA001.CPC"), nullptr, 3000, 300, 400, 30, 15, 10, 180, 0},
-            {1025, TEXT("Electric Skeleton"), TEXT("NEWSKEL"), TEXT("SKWK1A.CPC"), TEXT("SKDY1A.CPC"),
-                TEXT("SKDY1F.CPC"), TEXT("SKAT1A.CPC"), TEXT("MISSIL12/1.CPC"), 3000, 500, 600, 30, 15, 10, 180, 100},
-            {1035, TEXT("Bad Knight"), TEXT("BADKNIT"), TEXT("BADBOYA1.CPC"), TEXT("BADBOYJ1.CPC"),
-                TEXT("BADBOYJ4.CPC"), TEXT("BADBOYF1.CPC"), nullptr, 5000, 500, 700, 35, 25, 10, 180, 0},
-            {Apollo, TEXT("Apollo"), TEXT("APOLLO"), TEXT("APCR001.CPC"), TEXT("APCR001.CPC"),
-                TEXT("APCR001.CPC"), TEXT("APA001.CPC"), TEXT("PBALL/PBALL001.CPC"),
-                30000, 500, 150, 30, 50, 10, 315, NativeWadRules::PlasmaDamage, TEXT("L72")},
-            {1011, TEXT("Legionary"), TEXT("ROMAN"), TEXT("RMNWLK01.CPC"), TEXT("ROMNDI01.CPC"),
-                TEXT("ROMNDI04.CPC"), TEXT("RMNATK01.CPC"), nullptr, 6000, 500, 600, 55, 20, 10, 135, 0},
-            {Boulder, TEXT("Boulder"), TEXT("BOULDER"), TEXT("BOLDR001.CPC"), TEXT("BOLDR001.CPC"),
-                TEXT("BOLDR001.CPC"), TEXT("BOLDR001.CPC"), nullptr, 5000, 0, 10000, 0, 60, 30, 0, 0},
-            {1002, TEXT("Blue Wizard"), TEXT("REDWIZ"), TEXT("NWIZW001.CPC"), TEXT("NWIZD001.CPC"),
-                TEXT("NWIZD08.CPC"), TEXT("NWIZA01.CPC"), TEXT("MISSILE5/1.CPC"), 3000, 1000, 0, 35, 20, 12, 315, 500},
-            {1006, TEXT("Evil Orange Wizard"), TEXT("WIZEVL"), TEXT("WIZEVL8.CPC"), TEXT("WIZHRT1.CPC"),
-                TEXT("WIZEVL7G.CPC"), TEXT("WIZEVL1.CPC"), TEXT("HMISS6/1.CPC"),
-                3000, 500, 400, 60, 20, 12, 315, 1000, nullptr, 4020},
-            {1005, TEXT("Wyvern"), TEXT("DRAGON"), TEXT("DSTF.CPC"), TEXT("DHTF.CPC"),
-                TEXT("DIE06.CPC"), TEXT("DATF.CPC"), TEXT("MISSILE5/1.CPC"), 16000, 0, 1000, 92, 55, 15, 270, 500},
-            {1021, TEXT("Orange Dragon"), TEXT("DRAGON2"), TEXT("DRFLY01.CPC"), TEXT("DRFLY04.CPC"),
-                TEXT("DRGDD08.CPC"), TEXT("DRFLY01.CPC"), TEXT("MISSILE6/1.CPC"), 20000, 0, 1000, 90, 50, 7, 270, 750},
-            {1037, TEXT("Momma Dragon"), TEXT("DRAGON4"), TEXT("D1F001.CPC"), TEXT("D1F006.CPC"),
-                TEXT("D1G001.CPC"), TEXT("D1F008.CPC"), TEXT("MISSILE6/1.CPC"), 30000, 0, 400, 90, 80, 7, 270, 750},
-            {1022, TEXT("Hydra"), TEXT("HYDRA"), TEXT("HYW001.CPC"), TEXT("HYDD001.CPC"),
-                TEXT("HYDD004.CPC"), TEXT("HYA001.CPC"), TEXT("MISSIL16/1.CPC"), 8000, 500, 450, 72, 42, 10, 90, 250},
-            {1012, TEXT("Banshee"), TEXT("BANSHEE"), TEXT("BANW001.CPC"), TEXT("BAND001.CPC"),
-                TEXT("BAND008.CPC"), TEXT("BANA001.CPC"), nullptr, 5000, 500, 100, 250, 15, 10, 135, 0},
-            {1017, TEXT("Wolf"), TEXT("DOG"), TEXT("FRTBIT1.CPC"), TEXT("DGDYFT2.CPC"),
-                TEXT("DGDYFT5.CPC"), TEXT("FRTBIT1.CPC"), nullptr, 700, 100, 300, 60, 20, 20, 90, 0},
-            {1018, TEXT("Elf Archer"), TEXT("ARCHER"), TEXT("ARCHER01.CPC"), TEXT("ARCDI01.CPC"),
-                TEXT("ARCDI04.CPC"), TEXT("ARCHER05.CPC"), TEXT("ARROW1/BOLT2.CPC"), 700, 500, 100, 60, 20, 10, 270, 300},
-            {1019, TEXT("Druid"), TEXT("DRUID"), TEXT("DRUDW001.CPC"), TEXT("DRUDD001.CPC"),
-                TEXT("DRUDD008.CPC"), TEXT("DRUID001.CPC"), TEXT("HMISS12/1.CPC"), 2000, 500, 150, 60, 20, 10, 180, 100, nullptr, 4018},
-            {33787, TEXT("Ulfilas Druid"), TEXT("DRUID"), TEXT("DRUDW001.CPC"), TEXT("DRUDD001.CPC"),
-                TEXT("DRUDD008.CPC"), TEXT("DRUID001.CPC"), TEXT("MISSIL16/1.CPC"), 2500, 500, 150, 60, 20, 10, 180, 250},
-            {46075, TEXT("Jugurtha"), TEXT("DRUID"), TEXT("DRUDW001.CPC"), TEXT("DRUDD001.CPC"),
-                TEXT("DRUDD008.CPC"), TEXT("DRUID001.CPC"), TEXT("MISSIL16/1.CPC"), 4500, 500, 350, 60, 20, 10, 315, 250},
-            {1014, TEXT("Eastern Archer"), TEXT("EVILARCH"), TEXT("EARCAT01.CPC"), TEXT("EARCDI02.CPC"),
-                TEXT("EARCDI04.CPC"), TEXT("EARCAT01.CPC"), TEXT("ARROW4/1.CPC"), 4000, 500, 500, 60, 20, 10, 315, 600},
-            {1015, TEXT("Mighty Hunter"), TEXT("GIANTARC"), TEXT("GODATK01.CPC"), TEXT("GODDIE01.CPC"),
-                TEXT("GODDIE04.CPC"), TEXT("GODATK01.CPC"), TEXT("MISSILE7/1.CPC"), 18000, 500, 0, 0, 30, 10, 315, 1000},
-            {1023, TEXT("Griffon"), TEXT("GRIFFON"), TEXT("GRFLY001.CPC"), TEXT("GRFDI001.CPC"),
-                TEXT("GRFDI008.CPC"), TEXT("GRIFA001.CPC"), nullptr, 5000, 500, 350, 75, 30, 15, 315, 0},
-            {1003, TEXT("Shadow"), TEXT("SHADOW"), TEXT("SHADOW1.CPC"), TEXT("SHAD_FH1.CPC"),
-                TEXT("SHAD_DEA.CPC"), TEXT("SHAD_FA1.CPC"), nullptr, 4000, 500, 150, 55, 32, 20, 315, 0},
-            {1007, TEXT("Gargoyle"), TEXT("BIFF"), TEXT("BIFFWF1.CPC"), TEXT("BIFFHTF.CPC"),
-                TEXT("BIFFDI7.CPC"), TEXT("BIFFATF.CPC"), nullptr, 5000, 100, 400, 65, 32, 10, 315, 0},
-            {1020, TEXT("Lich"), TEXT("LICH"), TEXT("LICHW001.CPC"), TEXT("LICHD001.CPC"),
-                TEXT("LICHD008.CPC"), TEXT("LICHA001.CPC"), TEXT("MISSILE2/1.CPC"), 8000, 0, 400, 60, 20, 10, 315, 300},
-            {1036, TEXT("Elmore"), TEXT("ELMORE"), TEXT("ELWLK01.CPC"), TEXT("ELDIE01.CPC"),
-                TEXT("ELDIE08.CPC"), TEXT("ELATK01.CPC"), nullptr, 7000, 0, 400, 55, 20, 10, 315, 0, TEXT("L152")},
-        };
+        const auto Creatures=GetWadCampaignCreatureSources();
         const FString MapName = FPaths::GetBaseFilename(WadPath);
         if (!bPackedDruidsOnly) { Actor.CreatureGenerators.Reset(); }
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        for (const FCreatureSource& Creature : Creatures)
+        for (const FWadCampaignCreatureSource& Creature : Creatures)
         {
+            if(!Creature.bGameplayEnabled){continue;}
             const bool bPackedDruid = Creature.Type == 33787 || Creature.Type == 46075;
             if (bPackedDruidsOnly && !bPackedDruid) { continue; }
             if (Creature.OnlyMap && !MapName.Equals(Creature.OnlyMap, ESearchCase::IgnoreCase))
@@ -1241,25 +1173,16 @@ struct FAAWadNativeImport
             {
                 continue;
             }
-            const FString Root(Creature.Resource);
-            const FString ArtName = bPackedDruid ? FString::Printf(TEXT("Druid%d"), Creature.Type) : Root;
-            TArray<uint8> ColorTable;
-            if (bPackedDruid)
-            {
-                const FString Path = FPaths::ProjectDir() / TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/COLORIZE")
-                    / FString::Printf(TEXT("COLORT%02d"), Creature.Type >> 12);
-                if (!FFileHelper::LoadFileToArray(ColorTable,*Path) || ColorTable.Num()!=256)
-                { Output.Logf(TEXT("Missing original packed Druid palette for%d."),Creature.Type); return false; }
-            }
+            FWadCreatureArtSet Art;if(!ResolveWadCampaignCreatureArt(Creature,Art,Output)){return false;}
             FIntPoint Size;
-            auto* Standing = SpriteMaterial(ArtName, Root / Creature.Standing, &Size, ColorTable);
-            auto* Hurt = SpriteMaterial(ArtName + TEXT("_Hurt"), Root / Creature.Hurt, nullptr, ColorTable);
-            auto* Downed = SpriteMaterial(ArtName + TEXT("_Down"), Root / Creature.Downed, nullptr, ColorTable);
-            auto* Attacking = SpriteMaterial(ArtName + TEXT("_Attack"), Root / Creature.Attacking, nullptr, ColorTable);
-            const FString BoltName = Creature.Type == 1025 ? TEXT("MagicDart") : bPackedDruid ? TEXT("PackedDruid_Bolt") : Root + TEXT("_Bolt");
-            UMaterial* Bolt = Creature.Bolt && bPackedDruidsOnly
-                ? LoadObject<UMaterial>(nullptr,*(AssetRoot / TEXT("Things/M_") + BoltName + TEXT(".M_") + BoltName)) : nullptr;
-            if (!Bolt && Creature.Bolt) { Bolt = SpriteMaterial(BoltName, Creature.Bolt); }
+            auto* Standing=SpriteMaterialRequest(Art.Standing,&Size);
+            auto* Hurt=SpriteMaterialRequest(Art.Hurt);
+            auto* Downed=SpriteMaterialRequest(Art.Downed);
+            auto* Attacking=SpriteMaterialRequest(Art.Attacking);
+            const FString BoltName=Art.Bolt.AssetName;
+            UMaterial* Bolt=Creature.Bolt&&bPackedDruidsOnly
+                ?LoadObject<UMaterial>(nullptr,*(AssetRoot/TEXT("Things/M_")+BoltName+TEXT(".M_")+BoltName)):nullptr;
+            if(!Bolt&&Creature.Bolt){Bolt=SpriteMaterialRequest(Art.Bolt);}
             if (!Plane || !Standing || !Hurt || !Downed || !Attacking || (Creature.Bolt && !Bolt))
             {
                 return false;
@@ -1462,7 +1385,7 @@ struct FAAWadNativeImport
                 const FVector2D XY(Record.X, Record.Y);
                 const int32 Sector = Actor.FindWadSector(XY);
                 FIntPoint Size;
-                UMaterialInterface* Material = SpriteMaterial(TEXT("GeneratedFlyingPotion"), TEXT("POTION05/POTION05.CPC"), &Size);
+                UMaterialInterface* Material = SpriteMaterialFixed(TEXT("GeneratedFlyingPotion"), &Size);
                 if (!Plane || !Material || !Actor.Sectors.IsValidIndex(Sector) || !Actor.Sectors[Sector].Floor
                     || Record.Count <= 0 || Record.Count > 40 || Record.Interval <= 0)
                 {
@@ -1512,20 +1435,16 @@ struct FAAWadNativeImport
         }
         if (MapName == TEXT("L72"))
         {
-            return InstallQuestPickup(World, Actor, Map, NativeWadRules::WandOfDisintegration, TEXT("WandOfDisintegration"),
-                TEXT("WAND18/WAND18.CPC"), TEXT("L72 Wand of Disintegration"), Output);
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::WandOfDisintegration, TEXT("WandOfDisintegration"), TEXT("L72 Wand of Disintegration"), Output);
         }
         if (MapName == TEXT("L61"))
         {
-            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey8, TEXT("Key8"),
-                TEXT("KEY8/KEY8.CPC"), TEXT("L61 Key 8"), Output);
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey8, TEXT("Key8"), TEXT("L61 Key 8"), Output);
         }
         if (MapName == TEXT("L40"))
         {
-            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key4, TEXT("Key4"),
-                TEXT("KEY4/KEY4.CPC"), TEXT("L40 Key 4"), Output)
-                && InstallQuestPickup(World, Actor, Map, NativeWadRules::OrbOfDestruction, TEXT("OrbOfDestruction"),
-                    TEXT("ORB7/ORB7.CPC"), TEXT("L40 Orb of Destruction"), Output);
+            return InstallQuestPickup(World, Actor, Map, NativeWadRules::Key4, TEXT("Key4"), TEXT("L40 Key 4"), Output)
+                && InstallQuestPickup(World, Actor, Map, NativeWadRules::OrbOfDestruction, TEXT("OrbOfDestruction"), TEXT("L40 Orb of Destruction"), Output);
         }
         return true;
     }
@@ -1550,30 +1469,14 @@ struct FAAWadNativeImport
         const FVector2D XY(Thing.X, Thing.Y);
         const int32 Sector = Actor.FindWadSector(XY);
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        TArray<uint8> ColorTable;
-        if (bElymas)
-        {
-            const FString ColorPath = FPaths::ProjectDir() /
-                TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/COLORIZE");
-            const FString File = FString::Printf(TEXT("COLORT%02d"), CreatureType >> 12);
-            if (!FFileHelper::LoadFileToArray(ColorTable, *(ColorPath / File)) || ColorTable.Num() != 256)
-            {
-                Output.Logf(TEXT("Could not load Elymas's palette table %s."), *File);
-                return false;
-            }
-        }
+        FWadCreatureArtSet Art;if(!ResolveWadSpecialCreatureArt(bElymas,Art,Output)){return false;}
         FIntPoint Size;
-        UMaterial* Standing = bElymas ? SpriteMaterial(TEXT("Elymas"), TEXT("WIZEVL/WIZEVL8.CPC"), &Size, ColorTable)
-            : SpriteMaterial(TEXT("WIZORNG"), TEXT("WIZORNG/OWWALK01.CPC"), &Size);
-        UMaterial* Hurt = bElymas ? SpriteMaterial(TEXT("Elymas_Hurt"), TEXT("WIZEVL/WIZHRT1.CPC"), nullptr, ColorTable)
-            : SpriteMaterial(TEXT("WIZORNG_Hurt"), TEXT("WIZORNG/OWDIE01.CPC"));
-        UMaterial* Downed = bElymas ? SpriteMaterial(TEXT("Elymas_Down"), TEXT("WIZEVL/WIZEVL7G.CPC"), nullptr, ColorTable)
-            : SpriteMaterial(TEXT("WIZORNG_Down"), TEXT("WIZORNG/OWDIE08.CPC"));
-        UMaterial* Attacking = bElymas ? SpriteMaterial(TEXT("Elymas_Attack"), TEXT("WIZEVL/WIZEVL1.CPC"), nullptr, ColorTable)
-            : SpriteMaterial(TEXT("WIZORNG_Attack"), TEXT("WIZORNG/OWA01.CPC"));
-        UMaterial* DropImage = bElymas ? SpriteMaterial(TEXT("ElymasNotes"), TEXT("SCRL8/SCRL8.CPC"))
-            : SpriteMaterial(TEXT("OrbOfTheUndead"), TEXT("ORB6/ORB6.CPC"));
-        UMaterial* Bolt = bElymas ? SpriteMaterial(TEXT("HomingFireball"), TEXT("HMISS6/1.CPC")) : nullptr;
+        UMaterial* Standing=SpriteMaterialRequest(Art.Standing,&Size);
+        UMaterial* Hurt=SpriteMaterialRequest(Art.Hurt);
+        UMaterial* Downed=SpriteMaterialRequest(Art.Downed);
+        UMaterial* Attacking=SpriteMaterialRequest(Art.Attacking);
+        UMaterial* DropImage=bElymas?SpriteMaterialFixed(TEXT("ElymasNotes")):SpriteMaterialFixed(TEXT("OrbOfTheUndead"));
+        UMaterial* Bolt=bElymas?SpriteMaterialRequest(Art.Bolt):nullptr;
         if (Sector == INDEX_NONE || !Plane || !Standing || !Hurt || !Downed || !Attacking || !DropImage || (bElymas && !Bolt))
         {
             Output.Logf(TEXT("Could not install %s's floor position, sprites, or quest drop."), Name);
@@ -1670,13 +1573,10 @@ struct FAAWadNativeImport
     bool InstallScriptMissileArt(ANativeWadLevel& Actor, int32 Type, FOutputDevice& Output)
     {
         if (IsValid(Actor.ScriptMissileMaterials.FindRef(Type))) { return true; }
-        const auto* Projectile = NativeWadRules::FindWandProjectileByType(Type);
-        const TCHAR* Resource = Projectile ? Projectile->Art
-            : Type == 4016 ? TEXT("EARTHBND/1.CPC")
-            : Type == NativeWadRules::PoisonCrossbowBolt ? TEXT("ARROW2/1.CPC") : nullptr;
+        FWadArtRequest Request;if(!ResolveWadScriptMissileArt(Type,Request)){return false;}
         UStaticMesh* Plane = Actor.ScriptMissileMesh ? Actor.ScriptMissileMesh.Get()
             : LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        UMaterialInterface* Image = Resource ? SpriteMaterial(FString::Printf(TEXT("Missile%d"), Type), Resource) : nullptr;
+        UMaterialInterface* Image=SpriteMaterialRequest(Request);
         if (!Plane || !Image)
         { Output.Logf(TEXT("Could not install original art for scripted missile %d."), Type); return false; }
         Actor.ScriptMissileMesh = Plane;
@@ -1824,8 +1724,8 @@ struct FAAWadNativeImport
             return false;
         }
         Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        UMaterial* Dart = SpriteMaterial(TEXT("MagicDart"), TEXT("MISSIL12/1.CPC"));
-        UMaterial* Paralysis = SpriteMaterial(TEXT("ParalyzeMissile"), TEXT("EARTHBND/1.CPC"));
+        UMaterial* Dart = SpriteMaterialFixed(TEXT("MagicDart"));
+        UMaterial* Paralysis = SpriteMaterialFixed(TEXT("ParalyzeMissile"));
         if (!Actor.ScriptMissileMesh || !Dart || !Paralysis)
         {
             Output.Log(TEXT("Could not install the L22 trap projectile art."));
@@ -1873,7 +1773,7 @@ struct FAAWadNativeImport
             return false;
         }
         auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        auto* Image = SpriteMaterial(TEXT("ChurchKey"), TEXT("KEY2/KEY2.CPC"));
+        auto* Image = SpriteMaterialFixed(TEXT("ChurchKey"));
         if (!Plane || !Image)
         {
             return false;
@@ -1921,7 +1821,7 @@ struct FAAWadNativeImport
             return false;
         }
         Actor.ScriptMissileMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        UMaterial* Bolt = SpriteMaterial(TEXT("ChurchPiercingBolt"), TEXT("ARROW7/1.CPC"));
+        UMaterial* Bolt = SpriteMaterialFixed(TEXT("ChurchPiercingBolt"));
         if (!Actor.ScriptMissileMesh || !Bolt)
         {
             return false;
@@ -1976,8 +1876,7 @@ struct FAAWadNativeImport
         {
             return false;
         }
-        return InstallQuestPickup(World, Actor, Map, NativeWadRules::AndrewNecklace, TEXT("AndrewNecklace"),
-            TEXT("NECKLACE/NECKLACE.CPC"), TEXT("L60 Necklace of Andrew"), Output, FWadLevelCheckpoint::AndrewNecklaceRevision);
+        return InstallQuestPickup(World, Actor, Map, NativeWadRules::AndrewNecklace, TEXT("AndrewNecklace"), TEXT("L60 Necklace of Andrew"), Output, FWadLevelCheckpoint::AndrewNecklaceRevision);
     }
 
     bool ImportSceneryDefinition(const FString& Resource, FWadSceneryDefinition& Definition)
@@ -2236,21 +2135,8 @@ struct FAAWadNativeImport
     bool InstallScenery(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, bool bRetreat, FOutputDevice& Output)
     {
         // These are fixed scenery types from OBJS.FL. Pickup, encounter and script types have their own importers.
-        static const TMap<int32, FString> Resources = {
-            {11, TEXT("COLUMN")}, {20, TEXT("MOSSROCK")}, {27, TEXT("TORCH1")}, {30, TEXT("GLOWER")},
-            {38, TEXT("TROPHY")}, {41, TEXT("BRAFIR")}, {48, TEXT("CB04")}, {79, TEXT("BIGTREE")},
-            {81, TEXT("MYROCK1")}, {115, TEXT("BGVASE")}, {137, TEXT("CHAIR01")}, {138, TEXT("TABLE01")},
-            {142, TEXT("TOMB3")}, {151, TEXT("STATUE")}, {285, TEXT("RUBL4")}, {294, TEXT("CANDAB1")},
-            {296, TEXT("CANDSTK1")}, {669, TEXT("FNTN")}, {3104, TEXT("DEAD01")}, {4071, TEXT("TREE1")},
-            {4072, TEXT("TREE2")}, {4074, TEXT("TREE4")}, {4076, TEXT("TREE6")}, {4077, TEXT("TREE7")},
-            {4078, TEXT("TREE8")}, {4083, TEXT("TORCH2")}
-        };
-        static const TMap<int32, FString> RetreatResources = {
-            {14, TEXT("BARREL1")}, {15, TEXT("BARREL3")}, {18, TEXT("ROCK_1")}, {25, TEXT("SWPPLT03")},
-            {59, TEXT("JAW")}, {65, TEXT("SKULL")}, {72, TEXT("STONE")}, {121, TEXT("STAL2")},
-            {124, TEXT("STAL5")}, {134, TEXT("STAL15")}, {136, TEXT("STAL17")},
-            {4075, TEXT("TREE5")}, {4079, TEXT("TREE9")}
-        };
+        const auto& Resources = NativeWadScenerySource::GetLegacyBaseResources();
+        const auto& RetreatResources = NativeWadScenerySource::GetLegacyRetreatResources();
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         if (!Plane)
         {
@@ -2345,31 +2231,7 @@ struct FAAWadNativeImport
     {
         // Editor/inactive saved maps have not built the transient footprint cache.
         Actor.InitializeTopology();
-        struct FCreature
-        {
-            int32 Type;
-            const TCHAR* Name;
-            const TCHAR* Resource;
-            const TCHAR* Standing;
-            const TCHAR* Hurt;
-            const TCHAR* Downed;
-            const TCHAR* Attacking;
-            int32 Health, RetreatHealth, MeleeDamage, MeleeRange, Radius, Step, UpdateTicks, Vision;
-            int32 MinDartRange, MaxDartRange, DartDelay;
-        };
-        // Original placements and art come from THINGS and the object stance tables. CREDATA.H supplies the combat values.
-        const FCreature Creatures[] = {
-            {3000, TEXT("Bronze Barbarian"), TEXT("BRONZE"), TEXT("BRONZ01.CPC"), TEXT("DEDBZ02.CPC"), TEXT("DEDBZ04.CPC"),
-                TEXT("BRZATK01.CPC"), 2500, 500, 350, 60, 20, 12, 14, 180, 0, 0, 0},
-            {3001, TEXT("Black Barbarian"), TEXT("GUS"), TEXT("GUS01.CPC"), TEXT("DEDGUS02.CPC"), TEXT("DEDGUS04.CPC"),
-                TEXT("GSATK01.CPC"), 3000, 500, 400, 60, 20, 10, 7, 270, 5000, 5000, 50},
-            {3002, TEXT("White Barbarian"), TEXT("PHIL"), TEXT("PHIL01.CPC"), TEXT("BDDED02.CPC"), TEXT("BDDED04.CPC"),
-                TEXT("BRDATK01.CPC"), 2500, 1000, 250, 60, 20, 10, 5, 270, 250, 10000, 25},
-            {3003, TEXT("Blue Barbarian"), TEXT("BLUE"), TEXT("BLUWK01.CPC"), TEXT("BLUDED02.CPC"), TEXT("BLUDED04.CPC"),
-                TEXT("BLUATK01.CPC"), 2500, 750, 300, 60, 20, 10, 7, 180, 0, 0, 0},
-            {1033, TEXT("Skeleton Knight"), TEXT("SKELKNT"), TEXT("SWNW01.CPC"), TEXT("SDNW01.CPC"), TEXT("SDNW04.CPC"),
-                TEXT("2SA001.CPC"), 2500, 100, 300, 30, 15, 10, 7, 90, 0, 0, 0},
-        };
+        const auto Creatures=GetWadRetreatCreatureSources();
         for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
         {
             if (Map.Things[Id].Type != 1033) { continue; }
@@ -2385,20 +2247,20 @@ struct FAAWadNativeImport
         {
             return false;
         }
-        for (const FCreature& Creature : Creatures)
+        for (const FWadRetreatCreatureSource& Creature : Creatures)
         {
             if (OnlyType && Creature.Type != OnlyType) { continue; }
             if (!Map.Things.ContainsByPredicate([&Creature](const FWadThing& Thing) { return Thing.Type == Creature.Type; }))
             {
                 continue;
             }
-            const FString Resource(Creature.Resource);
+            FWadCreatureArtSet Art;if(!ResolveWadRetreatCreatureArt(Creature,Art,Output)){return false;}
             FIntPoint Size;
-            auto* Standing = SpriteMaterial(Resource, Resource / Creature.Standing, &Size);
-            auto* Hurt = SpriteMaterial(Resource + TEXT("_Hurt"), Resource / Creature.Hurt);
-            auto* Downed = SpriteMaterial(Resource + TEXT("_Down"), Resource / Creature.Downed);
-            auto* Attacking = SpriteMaterial(Resource + TEXT("_Attack"), Resource / Creature.Attacking);
-            auto* Dart = Creature.MaxDartRange ? SpriteMaterial(TEXT("MagicDart"), TEXT("MISSIL12/1.CPC")) : nullptr;
+            auto* Standing=SpriteMaterialRequest(Art.Standing,&Size);
+            auto* Hurt=SpriteMaterialRequest(Art.Hurt);
+            auto* Downed=SpriteMaterialRequest(Art.Downed);
+            auto* Attacking=SpriteMaterialRequest(Art.Attacking);
+            auto* Dart=Creature.MaxDartRange?SpriteMaterialRequest(Art.Bolt):nullptr;
             if (!Standing || !Hurt || !Downed || !Attacking || (Creature.MaxDartRange && !Dart))
             {
                 return false;
@@ -2539,13 +2401,12 @@ struct FAAWadNativeImport
         for (const bool bMounted : {false, true})
         {
             const int32 Type = bMounted ? ChurchMountedKnight : ChurchFootKnight;
-            const FString AssetName = bMounted ? TEXT("MountedKnight") : TEXT("FootKnight");
-            auto* Standing = SpriteMaterial(AssetName, bMounted ? TEXT("KNITHRS/KHSRUN03.CPC") : TEXT("KXW/KXW001.CPC"));
-            auto* Attack = bMounted ? Standing : SpriteMaterial(AssetName + TEXT("Attack"), TEXT("KXW/KXA005.CPC"));
-            auto* Hurt = SpriteMaterial(AssetName + TEXT("Hurt"), bMounted ? TEXT("KNITHRS/KHSDI02.CPC") : TEXT("KXW/KXD001.CPC"));
-            auto* Down = SpriteMaterial(AssetName + TEXT("Down"), bMounted ? TEXT("KNITHRS/KHSDI08.CPC") : TEXT("KXW/KXD008.CPC"));
-            auto* Bolt = SpriteMaterial(bMounted ? TEXT("KnightPiercingBolt") : TEXT("KnightGrayBolt"),
-                bMounted ? TEXT("ARROW7/1.CPC") : TEXT("ARROW1/BOLT0.CPC"));
+            FWadCreatureArtSet Art;if(!ResolveWadKnightArt(bMounted,Art,Output)){return false;}
+            auto* Standing=SpriteMaterialRequest(Art.Standing);
+            auto* Attack=bMounted?Standing:SpriteMaterialRequest(Art.Attacking);
+            auto* Hurt=SpriteMaterialRequest(Art.Hurt);
+            auto* Down=SpriteMaterialRequest(Art.Downed);
+            auto* Bolt=SpriteMaterialRequest(Art.Bolt);
             if (!Standing || !Attack || !Hurt || !Down || !Bolt)
             {
                 return false;
@@ -2610,19 +2471,17 @@ struct FAAWadNativeImport
 
     bool InstallL22Journal(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
     {
-        return InstallQuestPickup(World, Actor, Map, NativeWadRules::JugurthaJournal, TEXT("JugurthasJournal"),
-            TEXT("BOOK/BOOK.CPC"), TEXT("L22 Jugurtha Journal"), Output);
+        return InstallQuestPickup(World, Actor, Map, NativeWadRules::JugurthaJournal, TEXT("JugurthasJournal"), TEXT("L22 Jugurtha Journal"), Output);
     }
 
     bool InstallL151Key(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, FOutputDevice& Output)
     {
         Actor.InitializeTopology();
-        return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey5, TEXT("ElmoreKey5"),
-            TEXT("KEY5/KEY5.CPC"), TEXT("L151 Key 5"), Output, FWadLevelCheckpoint::ElmoreKeysRevision);
+        return InstallQuestPickup(World, Actor, Map, NativeWadRules::ElmoreKey5, TEXT("ElmoreKey5"), TEXT("L151 Key 5"), Output, FWadLevelCheckpoint::ElmoreKeysRevision);
     }
 
     bool InstallQuestPickup(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map, int32 Type,
-        const TCHAR* Asset, const TCHAR* Picture, const TCHAR* Label, FOutputDevice& Output,
+        const TCHAR* Asset, const TCHAR* Label, FOutputDevice& Output,
         int32 CheckpointRevision = 0, bool bFollowFloor = false)
     {
         const int32 Index = Map.Things.IndexOfByPredicate([Type](const FWadThing& Thing) { return Thing.Type == Type; });
@@ -2638,7 +2497,8 @@ struct FAAWadNativeImport
             return false;
         }
         auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        auto* Image = SpriteMaterial(Asset, Picture);
+        FWadArtRequest Request;if(!ReadWadFixedArtRequest(Asset,Request)){return false;}
+        Request.SourceTypes.AddUnique(Type);auto* Image=SpriteMaterialRequest(Request);
         if (!Plane || !Image)
         {
             return false;
@@ -2735,12 +2595,54 @@ struct FAAWadNativeImport
         AssetsToSave.AddUnique(&Asset);
     }
 
+    UMaterial* SpriteMaterialFixed(const FString& Key,FIntPoint* Size=nullptr)
+    {FWadArtRequest Request;if(!ReadWadFixedArtRequest(Key,Request)){return nullptr;}return SpriteMaterialRequest(Request,Size);}
+
+    UMaterial* SpriteMaterialRequest(const FWadArtRequest& Request,FIntPoint* Size=nullptr)
+    {
+        auto* Material=SpriteMaterial(Request.AssetName,Request.Picture,Size,Request.ColorTable);if(!Material){return nullptr;}
+        for(const auto& Expr:Material->GetExpressionCollection().Expressions)
+        {
+            auto* Sample=Cast<UMaterialExpressionTextureSample>(Expr);auto* Texture=Sample?Cast<UTexture2D>(Sample->Texture):nullptr;
+            const auto* Saved=Texture?NativeWadArt::GetSource(*Texture):nullptr;
+            if(Saved)
+            {
+                if(!bArtManifestLoaded)
+                {
+                    TArray<FWadArtRequest> Requests;if(!ReadWadCreatureArtRequests(Requests,*GWarn)){return nullptr;}
+                    for(const auto& Entry:Requests){ArtManifest.Add(Entry.AssetName.ToUpper(),Entry);}bArtManifestLoaded=true;
+                }
+                const auto* Canonical=ArtManifest.Find(Request.AssetName.ToUpper());
+                const auto& Identity=Canonical&&Canonical->Picture.Equals(Request.Picture,ESearchCase::IgnoreCase)
+                    &&Canonical->ColorTable==Request.ColorTable&&Canonical->bMirrored==Request.bMirrored?*Canonical:Request;
+                auto Source=*Saved;Source.SourceTypes=Identity.SourceTypes;
+                for(int32 Type:Request.SourceTypes){Source.SourceTypes.AddUnique(Type);}Source.SourceTypes.Sort();Source.bMirrored=Identity.bMirrored;
+                if(!NativeWadArt::RecordSource(*Texture,Source)){return nullptr;}QueueSave(*Texture);
+            }
+        }
+        return Material;
+    }
+
+    UTexture2D* InterfaceIcon(const FString& Name,const FString& PicturePath)
+    {
+        const FString Package=AssetRoot/TEXT("Things/T_")+Name;
+        if(FPackageName::DoesPackageExist(Package))
+        {return LoadObject<UTexture2D>(nullptr,*(Package+TEXT(".T_")+Name));}
+        FIntPoint Size;TArray<FColor> Pixels;if(!LoadWadSprite(PicturePath,Size,Pixels)){return nullptr;}
+        auto* Texture=FindOrCreateAsset<UTexture2D>(TEXT("Things"),TEXT("T_")+Name);if(!Texture){return nullptr;}
+        Texture->Source.Init(Size.X,Size.Y,1,1,TSF_BGRA8,reinterpret_cast<const uint8*>(Pixels.GetData()));
+        Texture->CompressionSettings=TC_EditorIcon;Texture->MipGenSettings=TMGS_NoMipmaps;Texture->Filter=TF_Nearest;
+        Texture->AddressX=TA_Clamp;Texture->AddressY=TA_Clamp;Texture->NeverStream=true;Texture->SRGB=true;
+        if(!NativeWadArt::RecordPicture(*Texture,EWadArtEncoding::Sprite,EWadArtPalette::InterfaceGame,TEXT("OBJS/")+PicturePath,Size,Pixels,true)){return nullptr;}
+        Texture->PostEditChange();QueueSave(*Texture);return Texture;
+    }
+
     UMaterial* SpriteMaterial(const FString& Name, const FString& PicturePath, FIntPoint* OutSize = nullptr,
         TConstArrayView<uint8> ColorTable = {})
     {
         FIntPoint Size;
         TArray<FColor> Pixels;
-        if (!LoadWadSprite(PicturePath, Size, Pixels, ColorTable))
+        if (!LoadWadSprite(PicturePath, Size, Pixels, ColorTable,EWadArtPalette::WorldStandard))
         {
             return nullptr;
         }
@@ -2748,13 +2650,18 @@ struct FAAWadNativeImport
         {
             *OutSize = Size;
         }
-        UTexture2D* Picture = FindOrCreateAsset<UTexture2D>(TEXT("Things"), TEXT("T_") + Name);
+        UTexture2D* Picture=nullptr;
+        if(AssetRoot==TEXT("/Game/WadInterface/Inventory"))
+        {TGuardValue<FString> WorldRoot(AssetRoot,TEXT("/Game/WadWorldArt/Items"));Picture=FindOrCreateAsset<UTexture2D>(TEXT(""),TEXT("T_")+Name);}
+        else{Picture=FindOrCreateAsset<UTexture2D>(TEXT("Things"),TEXT("T_")+Name);}
         UMaterial* Result = FindOrCreateAsset<UMaterial>(TEXT("Things"), TEXT("M_") + Name);
         if (!Picture || !Result)
         {
             return nullptr;
         }
         Picture->Source.Init(Size.X, Size.Y, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
+        if(!NativeWadArt::RecordPicture(*Picture,EWadArtEncoding::Sprite,EWadArtPalette::WorldStandard,
+            TEXT("OBJS/")+PicturePath,Size,Pixels,true,ColorTable)){return nullptr;}
         Picture->CompressionSettings = TC_EditorIcon;
         Picture->MipGenSettings = TMGS_NoMipmaps;
         Picture->AddressX = TA_Clamp;
@@ -2881,14 +2788,14 @@ struct FAAWadNativeImport
         Actor.ActivitySwitchDown = OriginalSwitch->GetMaterial(0);
 
         auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        UMaterial* GuardianArt = SpriteMaterial(TEXT("ElfGuardian"), TEXT("ARCHER/ARCHER01.CPC"));
-        UMaterial* DownedArt = SpriteMaterial(TEXT("ElfGuardianDowned"), TEXT("ARCHER/ARCDI04.CPC"));
-        UMaterial* AttackArt = SpriteMaterial(TEXT("ElfGuardianAttack"), TEXT("ARCHER/ARCDI01.CPC"));
-        UMaterial* HurtArt = SpriteMaterial(TEXT("ElfGuardianHurt"), TEXT("ARCHER/ARCHER05.CPC"));
-        UMaterial* BoltArt = SpriteMaterial(TEXT("GuardianBolt"), TEXT("ARROW1/BOLT2.CPC"));
-        UMaterial* BerryArt = SpriteMaterial(TEXT("Berry"), TEXT("BERI/BERI.CPC"));
-        UMaterial* DaggerArt = SpriteMaterial(TEXT("IronDagger"), TEXT("DAGGER/DAGGER.CPC"));
-        Actor.ScriptMissileArt = SpriteMaterial(TEXT("PoisonMissile"), TEXT("MISSIL16/1.CPC"));
+        UMaterial* GuardianArt = SpriteMaterialFixed(TEXT("ElfGuardian"));
+        UMaterial* DownedArt = SpriteMaterialFixed(TEXT("ElfGuardianDowned"));
+        UMaterial* AttackArt = SpriteMaterialFixed(TEXT("ElfGuardianAttack"));
+        UMaterial* HurtArt = SpriteMaterialFixed(TEXT("ElfGuardianHurt"));
+        UMaterial* BoltArt = SpriteMaterialFixed(TEXT("GuardianBolt"));
+        UMaterial* BerryArt = SpriteMaterialFixed(TEXT("Berry"));
+        UMaterial* DaggerArt = SpriteMaterialFixed(TEXT("IronDagger"));
+        Actor.ScriptMissileArt = SpriteMaterialFixed(TEXT("PoisonMissile"));
         Actor.ScriptMissileMesh = Plane;
         if (!Plane || !GuardianArt || !DownedArt || !AttackArt || !HurtArt || !BoltArt || !BerryArt || !DaggerArt
             || !Actor.ScriptMissileArt)
@@ -2970,12 +2877,12 @@ struct FAAWadNativeImport
             Actor.ActivitySounds.Add(LiftSound, ExistingLiftSound);
         }
         auto* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
-        UMaterial* Stand = SpriteMaterial(TEXT("GaisericMagician"), TEXT("PHIL/PHIL01.CPC"));
-        UMaterial* Down = SpriteMaterial(TEXT("GaisericMagicianDowned"), TEXT("PHIL/BDDED04.CPC"));
-        UMaterial* Attack = SpriteMaterial(TEXT("GaisericMagicianAttack"), TEXT("PHIL/BDDED02.CPC"));
-        UMaterial* Hurt = SpriteMaterial(TEXT("GaisericMagicianHurt"), TEXT("PHIL/BRDATK01.CPC"));
-        UMaterial* Missile = SpriteMaterial(TEXT("MagicDart"), TEXT("MISSIL12/1.CPC"));
-        UMaterial* Potion = SpriteMaterial(TEXT("FeatherfallPotion"), TEXT("POTION17/POTION17.CPC"));
+        UMaterial* Stand = SpriteMaterialFixed(TEXT("GaisericMagician"));
+        UMaterial* Down = SpriteMaterialFixed(TEXT("GaisericMagicianDowned"));
+        UMaterial* Attack = SpriteMaterialFixed(TEXT("GaisericMagicianAttack"));
+        UMaterial* Hurt = SpriteMaterialFixed(TEXT("GaisericMagicianHurt"));
+        UMaterial* Missile = SpriteMaterialFixed(TEXT("MagicDart"));
+        UMaterial* Potion = SpriteMaterialFixed(TEXT("FeatherfallPotion"));
         if (!Plane || !Stand || !Down || !Attack || !Hurt || !Missile || !Potion)
         {
             Output.Log(TEXT("Unable to load the original L151 encounter art."));
@@ -3024,7 +2931,7 @@ struct FAAWadNativeImport
         const FString& PictureName = Tokens[1];
         FIntPoint Size;
         TArray<FColor> Pixels;
-        if (!LoadWadBackdrop(PictureName, Size, Pixels))
+        if (!LoadWadBackdrop(PictureName, Size, Pixels,EWadArtPalette::WorldStandard))
         {
             Output.Logf(TEXT("Unable to decode authored WAD backdrop %s."), *PictureName);
             return false;
@@ -3038,8 +2945,11 @@ struct FAAWadNativeImport
             return false;
         }
         Picture->Source.Init(Size.X, Size.Y, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
+        if(!NativeWadArt::RecordPicture(*Picture,EWadArtEncoding::Backdrop,EWadArtPalette::WorldStandard,
+            TEXT("BACKDROP/")+PictureName,Size,Pixels,false)){return false;}
         Picture->CompressionSettings = TC_EditorIcon;
         Picture->MipGenSettings = TMGS_NoMipmaps;
+        Picture->Filter=TF_Nearest;
         Picture->AddressX = TA_Clamp;
         Picture->AddressY = TA_Clamp;
         Picture->NeverStream = true;
@@ -3123,12 +3033,18 @@ struct FAAWadNativeImport
             bAssetError = true;
             return nullptr;
         }
-        FTexture2DMipMap& Mip = Source->GetPlatformData()->Mips[0];
-        const uint8* Data = static_cast<const uint8*>(Mip.BulkData.LockReadOnly());
-        Asset->Source.Init(Source->GetSizeX(), Source->GetSizeY(), 1, 1, TSF_BGRA8, Data);
-        Mip.BulkData.Unlock();
+        const auto* Provenance=NativeWadArt::GetSource(*Source);
+        if(!Provenance||!Provenance->bAuthoredMips){bAssetError=true;return nullptr;}
+        TArray<uint8> Bytes;
+        for(auto& Mip:Source->GetPlatformData()->Mips)
+        {
+            const auto* Data=static_cast<const uint8*>(Mip.BulkData.LockReadOnly());
+            Bytes.Append(Data,int32(Mip.BulkData.GetBulkDataSize()));Mip.BulkData.Unlock();
+        }
+        Asset->Source.Init(Provenance->OriginalSize.X,Provenance->OriginalSize.Y,1,Provenance->MipSHA1.Num(),TSF_BGRA8,Bytes.GetData());
+        if(!NativeWadArt::RecordSource(*Asset,*Provenance)){bAssetError=true;return nullptr;}
         Asset->CompressionSettings = TC_EditorIcon;
-        Asset->MipGenSettings = TMGS_NoMipmaps;
+        Asset->MipGenSettings = TMGS_LeaveExistingMips;
         Asset->NeverStream = true;
         Asset->Filter = TF_Nearest;
         Asset->SRGB = true;
@@ -3157,8 +3073,12 @@ struct FAAWadNativeImport
             bAssetError = true;
             return Parents[Index];
         }
+        if(!ConfigureWadSurfaceMipMaterial(*Parents[Index]->GetMaterial())){bAssetError=true;return Parents[Index];}
+        if(Parents[Index]->GetOutermost()->IsDirty()){AssetsToSave.AddUnique(Parents[Index]);}
         Asset->SetParentEditorOnly(Parents[Index]);
         Asset->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(TEXT("SurfaceTexture")), Image);
+        if(const auto* Provenance=NativeWadArt::GetSource(*Image))
+        {Asset->SetVectorParameterValueEditorOnly(FMaterialParameterInfo(TEXT("WadSourceMipInfo")),FLinearColor(float(Provenance->OriginalSize.X),float(Provenance->OriginalSize.Y),float(Provenance->MipSHA1.Num()-1),0));}
         Asset->PostEditChange();
         QueueSave(*Asset);
         Materials.Add(Name, Asset);
@@ -3705,14 +3625,15 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     int32 Armor = 0;
     FAAWadNativeImport Import;
     Import.AssetRoot = TEXT("/Game/WadInterface/Inventory");
-    auto LoadOrImportProjectile = [&Import](const FString& Name, const TCHAR* Art)
+    auto LoadOrImportProjectile = [&Import](const FString& Name)
     {
+        FWadArtRequest Request;if(!ReadWadSharedProjectileArtRequest(Name,Request)){return static_cast<UMaterialInterface*>(nullptr);}
         const FString Package = Import.AssetRoot / TEXT("Things/M_") + Name;
         const FString Object = Package + TEXT(".M_") + Name;
         return FPackageName::DoesPackageExist(Package)
-            ? LoadObject<UMaterialInterface>(nullptr, *Object) : Import.SpriteMaterial(Name, Art);
+            ? LoadObject<UMaterialInterface>(nullptr, *Object) : Import.SpriteMaterialRequest(Request);
     };
-    Catalog->PlasmaProjectile = LoadOrImportProjectile(TEXT("PlasmaProjectile"), TEXT("PBALL/PBALL001.CPC"));
+    Catalog->PlasmaProjectile = LoadOrImportProjectile(TEXT("PlasmaProjectile"));
     if (!Catalog->PlasmaProjectile)
     {
         Output.Log(TEXT("Could not load the wand's plasma projectile art."));
@@ -3721,7 +3642,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     for (const NativeWadRules::FWadAmmo& Ammo : NativeWadRules::CrossbowAmmo)
     {
         const FString Name = FString::Printf(TEXT("Ammo%d"), Ammo.Missile);
-        UMaterialInterface* Material = LoadOrImportProjectile(Name, Ammo.Art);
+        UMaterialInterface* Material = LoadOrImportProjectile(Name);
         if (!Material)
         {
             Output.Logf(TEXT("Could not import crossbow missile %d."), Ammo.Missile);
@@ -3736,7 +3657,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
             continue;
         }
         const FString Name = FString::Printf(TEXT("Wand%d"), Projectile.Type);
-        UMaterialInterface* Material = LoadOrImportProjectile(Name, Projectile.Art);
+        UMaterialInterface* Material = LoadOrImportProjectile(Name);
         if (!Material)
         {
             Output.Logf(TEXT("Could not import wand missile %d."), Projectile.Type);
@@ -3756,10 +3677,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
             {
                 Image = LoadObject<UTexture2D>(nullptr, *ImagePath);
             }
-            if (!Image && Import.SpriteMaterial(Name, Item.Picture))
-            {
-                Image = FindObject<UTexture2D>(nullptr, *ImagePath);
-            }
+            if (!Image){Image=Import.InterfaceIcon(Name,Item.Picture);}
             if (!Image)
             {
                 Output.Logf(TEXT("Could not import the shop item icon %d."), Type);
@@ -4283,6 +4201,8 @@ bool SaveNativeWadHud(FOutputDevice& Output)
         {
             return false;
         }
+        if(!NativeWadArt::RecordPicture(*Texture,EWadArtEncoding::Sprite,EWadArtPalette::InterfaceGame,
+            TEXT("OBJS/")+FString(Item.Sprite),Size,Pixels,true)){return false;}
         Data->Items.Add(Item.Type, Texture);
         Data->ItemWeights.Add(Item.Type, Item.Weight);
     }
@@ -4796,9 +4716,10 @@ namespace
         const FString Name=FString(Prefix)+TEXT("_SHIELD02_PLH0")+(bLegacy?TEXT("2"):TEXT("1"));
         return FString(ShieldRoot)/TEXT("Things")/Name+TEXT(".")+Name;
     }
-    bool ShieldPixels(bool Legacy,FIntPoint& Size,TArray<FColor>& Pixels)
-    { return LoadWadSprite(Legacy?TEXT("SHIELD02/PLH02.CPC"):TEXT("SHIELD02/PLH01.CPC"),Size,Pixels); }
-    bool SourceShieldMaterial(UMaterialInterface* Interface,UTexture2D* Texture)
+    bool ShieldPixels(bool Legacy,FIntPoint& Size,TArray<FColor>& Pixels,EWadArtPalette Domain=EWadArtPalette::InterfaceGame)
+    { return LoadWadSprite(Legacy?TEXT("SHIELD02/PLH02.CPC"):TEXT("SHIELD02/PLH01.CPC"),Size,Pixels,{},Domain); }
+    bool MatchShieldDomain(UTexture2D& Texture,bool Legacy,EWadArtPalette Domain);
+    bool SourceShieldMaterial(UMaterialInterface* Interface,UTexture2D* Texture,bool AllowWorld=false)
     {
         auto* Material=Cast<UMaterial>(Interface);if (!Material || !Texture || Material->MaterialDomain!=MD_Surface || Material->BlendMode!=BLEND_Masked
             || !Material->TwoSided || !Material->GetShadingModels().HasOnlyShadingModel(MSM_Unlit)
@@ -4809,7 +4730,17 @@ namespace
         UMaterialExpressionTextureSample* Sample=nullptr;UMaterialExpressionMultiply* Multiply=nullptr;
         for (UMaterialExpression* Expression:Expressions)
         { if (auto* S=Cast<UMaterialExpressionTextureSample>(Expression)) { Sample=S; }if (auto* M=Cast<UMaterialExpressionMultiply>(Expression)) { Multiply=M; } }
-        if (!Sample || !Multiply || Sample->Texture!=Texture || Multiply->A.Expression!=Sample || Multiply->A.OutputIndex!=0
+        if (!Sample || !Multiply) { return false; }
+        bool ExactSample=Sample->Texture==Texture;
+        if(!ExactSample&&AllowWorld)
+        {
+            auto* World=Cast<UTexture2D>(Sample->Texture);
+            const auto* Provenance=World?NativeWadArt::GetSource(*World):nullptr;
+            ExactSample=World&&World->GetPathName()==TEXT("/Game/WadWorldArt/Items/T_SHIELD02_PLH01.T_SHIELD02_PLH01")
+                &&Provenance&&Provenance->Palette==EWadArtPalette::WorldStandard
+                &&MatchShieldDomain(*World,false,EWadArtPalette::WorldStandard);
+        }
+        if (!ExactSample || Multiply->A.Expression!=Sample || Multiply->A.OutputIndex!=0
             || Multiply->B.Expression || Multiply->ConstB!=0.35f || Sample->Coordinates.Expression || Sample->ConstCoordinate!=0
             || Sample->SamplerType!=SAMPLERTYPE_Color || Sample->SamplerSource!=SSM_FromTextureAsset) { return false; }
         for (int32 Property=0;Property<MP_MAX;++Property)
@@ -4853,10 +4784,12 @@ namespace
     }
 }
 
-bool MatchesNativeWadShieldFrameTexture(UTexture2D& Texture,bool Legacy)
+namespace
+{
+bool MatchShieldDomain(UTexture2D& Texture,bool Legacy,EWadArtPalette Domain)
 {
     FIntPoint Size;TArray<FColor> Expected;TArray64<uint8> Actual;
-    if (!ShieldPixels(Legacy,Size,Expected) || Texture.Source.GetSizeX()!=Size.X || Texture.Source.GetSizeY()!=Size.Y
+    if (!ShieldPixels(Legacy,Size,Expected,Domain) || Texture.Source.GetSizeX()!=Size.X || Texture.Source.GetSizeY()!=Size.Y
         || Texture.Source.GetFormat()!=TSF_BGRA8 || Texture.Source.GetNumMips()!=1 || !Texture.Source.GetMipData(Actual,0)
         || Texture.Filter!=TF_Nearest || !Texture.SRGB || !Texture.NeverStream || Texture.CompressionSettings!=TC_EditorIcon
         || Texture.MipGenSettings!=TMGS_NoMipmaps || Texture.AddressX!=TA_Clamp || Texture.AddressY!=TA_Clamp
@@ -4866,7 +4799,7 @@ bool MatchesNativeWadShieldFrameTexture(UTexture2D& Texture,bool Legacy)
     {
         TArray<uint8> Raw;
         const FString File=Legacy?TEXT("OBJS/SHIELD02/PLH02.CPC"):TEXT("OBJS/SHIELD02/PLH01.CPC");
-        if (!P->IsValid() || P->ResourcePath!=File || P->Encoding!=EWadArtEncoding::Sprite || P->Palette!=EWadArtPalette::InterfaceGame
+        if (!P->IsValid() || P->ResourcePath!=File || P->Encoding!=EWadArtEncoding::Sprite || P->Palette!=Domain
             || !P->ColorTable.IsEmpty() || !P->bZeroTransparent || P->bAuthoredMips || P->OriginalSize!=Size
             || !FFileHelper::LoadFileToArray(Raw,*(FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal")/File))
             || P->SourceSHA1!=NativeWadArt::SHA1(Raw) || P->MipSHA1.Num()!=1
@@ -4874,6 +4807,9 @@ bool MatchesNativeWadShieldFrameTexture(UTexture2D& Texture,bool Legacy)
     }
     return true;
 }
+}
+bool MatchesNativeWadShieldFrameTexture(UTexture2D& Texture,bool Legacy)
+{return MatchShieldDomain(Texture,Legacy,EWadArtPalette::InterfaceGame);}
 
 int32 RebindNativeWadShieldFrameMaterials(UWorld& World,UMaterialInterface& Old,UMaterialInterface& New)
 { return FAAWadNativeImport::RebindShieldFrame(World,Old,New); }
@@ -4902,13 +4838,15 @@ bool RefreshNativeWadShieldInitialFrame(const FString& MapPackage,bool Apply,FOu
     const bool NewExists=NewTexture || NewMaterial;
     if (NewExists && (!NewTexture || !NewMaterial || NewTexture->GetPathName()!=NewTexturePath || NewMaterial->GetPathName()!=NewMaterialPath
         || !MatchesNativeWadShieldFrameTexture(*NewTexture,false)
-        || !SourceShieldMaterial(NewMaterial,NewTexture)))
+        || !SourceShieldMaterial(NewMaterial,NewTexture,true)))
     { Output.Log(TEXT("Preserved an existing PLH01 override/partial asset pair; shield migration needs review."));return false; }
     FAAWadNativeImport Import;Import.AssetRoot=ShieldRoot;
     if (!NewExists && Apply && OldPixels)
     {
+        // InterfaceIcon explicitly creates/retains the approved GAME expansion;
+        // SpriteMaterial may independently create its WorldStandard sample.
+        NewTexture=Import.InterfaceIcon(TEXT("SHIELD02_PLH01"),TEXT("SHIELD02/PLH01.CPC"));
         NewMaterial=Import.SpriteMaterial(TEXT("SHIELD02_PLH01"),TEXT("SHIELD02/PLH01.CPC"));
-        NewTexture=FindObject<UTexture2D>(nullptr,*NewTexturePath);
         if (!NewMaterial || !NewTexture) { return false; }
     }
     if (NewTexture && Apply && !NativeWadArt::GetSource(*NewTexture))

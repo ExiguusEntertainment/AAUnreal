@@ -530,8 +530,16 @@ bool FAAOriginal_WadLoader_L30_Textures::RunTest(const FString& Parameters)
     const FColor* Pixels = static_cast<const FColor*>(Mip.BulkData.LockReadOnly());
     if (TestNotNull(TEXT("Transient texture retains the decoded pixels"), Pixels))
     {
-        TestEqual(TEXT("FART3 texel (1,2) keeps source orientation and RGB"), Pixels[2 * 256 + 1], FColor(72, 36, 16));
-        TestEqual(TEXT("FART3 texel (2,1) stays distinct"), Pixels[1 * 256 + 2], FColor(85, 48, 28));
+        // Independently read the active original view palette. These known
+        // texels are indices72 and70; GAME's lower224 colors are not the view.
+        TArray<uint8> ViewPalette;
+        const bool Loaded=FFileHelper::LoadFileToArray(ViewPalette,*(FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/VIEW00.PAL")));
+        if(TestTrue(TEXT("Read the original active view palette bytes"),Loaded&&ViewPalette.Num()==768))
+        {
+            const auto Color=[&](int32 Index){return FColor((ViewPalette[Index*3]&63)*255/63,(ViewPalette[Index*3+1]&63)*255/63,(ViewPalette[Index*3+2]&63)*255/63);};
+            TestEqual(TEXT("FART3 texel (1,2) keeps source orientation and view RGB"), Pixels[2 * 256 + 1], Color(72));
+            TestEqual(TEXT("FART3 texel (2,1) stays distinct"), Pixels[1 * 256 + 2], Color(70));
+        }
     }
     Mip.BulkData.Unlock();
     TestEqual(TEXT("Upper texture begins at the neighboring ceiling"), Upper.UV0, FVector2D::ZeroVector);

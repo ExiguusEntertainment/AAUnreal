@@ -25,6 +25,31 @@ namespace
     }
 }
 
+const TMap<int32,FString>& NativeWadScenerySource::GetLegacyBaseResources()
+{
+    static const TMap<int32,FString> Resources = {
+            {11, TEXT("COLUMN")}, {20, TEXT("MOSSROCK")}, {27, TEXT("TORCH1")}, {30, TEXT("GLOWER")},
+            {38, TEXT("TROPHY")}, {41, TEXT("BRAFIR")}, {48, TEXT("CB04")}, {79, TEXT("BIGTREE")},
+            {81, TEXT("MYROCK1")}, {115, TEXT("BGVASE")}, {137, TEXT("CHAIR01")}, {138, TEXT("TABLE01")},
+            {142, TEXT("TOMB3")}, {151, TEXT("STATUE")}, {285, TEXT("RUBL4")}, {294, TEXT("CANDAB1")},
+            {296, TEXT("CANDSTK1")}, {669, TEXT("FNTN")}, {3104, TEXT("DEAD01")}, {4071, TEXT("TREE1")},
+            {4072, TEXT("TREE2")}, {4074, TEXT("TREE4")}, {4076, TEXT("TREE6")}, {4077, TEXT("TREE7")},
+            {4078, TEXT("TREE8")}, {4083, TEXT("TORCH2")}
+    };
+    return Resources;
+}
+
+const TMap<int32,FString>& NativeWadScenerySource::GetLegacyRetreatResources()
+{
+    static const TMap<int32,FString> Resources = {
+            {14, TEXT("BARREL1")}, {15, TEXT("BARREL3")}, {18, TEXT("ROCK_1")}, {25, TEXT("SWPPLT03")},
+            {59, TEXT("JAW")}, {65, TEXT("SKULL")}, {72, TEXT("STONE")}, {121, TEXT("STAL2")},
+            {124, TEXT("STAL5")}, {134, TEXT("STAL15")}, {136, TEXT("STAL17")},
+            {4075, TEXT("TREE5")}, {4079, TEXT("TREE9")}
+    };
+    return Resources;
+}
+
 bool NativeWadScenerySource::LoadOrdinaryCatalog(TMap<int32, FString>& Resources, FString& Error)
 {
     Resources.Reset(); Error.Reset();
