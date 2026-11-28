@@ -132,7 +132,21 @@ namespace
                 && Name != TEXT("DISPLAY CANNED MESSAGE") && Name != TEXT("PLAY LOCAL SOUND")
                 && Name != TEXT("PLAY AREA SOUND") && Name != TEXT("COLOR FLASH"))
             { Details.bIdentifyOnUse = true; }
-            if (Type == TEXT("WAND") && Trigger == TEXT("USE") && Name == TEXT("FIRE WAND"))
+            const uint8 TypedDamageMask = Name == TEXT("TAKE NORMAL DAMAGE") ? NormalDamage
+                : Name == TEXT("TAKE FIRE DAMAGE") ? DamageFlag(EProjectileDamage::Fire)
+                : Name == TEXT("TAKE POISON DAMAGE") ? DamageFlag(EProjectileDamage::Poison)
+                : Name == TEXT("TAKE ELECTRICITY DAMAGE") ? DamageFlag(EProjectileDamage::Electricity) : 0;
+            // The source inventory contains one typed-damage action in each of
+            // DES00825/826/827 (USE) and DES00907 (READY), with uint16 power.
+            if (TypedDamageMask && Power > 0 && Power <= MAX_uint16
+                && (Trigger == TEXT("USE") || Trigger == TEXT("READY")))
+            {
+                if (Trigger == TEXT("USE"))
+                { Details.UseDamagePower = Power; Details.UseDamageMask = TypedDamageMask; }
+                else
+                { Details.ReadyDamagePower = Power; Details.ReadyDamageMask = TypedDamageMask; }
+            }
+            else if (Type == TEXT("WAND") && Trigger == TEXT("USE") && Name == TEXT("FIRE WAND"))
             {
                 TArray<FString> Values;
                 Field(TEXT("EFFECT DATA"), Index + 2, EndEffect).ParseIntoArray(Values, TEXT(","), false);
@@ -221,7 +235,7 @@ namespace
             Index = EndEffect;
         }
         Details.bUsable = !bUnknownUse && (Details.Health || Details.Mana || Details.Food || Details.Water
-            || Details.PoisonDivisor > 1 || Details.IdentificationScope > 0 || (Details.Status != INDEX_NONE && Details.StatusTicks > 0));
+            || Details.PoisonDivisor > 1 || Details.IdentificationScope > 0 || Details.UseDamagePower > 0 || (Details.Status != INDEX_NONE && Details.StatusTicks > 0));
 
         if (Details.WeaponDamage <= 0)
         {

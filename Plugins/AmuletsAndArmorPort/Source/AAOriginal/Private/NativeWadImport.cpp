@@ -3619,6 +3619,8 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
     const TSet<int32> CreatedItemTypes{833, 298, 822}; // SPL00086/87/90 ordinary created inventory objects.
     Types.Append(CreatedItemTypes);
+    const TSet<int32> DangerousItemTypes{825, 826, 827, 907}; // Typed USE/READY owners need rules and ordinary death-drop art.
+    Types.Append(DangerousItemTypes);
     for (const int32 Type : {411, 417, 418, 419, 432, 435, 604, 610, 612, 614, 615, 712, 954, 37569, 37573, 41669, 45765}) { Types.Add(Type); }
     for (const int32 Type : {352, 353, 606, 607, 616, 617, 618})
     {
@@ -3734,7 +3736,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
         Details.WorldRadius = Item.Radius;
         const FString MaterialPackage = Item.WorldMaterialPackage();
         const FString MaterialPath = MaterialPackage + TEXT(".") + FPackageName::GetShortName(MaterialPackage);
-        if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351 || Type == 373 || Type == NativeWadRules::OrbOfDefense || OrdinaryTreasureTypes.Contains(Type) || CreatedItemTypes.Contains(Type))
+        if ((NativeWadRules::CoinValueCopper(Type) > 0 || Type == 350 || Type == 351 || Type == 373 || Type == NativeWadRules::OrbOfDefense || OrdinaryTreasureTypes.Contains(Type) || CreatedItemTypes.Contains(Type) || DangerousItemTypes.Contains(Type))
             && !FindObject<UMaterialInterface>(nullptr, *MaterialPath)
             && !FPackageName::DoesPackageExist(MaterialPackage) && !Import.SpriteMaterial(Item.AssetName(), Item.Picture))
         {

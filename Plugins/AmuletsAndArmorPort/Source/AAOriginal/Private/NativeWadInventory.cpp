@@ -447,11 +447,23 @@ bool ANativeWadPlayer::SwapMouseAndReady()
     Swap(SelectedInventorySlot, ReadySlot);
     ActivateFlightEquipmentOwner(ReadySlot);
     ApplyReadiedDefenseOrbEffect();
+    ApplyReadiedTypedItemEffect();
     if (GetReadyItem() == 435) { ReadyMagicMapRing(); }
     SynchronizeMagicMapOwners();
     if (IsDefeated()) { return true; }
     ShowInteractionMessage(FString::Printf(TEXT("Ready hand: %s"), *GetInventoryItemDescription(GetReadyItem())));
     return true;
+}
+
+void ANativeWadPlayer::ApplyReadiedTypedItemEffect()
+{
+    // Only a real READY (including source Dispel reREADY) invokes this action.
+    // Native checkpoint/travel restoration rebuilds ownership without charging
+    // another one-shot cost, unlike the original character-load reREADY loop.
+    if (IsDefeated() || !CanUseWadItem(GetReadyItem())) { return; }
+    if (const FWadInventoryDetails* Rules = GetItemRules(GetReadyItem());
+        Rules && Rules->ReadyDamagePower > 0 && Rules->ReadyDamageMask)
+    { ReceiveTypedHit(Rules->ReadyDamagePower, Rules->ReadyDamageMask); }
 }
 
 void ANativeWadPlayer::ApplyReadiedDefenseOrbEffect()
@@ -836,6 +848,10 @@ void ANativeWadPlayer::UseConsumable(const FWadInventoryDetails& Details)
     {
         RemoveInventorySlot(ReadySlot);
     }
+    // Native damage dispatch can immediately drop the inventory on defeat.
+    // Detach a consumed potion first so its USE cannot also create a death drop.
+    if (Details.UseDamagePower > 0 && Details.UseDamageMask)
+    { ReceiveTypedHit(Details.UseDamagePower, Details.UseDamageMask); }
     if (Details.Health < 0)
     {
         ReceiveEncounterHit(-Details.Health);

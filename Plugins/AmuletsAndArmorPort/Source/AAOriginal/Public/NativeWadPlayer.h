@@ -196,6 +196,7 @@ private:
     int32 MagicMapObserverLine = 0;
     int32 MagicMapObserverSample = 0;
     void ApplyReadiedDefenseOrbEffect();
+    void ApplyReadiedTypedItemEffect();
     bool IsFlightEquipmentOwner(int32 Slot) const;
     bool HasActiveFlightEquipment() const;
     void PruneFlightEquipmentOwners();

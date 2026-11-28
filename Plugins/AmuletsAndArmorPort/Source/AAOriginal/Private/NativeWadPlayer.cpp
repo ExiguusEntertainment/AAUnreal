@@ -796,6 +796,7 @@ void ANativeWadPlayer::ReceiveTypedHit(int32 Damage, uint8 DamageMask)
             // EFFECT.C restores equipped READY effects after choosing a
             // temporary owner; the defense orb's health cost precedes its buff.
             ApplyReadiedDefenseOrbEffect();
+            ApplyReadiedTypedItemEffect();
             // InventoryRestoreEquippedEffects sends a new READY to every surviving
             // equipped owner, even when Dispel found no temporary spell to remove.
             SuppressedFlightEquipment.Reset();

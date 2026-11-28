@@ -55,6 +55,17 @@ struct FWadInventoryDetails
     UPROPERTY()
     bool bConsumed = false;
 
+    // EFFECT_TAKE_*_DAMAGE is distinct from MOD PLAYER HEALTH: it uses the
+    // original typed resistance/armor/poison path at the authored trigger.
+    UPROPERTY()
+    int32 UseDamagePower = 0;
+    UPROPERTY()
+    uint8 UseDamageMask = 0;
+    UPROPERTY()
+    int32 ReadyDamagePower = 0;
+    UPROPERTY()
+    uint8 ReadyDamageMask = 0;
+
     UPROPERTY()
     int32 Status = INDEX_NONE;
     UPROPERTY()

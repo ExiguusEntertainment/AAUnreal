@@ -380,3 +380,11 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - A later header rebuild rejoined committed PackedEncounterFamilyTests into Unreal unity and exposed generic anonymous helper collisions with earlier tests. Renamed this file's helpers uniquely; test behavior and production gameplay are unchanged.
 - Explicit -DisableAdaptiveUnity build succeeds, proving the fix without dirty-file exclusions. Pushing this small standalone build fix before the harmful-item/runtime-metadata checkpoints.
 - DangerousItems and pure carried-data codec are integrated but still uncommitted/unverified at this point. Corrected private test class references, unsupported FString.Init fixture call and explicit parser output initialization; refreshed catalog and157-test run are in progress.
+
+
+## 2026-11-27 19:03 CST - harmful items and carried codec verified
+
+- All157 WAD regressions pass and full non-adaptive unity build succeeds. Refreshed catalog retains375 types,70 melee/80 armor and now58 consumables: the three harmful potions have real USE effects.
+- Source825 poison1000,826 fire1000,827 normal1000 and907 READY electricity200 preserve trigger, typed defenses, identification, ordinary actions and ownership. Used harmful potions detach before immediate defeat drops; tests cover no duplicate drops, invulnerability, Death Ward, Dispel reREADY and actual firing. Native checkpoint restoration does not re-charge READY; that deliberate difference from original character-load reREADY remains explicit.
+- Pure carried-data codec passes three additional groups for ordered full-type witnesses, recorded uint16 payloads, strict modern malformed refusal, missing-only legacy migration, atomicity and bounds. Runtime append/remove/drop/travel/save wiring is not yet installed, so PLAN259 remains open.
+- PLAN258 complete; committing/pushing source, required catalog and pure codec foundation before runtime ownership integration.
