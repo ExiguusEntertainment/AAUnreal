@@ -6,7 +6,7 @@
 
 #include "NativeWadHudData.h"
 
-struct FWadAuthoredItem
+struct AAORIGINAL_API FWadAuthoredItem
 {
     FWadInventoryDetails Details;
     FString Picture;
@@ -20,7 +20,11 @@ struct FWadAuthoredItem
     FString WorldMaterialPackage() const;
 };
 
-bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthoredItem>& Items, FOutputDevice& Output);
+// Validates the complete source INF numeric layout and returns stance0/frame0/angle0.
+// Negative picture IDs retain the original mirrored-orientation sign.
+AAORIGINAL_API bool ParseWadObjectInitialPicture(TConstArrayView<int32> Values, int32& SignedPicture);
+
+AAORIGINAL_API bool ReadWadAuthoredItems(const TSet<int32>& ThingTypes, TMap<int32, FWadAuthoredItem>& Items, FOutputDevice& Output);
 bool ReadWadShopStock(bool bBank, TMap<int32, int32>& Tiers, FOutputDevice& Output);
 bool ReadWadStartingEquipment(TArray<FWadStartingEquipment>& Equipment, FOutputDevice& Output);
 

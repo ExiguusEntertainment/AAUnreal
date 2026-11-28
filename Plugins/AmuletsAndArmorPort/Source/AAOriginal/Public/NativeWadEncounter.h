@@ -328,6 +328,7 @@ public:
     bool IsMagicMapInvisible() const;
 
 private:
+    friend struct FAAWadNativeImport; // Bounded editor art migration preserves actor/state identity.
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<USphereComponent> HitTarget;
 

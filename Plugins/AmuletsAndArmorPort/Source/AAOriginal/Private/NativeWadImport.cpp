@@ -25,6 +25,10 @@ void ConfigureWadLumen(FPostProcessSettings& Settings)
 #if WITH_EDITOR
 
 #include "AssetCompilingManager.h"
+#include "NativeWadArt.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonSerializer.h"
+#include "UObject/UnrealType.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -2304,6 +2308,31 @@ struct FAAWadNativeImport
         }
         Output.Logf(TEXT("Imported %d authored scenery placements (%d solid, %d passable)."), Count, Count - PassableCount, PassableCount);
         return !bAssetError;
+    }
+
+    static int32 RebindShieldFrame(UWorld& World, UMaterialInterface& Old, UMaterialInterface& New, TArray<FString>* ComponentBindings=nullptr)
+    {
+        if (&Old==&New) { return 0; }
+        const auto Shield=[](int32 Type)
+        { switch (Type) { case 712:case 4808:case 8904:case 13000:case 21192:case 25288:case 29384:case 33480:case 37576:case 41672:case 45768:return true;default:return false; } };
+        int32 Changes=0;
+        for (TActorIterator<ANativeWadPickup> Pickup(&World);Pickup;++Pickup)
+        {
+            if (!Shield(Pickup->GetItemType()) || Pickup->Sprite->GetMaterial(0)!=&Old) { continue; }
+            Pickup->Modify();Pickup->Sprite->Modify();Pickup->Sprite->SetMaterial(0,&New);++Changes;
+            if (ComponentBindings) { ComponentBindings->Add(Pickup->Sprite->GetPathName()); }
+        }
+        for (TActorIterator<ANativeWadScenery> Scenery(&World);Scenery;++Scenery)
+        {
+            if (!IsValid(Scenery->GetPickup()) || !Shield(Scenery->GetPickup()->GetItemType())) { continue; }
+            bool Changed=false;
+            for (auto& Frame:Scenery->Definition.Frames) { for (auto& View:Frame.Views)
+            { if (View.Material==&Old) { if (!Changed) { Scenery->Modify();Changed=true; }View.Material=&New;++Changes; } } }
+            if (Scenery->Sprite->GetMaterial(0)==&Old)
+            { Scenery->Modify();Scenery->Sprite->Modify();Scenery->Sprite->SetMaterial(0,&New);++Changes;
+              if (ComponentBindings) { ComponentBindings->Add(Scenery->Sprite->GetPathName()); } }
+        }
+        return Changes;
     }
 
     static void InitializeEncounterTopology(ANativeWadLevel& Actor)
@@ -4755,6 +4784,182 @@ bool RefreshNativeWadPackedDruids(const FString& MapPackage, FOutputDevice& Outp
     { if (!SaveAsset(*Asset,*FPackageName::GetAssetPackageExtension())) { return false; } }
     if (!SaveAsset(*World,*FPackageName::GetMapPackageExtension())) { return false; }
     Output.Logf(TEXT("Restored %d Ulfilas Druids and%d Jugurtha with full source IDs/palettes in%s; retained geometry, scripts, journal and existing checkpoint tags."),ActualPoison,ActualBoss,*Name);
+    return true;
+}
+
+namespace
+{
+    const TSet<int32> ShieldFrameTypes{712,4808,8904,13000,21192,25288,29384,33480,37576,41672,45768};
+    constexpr const TCHAR* ShieldRoot=TEXT("/Game/WadInterface/Inventory");
+    FString ShieldObject(const TCHAR* Prefix,bool bLegacy)
+    {
+        const FString Name=FString(Prefix)+TEXT("_SHIELD02_PLH0")+(bLegacy?TEXT("2"):TEXT("1"));
+        return FString(ShieldRoot)/TEXT("Things")/Name+TEXT(".")+Name;
+    }
+    bool ShieldPixels(bool Legacy,FIntPoint& Size,TArray<FColor>& Pixels)
+    { return LoadWadSprite(Legacy?TEXT("SHIELD02/PLH02.CPC"):TEXT("SHIELD02/PLH01.CPC"),Size,Pixels); }
+    bool SourceShieldMaterial(UMaterialInterface* Interface,UTexture2D* Texture)
+    {
+        auto* Material=Cast<UMaterial>(Interface);if (!Material || !Texture || Material->MaterialDomain!=MD_Surface || Material->BlendMode!=BLEND_Masked
+            || !Material->TwoSided || !Material->GetShadingModels().HasOnlyShadingModel(MSM_Unlit)
+            || Material->bUseMaterialAttributes || Material->bDisableDepthTest
+            || Material->OpacityMaskClipValue!=GetDefault<UMaterial>()->OpacityMaskClipValue) { return false; }
+        const auto& Expressions=Material->GetExpressionCollection().Expressions;
+        if (Expressions.Num()!=2) { return false; }
+        UMaterialExpressionTextureSample* Sample=nullptr;UMaterialExpressionMultiply* Multiply=nullptr;
+        for (UMaterialExpression* Expression:Expressions)
+        { if (auto* S=Cast<UMaterialExpressionTextureSample>(Expression)) { Sample=S; }if (auto* M=Cast<UMaterialExpressionMultiply>(Expression)) { Multiply=M; } }
+        if (!Sample || !Multiply || Sample->Texture!=Texture || Multiply->A.Expression!=Sample || Multiply->A.OutputIndex!=0
+            || Multiply->B.Expression || Multiply->ConstB!=0.35f || Sample->Coordinates.Expression || Sample->ConstCoordinate!=0
+            || Sample->SamplerType!=SAMPLERTYPE_Color || Sample->SamplerSource!=SSM_FromTextureAsset) { return false; }
+        for (int32 Property=0;Property<MP_MAX;++Property)
+        {
+            auto* Input=Material->GetExpressionInputForProperty(EMaterialProperty(Property));if (!Input) { continue; }
+            if (Property==MP_EmissiveColor) { if (Input->Expression!=Multiply || Input->OutputIndex!=0) { return false; } }
+            else if (Property==MP_OpacityMask) { if (Input->Expression!=Sample || Input->OutputIndex!=4) { return false; } }
+            else if (Input->Expression) { return false; }
+        }
+        return true;
+    }
+    FString ShieldNonArtState(UNativeWadHudData& Catalog)
+    {
+        FString Text;
+        auto Details=Catalog.ItemDetails;
+        for (auto& [Type,D]:Details) { if (ShieldFrameTypes.Contains(Type)) { D.WorldMaterial.Reset(); } }
+        auto Icons=Catalog.Items;for (int32 Type:ShieldFrameTypes) { Icons.Remove(Type); }
+        for (TFieldIterator<FProperty> P(Catalog.GetClass());P;++P)
+        {
+            if (P->HasAnyPropertyFlags(CPF_Transient)) { continue; }
+            Text+=P->GetName()+TEXT("=");
+            const void* Value=P->GetName()==TEXT("ItemDetails")?static_cast<const void*>(&Details)
+                :P->GetName()==TEXT("Items")?static_cast<const void*>(&Icons):P->ContainerPtrToValuePtr<void>(&Catalog);
+            P->ExportTextItem_Direct(Text,Value,nullptr,&Catalog,PPF_None);Text+=TEXT("\n");
+        }
+        FTCHARToUTF8 Utf8(*Text);return NativeWadArt::SHA1(MakeArrayView(reinterpret_cast<const uint8*>(Utf8.Get()),Utf8.Length()));
+    }
+    TArray<TSharedPtr<FJsonValue>> ShieldCatalogReport(UNativeWadHudData& Catalog)
+    {
+        TArray<TSharedPtr<FJsonValue>> Out;TArray<int32> Types=ShieldFrameTypes.Array();Types.Sort();
+        for (int32 Type:Types)
+        {
+            auto E=MakeShared<FJsonObject>();E->SetNumberField(TEXT("type"),Type);
+            auto* Icon=Catalog.Items.FindRef(Type).Get();E->SetStringField(TEXT("icon"),GetPathNameSafe(Icon));
+            if (Icon) { TArray64<uint8> Bytes;if (Icon->Source.GetMipData(Bytes,0)) { E->SetStringField(TEXT("pixels"),NativeWadArt::SHA1(MakeArrayView(Bytes.GetData(),int32(Bytes.Num())))); } }
+            if (const auto* D=Catalog.ItemDetails.Find(Type))
+            { E->SetStringField(TEXT("world"),D->WorldMaterial.ToSoftObjectPath().ToString());E->SetNumberField(TEXT("width"),D->SpriteSize.X);E->SetNumberField(TEXT("height"),D->SpriteSize.Y); }
+            Out.Add(MakeShared<FJsonValueObject>(E));
+        }
+        return Out;
+    }
+}
+
+bool MatchesNativeWadShieldFrameTexture(UTexture2D& Texture,bool Legacy)
+{
+    FIntPoint Size;TArray<FColor> Expected;TArray64<uint8> Actual;
+    if (!ShieldPixels(Legacy,Size,Expected) || Texture.Source.GetSizeX()!=Size.X || Texture.Source.GetSizeY()!=Size.Y
+        || Texture.Source.GetFormat()!=TSF_BGRA8 || Texture.Source.GetNumMips()!=1 || !Texture.Source.GetMipData(Actual,0)
+        || Texture.Filter!=TF_Nearest || !Texture.SRGB || !Texture.NeverStream || Texture.CompressionSettings!=TC_EditorIcon
+        || Texture.MipGenSettings!=TMGS_NoMipmaps || Texture.AddressX!=TA_Clamp || Texture.AddressY!=TA_Clamp
+        || Actual.Num()!=int64(Expected.Num())*sizeof(FColor)
+        || FMemory::Memcmp(Actual.GetData(),Expected.GetData(),Actual.Num())) { return false; }
+    if (const auto* P=NativeWadArt::GetSource(Texture))
+    {
+        TArray<uint8> Raw;
+        const FString File=Legacy?TEXT("OBJS/SHIELD02/PLH02.CPC"):TEXT("OBJS/SHIELD02/PLH01.CPC");
+        if (!P->IsValid() || P->ResourcePath!=File || P->Encoding!=EWadArtEncoding::Sprite || P->Palette!=EWadArtPalette::InterfaceGame
+            || !P->ColorTable.IsEmpty() || !P->bZeroTransparent || P->bAuthoredMips || P->OriginalSize!=Size
+            || !FFileHelper::LoadFileToArray(Raw,*(FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal")/File))
+            || P->SourceSHA1!=NativeWadArt::SHA1(Raw) || P->MipSHA1.Num()!=1
+            || P->MipSHA1[0]!=NativeWadArt::SHA1(MakeArrayView(Actual.GetData(),int32(Actual.Num())))) { return false; }
+    }
+    return true;
+}
+
+int32 RebindNativeWadShieldFrameMaterials(UWorld& World,UMaterialInterface& Old,UMaterialInterface& New)
+{ return FAAWadNativeImport::RebindShieldFrame(World,Old,New); }
+
+bool RefreshNativeWadShieldInitialFrame(const FString& MapPackage,bool Apply,FOutputDevice& Output)
+{
+    if (!MapPackage.StartsWith(TEXT("/Game/Maps/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage)) { return false; }
+    auto* World=LoadObject<UWorld>(nullptr,*(MapPackage+TEXT(".")+FPackageName::GetShortName(MapPackage)));
+    if (!World || (World->WorldType!=EWorldType::Editor && World->WorldType!=EWorldType::Inactive)) { return false; }
+    int32 NativeLevels=0;for (TActorIterator<ANativeWadLevel> Level(World);Level;++Level) { ++NativeLevels; }
+    if (NativeLevels!=1) { Output.Log(TEXT("Shield art refresh needs exactly one saved native WAD level."));return false; }
+    auto* Catalog=LoadObject<UNativeWadHudData>(nullptr,UNativeWadHudData::ObjectPath);if (!Catalog) { return false; }
+    auto Report=MakeShared<FJsonObject>();Report->SetBoolField(TEXT("applied"),Apply);
+    Report->SetStringField(TEXT("map"),MapPackage);Report->SetStringField(TEXT("nonart_before"),ShieldNonArtState(*Catalog));
+    Report->SetArrayField(TEXT("catalog_before"),ShieldCatalogReport(*Catalog));
+    auto* OldTexture=LoadObject<UTexture2D>(nullptr,*ShieldObject(TEXT("T"),true));
+    auto* OldMaterial=LoadObject<UMaterialInterface>(nullptr,*ShieldObject(TEXT("M"),true));
+    const bool OldPixels=OldTexture && OldTexture->GetPathName()==ShieldObject(TEXT("T"),true) && MatchesNativeWadShieldFrameTexture(*OldTexture,true);
+    const bool OldGraph=OldPixels && OldMaterial && OldMaterial->GetPathName()==ShieldObject(TEXT("M"),true) && SourceShieldMaterial(OldMaterial,OldTexture);
+    const FString NewTexturePath=ShieldObject(TEXT("T"),false),NewMaterialPath=ShieldObject(TEXT("M"),false);
+    auto* NewTexture=FindObject<UTexture2D>(nullptr,*NewTexturePath);
+    auto* NewMaterial=FindObject<UMaterialInterface>(nullptr,*NewMaterialPath);
+    if (!NewTexture && FPackageName::DoesPackageExist(FPackageName::ObjectPathToPackageName(NewTexturePath))) { NewTexture=LoadObject<UTexture2D>(nullptr,*NewTexturePath); }
+    if (!NewMaterial && FPackageName::DoesPackageExist(FPackageName::ObjectPathToPackageName(NewMaterialPath))) { NewMaterial=LoadObject<UMaterialInterface>(nullptr,*NewMaterialPath); }
+    const bool NewExists=NewTexture || NewMaterial;
+    if (NewExists && (!NewTexture || !NewMaterial || NewTexture->GetPathName()!=NewTexturePath || NewMaterial->GetPathName()!=NewMaterialPath
+        || !MatchesNativeWadShieldFrameTexture(*NewTexture,false)
+        || !SourceShieldMaterial(NewMaterial,NewTexture)))
+    { Output.Log(TEXT("Preserved an existing PLH01 override/partial asset pair; shield migration needs review."));return false; }
+    FAAWadNativeImport Import;Import.AssetRoot=ShieldRoot;
+    if (!NewExists && Apply && OldPixels)
+    {
+        NewMaterial=Import.SpriteMaterial(TEXT("SHIELD02_PLH01"),TEXT("SHIELD02/PLH01.CPC"));
+        NewTexture=FindObject<UTexture2D>(nullptr,*NewTexturePath);
+        if (!NewMaterial || !NewTexture) { return false; }
+    }
+    if (NewTexture && Apply && !NativeWadArt::GetSource(*NewTexture))
+    {
+        FIntPoint Size;TArray<FColor> Pixels;TArray<uint8> Raw;
+        if (!ShieldPixels(false,Size,Pixels) || !FFileHelper::LoadFileToArray(Raw,*(FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Resources/ArtFinal/OBJS/SHIELD02/PLH01.CPC")))) { return false; }
+        FWadArtProvenance P;P.Encoding=EWadArtEncoding::Sprite;P.Palette=EWadArtPalette::InterfaceGame;P.ResourcePath=TEXT("OBJS/SHIELD02/PLH01.CPC");
+        P.OriginalSize=Size;P.bZeroTransparent=true;P.SourceSHA1=NativeWadArt::SHA1(Raw);
+        P.MipSHA1.Add(NativeWadArt::SHA1(MakeArrayView(reinterpret_cast<const uint8*>(Pixels.GetData()),Pixels.Num()*int32(sizeof(FColor)))));
+        NewTexture->Modify();if (!NativeWadArt::RecordSource(*NewTexture,P)) { return false; }Import.QueueSave(*NewTexture);
+    }
+    int32 Icons=0,Worlds=0,Bindings=0,Preserved=0;
+    for (int32 Type:ShieldFrameTypes)
+    {
+        const bool GeneratedIcon=Catalog->Items.FindRef(Type)==OldTexture && OldTexture && OldPixels;
+        auto* Details=Catalog->ItemDetails.Find(Type);
+        const bool GeneratedWorld=Details && Details->WorldMaterial.ToSoftObjectPath().ToString()==ShieldObject(TEXT("M"),true) && OldGraph;
+        if (GeneratedIcon) { ++Icons;if (Apply && NewTexture) { Catalog->Modify();Catalog->Items.Add(Type,NewTexture); } }
+        else if (Catalog->Items.Contains(Type) && Catalog->Items.FindRef(Type)!=NewTexture) { ++Preserved; }
+        if (GeneratedWorld) { ++Worlds;if (Apply && NewMaterial) { Catalog->Modify();Details->WorldMaterial=NewMaterial; } }
+        else if (Details && !Details->WorldMaterial.IsNull() && Details->WorldMaterial.ToSoftObjectPath().ToString()!=ShieldObject(TEXT("M"),false)) { ++Preserved; }
+        // Both real shield pictures are64x64. Keep every custom size/rule and the original transparent padding.
+    }
+    TArray<FString> ChangedComponents;
+    if (Apply && OldGraph && NewMaterial) { Bindings=FAAWadNativeImport::RebindShieldFrame(*World,*OldMaterial,*NewMaterial,&ChangedComponents); }
+    TArray<TSharedPtr<FJsonValue>> ComponentPaths;for (const auto& Path:ChangedComponents) { ComponentPaths.Add(MakeShared<FJsonValueString>(Path)); }
+    Report->SetArrayField(TEXT("changed_components"),ComponentPaths);
+    int32 Remaining=0;
+    for (TActorIterator<AActor> Actor(World);Actor;++Actor)
+    {
+        TInlineComponentArray<UStaticMeshComponent*> Meshes;Actor->GetComponents(Meshes);
+        for (auto* Mesh:Meshes) { for (int32 Slot=0;Slot<Mesh->GetNumMaterials();++Slot)
+        { Remaining+=OldMaterial && Mesh->GetMaterial(Slot)==OldMaterial; } }
+    }
+    Report->SetBoolField(TEXT("old_pixels_valid"),OldPixels);Report->SetBoolField(TEXT("old_graph_valid"),OldGraph);
+    Report->SetNumberField(TEXT("icons"),Icons);Report->SetNumberField(TEXT("world_refs"),Worlds);Report->SetNumberField(TEXT("actor_bindings"),Bindings);
+    Report->SetNumberField(TEXT("preserved_overrides"),Preserved);Report->SetNumberField(TEXT("remaining_old_component_refs"),Remaining);
+    Report->SetArrayField(TEXT("catalog_after"),ShieldCatalogReport(*Catalog));Report->SetStringField(TEXT("nonart_after"),ShieldNonArtState(*Catalog));
+    if (Report->GetStringField(TEXT("nonart_before"))!=Report->GetStringField(TEXT("nonart_after"))) { return false; }
+    if (Apply)
+    {
+        FAssetCompilingManager::Get().FinishAllCompilation();
+        for (auto* Asset:Import.AssetsToSave) { if (!SaveAsset(*Asset,*FPackageName::GetAssetPackageExtension())) { return false; } }
+        if ((Icons || Worlds) && !SaveAsset(*Catalog,*FPackageName::GetAssetPackageExtension())) { return false; }
+        if (Bindings && !SaveAsset(*World,*FPackageName::GetMapPackageExtension())) { return false; }
+    }
+    const FString File=FPaths::ProjectSavedDir()/TEXT("ReviewArtifacts/ShieldInitialFrame")/(FPackageName::GetShortName(MapPackage)+TEXT(".json"));
+    IFileManager::Get().MakeDirectory(*FPaths::GetPath(File),true);FString Json;FJsonSerializer::Serialize(Report,TJsonWriterFactory<>::Create(&Json));
+    if (!FFileHelper::SaveStringToFile(Json,*File)) { return false; }
+    Output.Logf(TEXT("Shield initial-frame %s: icons%d worldrefs%d actorbindings%d preserved%d remaining component refs%d. Report%s"),
+        Apply?TEXT("refresh"):TEXT("audit"),Icons,Worlds,Bindings,Preserved,Remaining,*File);
     return true;
 }
 

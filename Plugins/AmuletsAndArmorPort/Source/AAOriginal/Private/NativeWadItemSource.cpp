@@ -298,18 +298,12 @@ namespace
                 Values.Add(Value);
             }
         }
-        // Object header, first stance, and its frame headers precede the first picture number.
-        constexpr int32 Stance = 8;
-        constexpr int32 Frame = 12;
-        if (Values.Num() <= Frame || Values[0] < 1 || Values[Stance] < 1 || Values[Stance] > (Values.Num() - Frame - 1) / 4)
-        {
-            return false;
-        }
+        int32 Number;
+        if (!ParseWadObjectInitialPicture(Values, Number)) { return false; }
         if (!FFileHelper::LoadFileToStringArray(Lines, *(Root / FPaths::ChangeExtension(Resource, TEXT("FL")))))
         {
             return false;
         }
-        const int32 Number = Values[Frame + Values[Stance] * 4];
         const FString Picture = ReadResourceList(Lines, TEXT("CPC")).FindRef(FMath::Abs(Number));
         if (Picture.IsEmpty())
         {
@@ -325,6 +319,51 @@ namespace
         Item.bRaised = (Values[7] & 0x0400) != 0;
         return true;
     }
+}
+
+bool ParseWadObjectInitialPicture(TConstArrayView<int32> Values, int32& SignedPicture)
+{
+    // DISOAF INF lists all stance headers first, then each stance's complete
+    // frame-header array followed by its angle-picture lists. OBJTYPE.C selects
+    // stance0/frame0 and quantizes viewing angle0 to its first signed picture.
+    constexpr int32 Header = 8, StanceFields = 4, FrameFields = 4;
+    if (Values.Num() < Header || Values[0] < 1 || Values[0] > MAX_uint16 || Values[0] > (Values.Num()-Header)/StanceFields) { return false; }
+    for (int32 Field : {1,2,3,4,6,7})
+    { if (Values[Field] < MIN_int16 || Values[Field] > MAX_uint16) { return false; } }
+    const int32 Stances = Values[0];
+    int32 Cursor = Header + Stances*StanceFields;
+    int32 First = 0;
+    // DISOAF prints some unsigned16 fields through signed16 (e.g. amulet values).
+    // Preserve those original bit patterns and existing price/rule interpretation.
+    const auto Word = [](int32 Value) { return Value >= MIN_int16 && Value <= MAX_uint16; };
+    for (int32 Stance = 0; Stance < Stances; ++Stance)
+    {
+        const int32 At = Header + Stance*StanceFields;
+        const int32 Frames = Values[At];
+        if (Frames < 1 || Frames > MAX_uint16 || Frames > (Values.Num()-Cursor)/FrameFields
+            || !Word(Values[At+1]) || Values[At+2] < 0 || Values[At+2] > 2
+            || Values[At+3] < -1 || Values[At+3] >= Stances) { return false; }
+        const int32 FrameStart = Cursor;
+        Cursor += Frames*FrameFields;
+        for (int32 Frame = 0; Frame < Frames; ++Frame)
+        {
+            const int32 Fields = FrameStart + Frame*FrameFields;
+            const int32 Angles = Values[Fields];
+            if ((Angles != 1 && Angles != 4 && Angles != 8) || Angles > Values.Num()-Cursor
+                || !Word(Values[Fields+1]) || !Word(Values[Fields+2]) || !Word(Values[Fields+3])) { return false; }
+            for (int32 Angle = 0; Angle < Angles; ++Angle)
+            {
+                const int32 Picture = Values[Cursor++];
+                // The original picture number is signed16. Bound before abs()
+                // and preserve its sign for callers that support reversed views.
+                if (Picture < MIN_int16 || Picture > MAX_int16) { return false; }
+                if (Stance == 0 && Frame == 0 && Angle == 0) { First = Picture; }
+            }
+        }
+    }
+    if (Cursor != Values.Num()) { return false; }
+    SignedPicture = First;
+    return true;
 }
 
 FString FWadAuthoredItem::AssetName() const

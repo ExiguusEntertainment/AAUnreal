@@ -4,10 +4,15 @@
 
 struct FPostProcessSettings;
 class UWorld;
+class UTexture2D;
+class UMaterialInterface;
 
 void ConfigureWadLumen(FPostProcessSettings& Settings);
 
 #if WITH_EDITOR
+AAORIGINAL_API bool MatchesNativeWadShieldFrameTexture(UTexture2D& Texture, bool bLegacy);
+AAORIGINAL_API int32 RebindNativeWadShieldFrameMaterials(UWorld& World, UMaterialInterface& OldMaterial, UMaterialInterface& NewMaterial);
+bool RefreshNativeWadShieldInitialFrame(const FString& MapPackage, bool bApply, FOutputDevice& Output);
 bool SaveNativeWadTown(FOutputDevice& Output);
 bool SaveNativeWadHud(FOutputDevice& Output);
 bool SaveNativeWadLevel(const FString& MapPackage, const FString& WadPath, FOutputDevice& Output);

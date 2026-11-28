@@ -317,3 +317,17 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All127 WAD regressions pass. New source tests verify four Druid CPC/variant stances pixel-for-pixel, full profiles/treasure/drop/reuse/checkpoints, source script velocity, legacy waits and real typed impacts. Headless tests now inspect saved editor texture samples/source bytes rather than inactive SM5 shader-cache usage. The isolated movement component required activation; Pull now queues exact236.25 source impulse and accelerates toward the blast origin.
 - Fixed test-module private API/include and int64 dimension issues without widening production APIs. UI/item rules remain375 types/55 usable consumables. Dangerous825/826/827 USE effects and907 READY electricity remain explicitly queued, not silently considered working because their art imports.
 - PLAN252–253 complete. Committing/pushing this source and required three-map/art checkpoint before the source-frame/provenance work.
+
+## 2026-11-27 18:03 CST - source frame/provenance foundation compiling cleanly
+
+- Pushed3c2aabd9 (57files,39LFSobjects/15MB). L41 and packed Druid checkpoints are on origin/main.
+- Integrated pure world-art palette/mip/provenance foundation, strict all-stance item frame parser and bounded11-variant shield migration. Editor build succeeds; all30 migration/audit and expanded137-test suite are running.
+- Parser census:542 mapped object types,70 multi-stance;56 resource entries differ under corrected first-frame offsets, but inventory impacts exactly11 variants of base712. Both oldPLH02 and correctPLH01 have intentional64x64padding. SourceMAPs contain zero authored affected shields; actual saved bindings are audited rather than assumed.
+- Shared world-palette/mip and exact creature-art manifests are frozen for the next integration. No world colors or mip sampling have been changed in this foundation checkpoint. Agent work continues on remaining66 packed actors, disabled source-light metadata/kernel and dangerous item effects.
+
+## 2026-11-27 18:09 CST - source art foundation and shield migration verified
+
+- All137 WAD regressions pass after correcting a test assumption that every shield variant had armor10; the test now independently reads each exact original DES descriptor and preserves its own10..80 value. No gameplay armor rule changed.
+- All30 shield migration and independent readonly reopening pass: one currently catalog-bound icon and one world-material ref migrated, zero saved actor bindings, zero custom overrides encountered, oldPLH02 asset bytes retained. Eleven source variant IDs are eligible, not eleven existing native catalog entries.
+- Strict full-stance parser/source census, five exact palette/mip/provenance test groups, original CPC pixel/source-tag/override checks and real pickup/scenery rebind tests all pass. World palette/material mip behavior remains unchanged at this checkpoint.
+- PLAN254–255 complete. Committing source, shared catalog and the two new originalPLH01 assets before the world-only art migration batch.

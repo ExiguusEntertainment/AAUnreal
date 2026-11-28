@@ -1050,6 +1050,17 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD surface refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADSHIELDINITIALFRAME")))
+        {
+            const FString Package = FParse::Token(Cmd, false);
+            const FString Mode = FParse::Token(Cmd, false);
+            const bool bAudit = Mode.Equals(TEXT("audit"),ESearchCase::IgnoreCase);
+            if (Package.IsEmpty() || (!Mode.IsEmpty() && !bAudit)
+                || !RefreshNativeWadShieldInitialFrame(Package,!bAudit,Ar))
+            { UE_LOG(LogTemp,Error,TEXT("AA.RefreshNativeWadShieldInitialFrame failed. Usage: /Game/Maps/<Map> [audit]")); }
+            UE_LOG(LogTemp,Display,TEXT("Native WAD shield frame refresh finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADL41SCRIPTMISSILES")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));

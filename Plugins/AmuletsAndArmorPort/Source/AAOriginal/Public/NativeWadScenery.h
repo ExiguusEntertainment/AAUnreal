@@ -101,6 +101,7 @@ public:
     bool IsMagicMapInvisible() const { return (Definition.SourceAttributes & 0x0004) != 0; }
 
 private:
+    friend struct FAAWadNativeImport; // Bounded editor art migration preserves actor/state identity.
     virtual void BeginPlay() override;
     void InitializeMount();
     void UpdateElevation();
