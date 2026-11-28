@@ -843,6 +843,20 @@ FString ANativeWadLevel::DescribeWadScriptMissiles() const
         Art.Add(MakeShared<FJsonValueObject>(Entry));
     }
     Root->SetArrayField(TEXT("art"), Art);
+    // Checkpoint counters alone cannot detect duplicate/rebound dormant pool
+    // pointers during an editor refresh. Include exact saved ownership/settings.
+    TArray<TSharedPtr<FJsonValue>> GeneratorBindings;
+    TArray<int32> GeneratorIds; CreatureGenerators.GetKeys(GeneratorIds); GeneratorIds.Sort();
+    for (int32 Id : GeneratorIds)
+    {
+        auto Entry = MakeShared<FJsonObject>();
+        Entry->SetNumberField(TEXT("id"), Id);
+        FString Text;
+        FWadCreatureGenerator::StaticStruct()->ExportText(Text, &CreatureGenerators[Id], nullptr, nullptr, PPF_None, nullptr);
+        Entry->SetStringField(TEXT("binding"), Text);
+        GeneratorBindings.Add(MakeShared<FJsonValueObject>(Entry));
+    }
+    Root->SetArrayField(TEXT("generator_bindings"), GeneratorBindings);
     FWadLevelCheckpoint Checkpoint;
     if (WriteCheckpoint(Checkpoint, true))
     {

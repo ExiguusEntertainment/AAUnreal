@@ -478,6 +478,15 @@ namespace NativeWadRules
         }
         return nullptr;
     }
+    // CRELOGIC.C: armor color is the full object's high nibble, not its base ID.
+    // Palette0 retains the existing cloth0/chain4%/plate8% behavior.
+    constexpr int32 CreaturePiercingBonus(int32 Amount, int32 ArmorClass, int32 FullType)
+    {
+        if (Amount<=0 || (ArmorClass!=1 && ArmorClass!=2)) { return 0; }
+        const int32 Color=FullType>=0 && FullType<=MAX_uint16 ? FullType>>12 : 0;
+        const int64 Bonus=int64(Amount)*(ArmorClass==1?2:4)*(2+Color)/100;
+        return Bonus>MAX_int32?MAX_int32:int32(Bonus);
+    }
     inline constexpr int32 OrbOfDestruction = 956;
     inline constexpr int32 Key1 = 257;
     inline constexpr int32 Key4 = 260;

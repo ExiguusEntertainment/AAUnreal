@@ -101,9 +101,9 @@ bool FAAOriginalOrdinaryTreasureTables::RunTest(const FString& Parameters)
             || !Exact(3000, 101) || !Exact(3001, 102) || !Exact(3002, 102) || !Exact(3003, 101)
             || !Exact(4080, EvilKnight[Roll % 12]) || !Exact(50158, 417)) { return false; }
     }
-    for (int32 Type : {0, 1012, 1015, 1037, 16368, 24560, 33803, 37866})
+    for (int32 Type : {0, 1012, 1015, 1037, 37866, 37886})
     {
-        TestEqual(TEXT("Unimplemented packed families and source no-drop cases gain no guessed treasure"),
+        TestEqual(TEXT("Source no-drop cases and unsupported identities gain no guessed treasure"),
             ResolveWadCreatureTreasure(Type, 1).ItemType, 0);
     }
     TestTrue(TEXT("Elymas's full identity does not collapse to the Orange Wizard journal table"),

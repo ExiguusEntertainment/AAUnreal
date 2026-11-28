@@ -352,3 +352,24 @@ Progress is appended here while the unattended playable-loop work continues. PLA
 - All144 WAD tests pass after the final legacy scenery fixes. L30 door/walk reviews passed earlier; fresh real-RHI L151 day/dusk captures show original art/mips without missing materials or geometry. Compared with the earlier captures, distant authored mip patterns now change as expected; original near-field mottling remains.
 - Repeated controlled Night Vision GPU proof passes: dark69.905?116.156, bright242.588?243.588, independent viewer max0, sky unchanged and45,180 original static HUD pixels unchanged. No shader compile errors.
 - PLAN256 complete;257–265 list the already bounded next integration checkpoints. Committing/pushing required world material/texture assets and source now. Source sprite lighting audit confirms true PALINDEX hue remapping, so candidate indexed shaders will use original lookup data rather than claim parity from an RGB gain.
+
+## 2026-11-27 18:49 CST - world checkpoint pushed; packed66 import starting
+
+- Pushed6dee7a62 to origin/main:4,482 files,4,459 LFS objects/41MB. All required generated world textures/materials are checked in. User DefaultEditor.ini and unrelated review/launcher files remain untouched.
+- Git commit succeeded, but automatic maintenance found an invalid loose refs/heads/main (1) file. Preserved its exact41 bytes in Saved/AgentWork/RepositoryRecovery/invalid-space-ref-main-20261127.txt and removed it from the ref namespace by a checked single-file move. Canonical main/HEAD stayed6dee7a62; for-each-ref now reads cleanly. No valid branch or commit was removed.
+- Packed66 integration builds successfully. Root preserved independently added shield/source-missile code in reviewed additive merge conflicts, registered the bounded refresh hook, added explicit positive public map saves, and corrected the isolated Pull fixture to activate movement and consume its actual queued impulse. Production force arithmetic is unchanged.
+- Exact COLORT masking audit found a future renderer edge: colorize before zero-mask, preserving CPC coverage separately. No present imported Obsidian Hydra frame uses the affected indices; candidate indexed renderer will handle this explicitly rather than changing canonical art during this checkpoint.
+
+## 2026-11-27 18:53 CST - packed refresh preservation caught a generator side effect
+
+- First packed import verified L153/L231, then correctly refused L75: the shared creature importer still ran its separate flying-potion generator pass during a targeted refresh and rewrote its two named assets. No failed checkpoint was committed.
+- Added targeted early return before that generator pass; restored only this attempt's L75 map and potion M/T files from the verified HEAD checkpoint. Existing packed-family outputs remain available for safe reuse. Added explicit generator binding/settings export to readonly script diagnostics so pool pointer duplication/rebinding is compared, beyond checkpoint counters.
+- Python cannot access the private non-Blueprint generator struct map directly; the attempted preflight stopped before mutations. The native readonly diagnostic now supplies that data without exposing writable properties. Rebuilding this bounded diagnostic before the clean seven-map import/reopen.
+
+
+## 2026-11-27 18:57 CST - packed66 verified for checkpoint
+
+- All150 WAD regressions pass. Corrected stale no-treasure exclusions for newly restored families; maximum plate piercing is source68% of INT_MAX, not saturation to INT_MAX. Headless art verification now reads saved material samples instead of inactive SM5 caches, with explicit missing-sample errors. No combat arithmetic was weakened for these fixture corrections.
+- All66 saved actors across seven maps pass source counts, exact variants/provenance, typed missiles, treasure and dipper checkpoints. Clean import/reopen verifies old art/geometry/script/checkpoint and actual generator bindings/settings; L75 potion assets equal HEAD again and the targeted path now skips all generator passes.
+- Preserved another invalid duplicate remote-ref file in RepositoryRecovery. git fsck --connectivity-only --no-dangling now passes; canonical main and origin/main matched before this new commit.
+- PLAN257 complete; committing/pushing required seven-map/art/source assets. Next are typed dangerous items and per-object carried data, with their separate journal/quick-use worker packages.

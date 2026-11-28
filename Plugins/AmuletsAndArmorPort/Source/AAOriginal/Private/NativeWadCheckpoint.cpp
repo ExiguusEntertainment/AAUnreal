@@ -188,7 +188,7 @@ bool ANativeWadLevel::WriteCheckpoint(FWadLevelCheckpoint& Checkpoint, bool bDis
         // A source Hydra disappears after its sink death; retain that defeated
         // life so restoring the map cannot bring the hidden corpse back alive.
         if ((!Encounter->IsHidden() || (Encounter->IsDefeated()
-            && (Encounter->GetSourceType() == 1022 || Encounter->GetSourceType() == 1012)))
+            && (Encounter->GetEncounterProfile().bDipper || Encounter->GetSourceType() == 1012)))
             && !Encounter->Tags.IsEmpty())
         {
             const ANativeWadGuardian* Target = Encounter->GetBerserkTarget();

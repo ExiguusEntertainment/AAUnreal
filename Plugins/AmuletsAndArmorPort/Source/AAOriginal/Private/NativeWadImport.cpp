@@ -1106,7 +1106,7 @@ struct FAAWadNativeImport
     }
 
     bool InstallCampaignCreatures(UWorld& World, ANativeWadLevel& Actor, const FDoomWadMapData& Map,
-        const FString& WadPath, FOutputDevice& Output, bool bPackedDruidsOnly = false)
+        const FString& WadPath, FOutputDevice& Output, bool bPackedDruidsOnly = false, TConstArrayView<int32> OnlyTypes = {})
     {
         Actor.InitializeTopology(); // Saved editor maps have no transient sector cache yet.
         struct FGeneratorSource
@@ -1157,12 +1157,15 @@ struct FAAWadNativeImport
         constexpr int32 Boulder = 1026;
         const auto Creatures=GetWadCampaignCreatureSources();
         const FString MapName = FPaths::GetBaseFilename(WadPath);
-        if (!bPackedDruidsOnly) { Actor.CreatureGenerators.Reset(); }
+        const bool bTargeted=bPackedDruidsOnly || !OnlyTypes.IsEmpty();
+        Actor.InitializeTopology(); // Saved editor maps have no BeginPlay sector footprint cache.
+        if (!bTargeted) { Actor.CreatureGenerators.Reset(); }
         UStaticMesh* Plane = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Plane.Plane"));
         for (const FWadCampaignCreatureSource& Creature : Creatures)
         {
-            if(!Creature.bGameplayEnabled){continue;}
+            if(!Creature.bGameplayEnabled || (!OnlyTypes.IsEmpty() && !OnlyTypes.Contains(Creature.Type))){continue;}
             const bool bPackedDruid = Creature.Type == 33787 || Creature.Type == 46075;
+            const bool bPackedFamily=Creature.ArtName && (Creature.Type>>12)!=0;
             if (bPackedDruidsOnly && !bPackedDruid) { continue; }
             if (Creature.OnlyMap && !MapName.Equals(Creature.OnlyMap, ESearchCase::IgnoreCase))
             {
@@ -1174,15 +1177,24 @@ struct FAAWadNativeImport
                 continue;
             }
             FWadCreatureArtSet Art;if(!ResolveWadCampaignCreatureArt(Creature,Art,Output)){return false;}
+            const auto LoadArt=[&](const FWadArtRequest& Request,FIntPoint* Size=nullptr)->UMaterialInterface*
+            {
+                const FString Path=AssetRoot/TEXT("Things/M_")+Request.AssetName;
+                if (bTargeted && FPackageName::DoesPackageExist(Path))
+                {
+                    auto* Existing=LoadObject<UMaterialInterface>(nullptr,*(Path+TEXT(".M_")+Request.AssetName));
+                    if (!Existing) { return nullptr; }
+                    if (Size) { TArray<FColor> Pixels;if (!LoadWadSprite(Request.Picture,*Size,Pixels,Request.ColorTable)) { return nullptr; } }
+                    return Existing; // Retain valid original or user-edited named assets.
+                }
+                return SpriteMaterialRequest(Request,Size);
+            };
             FIntPoint Size;
-            auto* Standing=SpriteMaterialRequest(Art.Standing,&Size);
-            auto* Hurt=SpriteMaterialRequest(Art.Hurt);
-            auto* Downed=SpriteMaterialRequest(Art.Downed);
-            auto* Attacking=SpriteMaterialRequest(Art.Attacking);
-            const FString BoltName=Art.Bolt.AssetName;
-            UMaterial* Bolt=Creature.Bolt&&bPackedDruidsOnly
-                ?LoadObject<UMaterial>(nullptr,*(AssetRoot/TEXT("Things/M_")+BoltName+TEXT(".M_")+BoltName)):nullptr;
-            if(!Bolt&&Creature.Bolt){Bolt=SpriteMaterialRequest(Art.Bolt);}
+            auto* Standing=LoadArt(Art.Standing,&Size);
+            auto* Hurt=LoadArt(Art.Hurt);
+            auto* Downed=LoadArt(Art.Downed);
+            auto* Attacking=LoadArt(Art.Attacking);
+            UMaterialInterface* Bolt=Creature.Bolt?LoadArt(Art.Bolt):nullptr;
             if (!Plane || !Standing || !Hurt || !Downed || !Attacking || (Creature.Bolt && !Bolt))
             {
                 return false;
@@ -1267,7 +1279,20 @@ struct FAAWadNativeImport
             const double Offset = Profile.CollisionHalfHeight + 2.0 + (Creature.Type == 1012 ? 32.0 : 0.0);
             const auto Configure = [&](ANativeWadGuardian& Enemy)
             {
-                Enemy.Configure(Plane, Standing, Downed, Attacking, Hurt, Bolt, Profile);
+                if (bTargeted && Enemy.GetSourceType()==Creature.Type)
+                {
+                    const FTransform SpriteTransform=Enemy.Sprite->GetRelativeTransform();
+                    UMaterialInterface* Current=Enemy.Sprite->GetMaterial(0);
+                    const bool Custom=IsValid(Current) && Current!=Enemy.StandingMaterial && Current!=Enemy.DownedMaterial
+                        && Current!=Enemy.AttackingMaterial && Current!=Enemy.HurtMaterial;
+                    Enemy.Configure(Plane,Custom?Current:IsValid(Enemy.StandingMaterial)?Enemy.StandingMaterial.Get():Standing,
+                        IsValid(Enemy.DownedMaterial)?Enemy.DownedMaterial.Get():Downed,
+                        IsValid(Enemy.AttackingMaterial)?Enemy.AttackingMaterial.Get():Attacking,
+                        IsValid(Enemy.HurtMaterial)?Enemy.HurtMaterial.Get():Hurt,
+                        IsValid(Enemy.BoltMaterial)?Enemy.BoltMaterial.Get():Bolt,Profile);
+                    Enemy.Sprite->SetRelativeTransform(SpriteTransform);
+                }
+                else { Enemy.Configure(Plane, Standing, Downed, Attacking, Hurt, Bolt, Profile); }
             };
             for (int32 Id = 0; Id < Map.Things.Num(); ++Id)
             {
@@ -1293,18 +1318,26 @@ struct FAAWadNativeImport
                         if (Existing->ActorHasTag(FName(LegacyTag))) { Enemy = *Existing; break; }
                     }
                 }
-                if (bPackedDruid)
+                if (bPackedFamily)
                 {
                     for (TActorIterator<ANativeWadGuardian> Existing(&World); Existing; ++Existing)
                     {
                         const bool bThing = Existing->ActorHasTag(FName(*Label));
-                        const bool bLegacyBoss = Creature.Type == 46075 && (Existing->GetSourceType() == 46075
-                            || Existing->GetEncounterName().Equals(TEXT("Jugurtha"), ESearchCase::IgnoreCase));
-                        if (!bThing && !bLegacyBoss) { continue; }
+                        const bool bLegacyBoss = (Creature.Type==46075 && (Existing->GetSourceType()==46075
+                            || Existing->GetEncounterName().Equals(TEXT("Jugurtha"),ESearchCase::IgnoreCase)))
+                            || (Creature.Type==54268 && (Existing->GetSourceType()==54268
+                            || Existing->GetEncounterName().Equals(TEXT("Mattan"),ESearchCase::IgnoreCase)
+                            || Existing->GetEncounterName().Equals(TEXT("Mattan the Lich"),ESearchCase::IgnoreCase)));
+                        const FVector ExistingPosition=Existing->GetActorLocation();
+                        const bool bFullPlacement=Existing->GetSourceType()==Creature.Type
+                            && FMath::IsNearlyEqual(ExistingPosition.X,double(Thing.X),0.01)
+                            && FMath::IsNearlyEqual(ExistingPosition.Y,double(Thing.Y),0.01);
+                        if (!bThing && !bLegacyBoss && !bFullPlacement) { continue; }
                         if (Enemy && Enemy != *Existing)
-                        { Output.Log(TEXT("Ambiguous packed Druid identity; refusing duplicate boss/Thing actors.")); return false; }
-                        if (Existing->GetSourceType()!=0 && Existing->GetSourceType()!=1019 && Existing->GetSourceType()!=Creature.Type)
-                        { Output.Log(TEXT("Packed Druid refresh refuses a conflicting source creature identity.")); return false; }
+                        { Output.Log(TEXT("Ambiguous packed creature identity; refusing duplicate boss/Thing actors.")); return false; }
+                        const int32 Basic=Creature.Type&0x0fff;
+                        if (Existing->GetSourceType()!=0 && Existing->GetSourceType()!=Basic && Existing->GetSourceType()!=Creature.Type)
+                        { Output.Log(TEXT("Packed creature refresh refuses a conflicting source identity.")); return false; }
                         Enemy = *Existing;
                     }
                     if (Enemy)
@@ -1313,7 +1346,7 @@ struct FAAWadNativeImport
                         Enemy->Tags.AddUnique(FName(*Label)); // Keep the old primary checkpoint tag and transform.
                     }
                 }
-                if (Enemy && !bPackedDruid)
+                if (Enemy && !bPackedFamily)
                 {
                     Enemy->Modify();
                     Enemy->Tags.AddUnique(FName(*Label));
@@ -1327,12 +1360,22 @@ struct FAAWadNativeImport
                     return false;
                 }
                 const bool bWasDefeated = Enemy->IsDefeated();
+                auto* Quest=Enemy->DefeatPickup.Get();
+                const FTransform QuestTransform=IsValid(Quest)?Quest->GetActorTransform():FTransform::Identity;
+                const bool QuestHidden=IsValid(Quest)&&Quest->IsHidden(),QuestCollision=IsValid(Quest)&&Quest->GetActorEnableCollision();
                 Configure(*Enemy);
-                if (bPackedDruid && bWasDefeated) { Enemy->RestoreEncounterHealth(0); }
+                if (bPackedFamily && bWasDefeated) { Enemy->RestoreEncounterHealth(0); }
+                if (bTargeted && IsValid(Quest))
+                {
+                    // RestoreEncounterHealth also updates a linked quest object at runtime.
+                    // An editor art/profile refresh preserves that object's current state.
+                    Quest->SetActorTransform(QuestTransform,false,nullptr,ETeleportType::TeleportPhysics);
+                    Quest->SetActorHiddenInGame(QuestHidden);Quest->SetActorEnableCollision(QuestCollision);
+                }
                 ++Placed;
             }
             Output.Logf(TEXT("Imported %d placed actors for %s (type %d)."), Placed, Creature.Name, Creature.Type);
-            if (bPackedDruidsOnly) { continue; } // Targeted encounter refresh never edits generator records or pools.
+            if (bTargeted) { continue; } // Targeted encounter refresh never edits generator records or pools.
             for (int32 Id = 0; Id < Source.Num(); ++Id)
             {
                 const FGeneratorSource& Record = Source[Id];
@@ -1377,6 +1420,7 @@ struct FAAWadNativeImport
                     Id, Record.Count, Creature.Name, Generator.bInfinite, PoolSize);
             }
         }
+        if (bTargeted) { return true; } // The separate flying-potion pass also owns generator assets/state.
         for (int32 Id = 0; Id < Source.Num(); ++Id)
         {
             const FGeneratorSource& Record = Source[Id];
@@ -3569,7 +3613,7 @@ bool SaveNativeWadItemRules(FOutputDevice& Output)
     // Every branch of the restored ordinary creature treasure tables needs saved
     // rules and world art, including full packed equipment identities absent from shops.
     const TSet<int32> OrdinaryTreasureTypes{100, 101, 102, 104, 105, 106, 144, 145, 147, 202, 204, 362, 373,
-        234, 415, 416, 417, 708, 709, 710, 711, 818, 822, 825, 12492, 12996, 12997, 12998, 12999, 37067};
+        103, 234, 415, 416, 417, 708, 709, 710, 711, 818, 822, 825, 908, 20684, 21184, 21185, 21186, 21187, 32968, 12492, 12996, 12997, 12998, 12999, 37067};
     for (const int32 Type : OrdinaryTreasureTypes) { Types.Add(Type); }
     for (const int32 Type : {244, 350, 351, 373, 823}) { Types.Add(Type); } // Source identification scrolls and the accessory-data journal object.
     // Non-shop equipment still needs saved art and rules for normal use and restoration.
@@ -4899,6 +4943,43 @@ bool RefreshNativeWadShieldInitialFrame(const FString& MapPackage,bool Apply,FOu
     Output.Logf(TEXT("Shield initial-frame %s: icons%d worldrefs%d actorbindings%d preserved%d remaining component refs%d. Report%s"),
         Apply?TEXT("refresh"):TEXT("audit"),Icons,Worlds,Bindings,Preserved,Remaining,*File);
     return true;
+}
+
+bool RefreshNativeWadPackedEncounterFamilies(const FString& MapPackage,FOutputDevice& Output)
+{
+    const int32 Types[]={16368,24560,33803,37886,54268};
+    const FString Name=FPackageName::GetShortName(MapPackage);
+    const TMap<FString,TArray<int32>> Expected={
+        {TEXT("L153"),{0,0,0,2,0}},{TEXT("L231"),{10,1,0,0,0}},
+        {TEXT("L75"),{7,0,0,0,0}},{TEXT("L10"),{0,15,0,0,0}},
+        {TEXT("L51"),{0,0,22,0,0}},{TEXT("L44"),{0,0,0,5,0}},{TEXT("L61"),{0,0,0,3,1}}};
+    const auto* Counts=Expected.Find(Name);const auto* Map=UDoomWadLoader::GetLastWadMapData();
+    if (!Map || !Counts || !MapPackage.StartsWith(TEXT("/Game/Maps/")) || !FPackageName::IsValidLongPackageName(MapPackage)
+        || !FPackageName::DoesPackageExist(MapPackage)) { Output.Log(TEXT("Packed-family refresh needs its original audited MAP and existing native package."));return false; }
+    for (int32 I=0;I<UE_ARRAY_COUNT(Types);++I)
+    {
+        const int32 Actual=Map->Things.FilterByPredicate([&](const auto& T){return uint16(T.Type)==Types[I];}).Num();
+        if (Actual!=(*Counts)[I]) { Output.Log(TEXT("Packed-family source counts changed; refusing an unaudited import."));return false; }
+    }
+    auto* World=LoadObject<UWorld>(nullptr,*(MapPackage+TEXT(".")+Name));
+    auto* Level=World?FAAWadNativeImport::FindMatchingLevel(*World,*Map):nullptr;
+    if (!Level || (World->WorldType!=EWorldType::Editor && World->WorldType!=EWorldType::Inactive)) { return false; }
+    FAAWadNativeImport Import;Import.AssetRoot=MapPackage+TEXT("_Assets");
+    const FString Wad=FPaths::ProjectDir()/TEXT("Plugins/AmuletsAndArmorPort/External/AmuletsAndArmor/Exe")/(Name+TEXT(".MAP"));
+    if (!Import.InstallCampaignCreatures(*World,*Level,*Map,Wad,Output,false,Types)) { return false; }
+    TMap<int32,int32> Found;TSet<FName> Identities;
+    for (TActorIterator<ANativeWadGuardian> Enemy(World);Enemy;++Enemy)
+    {
+        if (!MakeArrayView(Types).Contains(Enemy->GetSourceType())) { continue; }
+        if (Enemy->Tags.IsEmpty() || Identities.Contains(Enemy->Tags[0])) { Output.Log(TEXT("Packed-family checkpoint identity is missing or duplicated."));return false; }
+        Identities.Add(Enemy->Tags[0]);++Found.FindOrAdd(Enemy->GetSourceType());
+    }
+    for (int32 I=0;I<UE_ARRAY_COUNT(Types);++I) { if (Found.FindRef(Types[I])!=(*Counts)[I]) { Output.Log(TEXT("Packed-family refresh would retain duplicate or missing actors."));return false; } }
+    FAssetCompilingManager::Get().FinishAllCompilation();
+    for (auto* Asset:Import.AssetsToSave) { if (!SaveAsset(*Asset,*FPackageName::GetAssetPackageExtension())) { return false; } }
+    if (!SaveAsset(*World,*FPackageName::GetMapPackageExtension())) { return false; }
+    Output.Logf(TEXT("Restored exact packed encounters in%s: bronze%d silver%d mithril%d obsidian%d Mattan%d; retained scripts, generators, quest pickups and all geometry."),
+        *Name,(*Counts)[0],(*Counts)[1],(*Counts)[2],(*Counts)[3],(*Counts)[4]);return true;
 }
 
 #endif

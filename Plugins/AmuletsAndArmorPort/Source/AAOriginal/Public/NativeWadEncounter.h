@@ -32,6 +32,9 @@ inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 
     static constexpr int32 BadKnight[12] = {204, 204, 204, 204, 204, 204, 818, 204, 708, 709, 710, 711};
     static constexpr int32 EvilKnight[12] = {102, 102, 102, 204, 204, 204, 102, 204, 708, 709, 710, 711};
     static constexpr int32 Trojan[12] = {37067, 37067, 37067, 104, 104, 104, 105, 12492, 12996, 12997, 12998, 12999};
+    static constexpr int32 BronzeKnight[12]={12492,12492,12492,102,102,102,102,12492,12996,12997,12998,12999};
+    static constexpr int32 SilverKnight[12]={103,103,103,204,204,204,103,20684,21184,21185,21186,21187};
+    static constexpr int32 MithrilKnight[12]={32968,32968,32968,204,204,204,818,32968,708,709,710,711};
     switch (SourceType)
     {
     case 1002: return {(Roll & 1) ? 102 : 362};
@@ -51,6 +54,10 @@ inline FWadCreatureTreasure ResolveWadCreatureTreasure(int32 SourceType, uint16 
     case 3001: case 3002: return {102};
     case 4080: return {EvilKnight[Roll % 12]};
     case 50158: return {417};
+    case 16368:return {BronzeKnight[Roll%12]};
+    case 24560:return {SilverKnight[Roll%12]};
+    case 33803:return {MithrilKnight[Roll%12]};
+    case 54268:return {908};
     // Mighty Hunter has no unstolen ordinary-death case;
     // Momma Dragon's key is commented out. Packed-family restoration is separate.
     default: return {};
@@ -199,6 +206,7 @@ public:
     double GetMagicMapRadius() const { return Profile.CollisionRadius; }
 
 private:
+    friend struct FAAWadNativeImport; // Preserve existing packed-encounter art during bounded editor refresh.
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UStaticMeshComponent> Sprite;
 

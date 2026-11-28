@@ -1072,6 +1072,17 @@ public:
             UE_LOG(LogTemp, Display, TEXT("Native WAD L41 script missiles refresh finished"));
             return true;
         }
+        else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADPACKEDENCOUNTERFAMILIES")))
+        {
+            const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));
+            const FString MapName = SanitizeMapMarker(FParse::Token(Cmd, false));
+            const FString Package = FParse::Token(Cmd, false);
+            if (WadPath.IsEmpty() || MapName.IsEmpty() || Package.IsEmpty()
+                || !UDoomWadLoader::LoadDoomWadMap(WadPath, MapName) || !RefreshNativeWadPackedEncounterFamilies(Package, Ar))
+            { UE_LOG(LogTemp, Error, TEXT("AA.RefreshNativeWadPackedEncounterFamilies failed. Usage: <MAP> <MapName> /Game/Maps/<Map>")); }
+            UE_LOG(LogTemp, Display, TEXT("Native WAD packed encounter families refresh finished"));
+            return true;
+        }
         else if (FParse::Command(&Cmd, TEXT("AA.REFRESHNATIVEWADPACKEDDRUIDS")))
         {
             const FString WadPath = ResolvePathOrProjectRelative(FParse::Token(Cmd, false));

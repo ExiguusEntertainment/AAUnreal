@@ -193,6 +193,42 @@ void FWadEncounterProfile::ApplySourceRules()
         ChanceAttackCreature = bJugurtha ? 100 : 20;
         ChanceContinueAttack = bJugurtha ? 15 : 10;
     }
+    if (SourceType==16368 || SourceType==24560 || SourceType==33803)
+    {
+        const bool Bronze=SourceType==16368, Mithril=SourceType==33803;
+        MaxHealth=Bronze?2500:4000;RetreatHealth=Bronze?0:Mithril?500:400;
+        MeleeDamage=Bronze?300:Mithril?475:450;MeleeDamageMask=NormalDamage;
+        MeleeRange=Mithril?60.0f:50.0f;MeleeDelayUpdates=10;RangedDelayUpdates=50;
+        UpdateTicks=7;WalkSpeed=70.0f;RegenPerUpdate=Bronze?0:1;
+        CollisionRadius=Mithril?25.0f:15.0f;
+        SourceMissileType=HomingMissileType=BoltDamage=0;
+        MinBoltRange=Mithril?250.0f:3000.0f;BoltRange=Mithril?1000:3000;
+        ResistanceMask=0;ArmorClass=2;bCanFly=false;bDipper=false;
+        VisionHalfAngle=45.0f;ChanceAttackCreature=Bronze?25:Mithril?30:10;
+        ChanceContinueAttack=Bronze?20:Mithril?15:5;
+    }
+    if (SourceType==37886)
+    {
+        MaxHealth=5000;RetreatHealth=500;MeleeDamage=450;MeleeDamageMask=NormalDamage;
+        MeleeRange=72.0f;MeleeDelayUpdates=10;RangedDelayUpdates=50;
+        UpdateTicks=7;WalkSpeed=70.0f;RegenPerUpdate=1;CollisionRadius=42.0f;
+        SourceMissileType=4002;HomingMissileType=0;BoltDamage=2500;
+        MinBoltRange=100.0f;BoltRange=10000;ResistanceMask=DamageFlag(EProjectileDamage::Fire);
+        ArmorClass=0;bCanFly=false;bDipper=true;VisionHalfAngle=90.0f;
+        ChanceAttackCreature=30;ChanceContinueAttack=20;
+    }
+    if (SourceType==54268)
+    {
+        MaxHealth=20000;RetreatHealth=0;MeleeDamage=1000;
+        MeleeDamageMask=NormalDamage|DamageFlag(EProjectileDamage::ManaDrain);
+        MeleeRange=60.0f;MeleeDelayUpdates=10;RangedDelayUpdates=20;
+        UpdateTicks=7;WalkSpeed=70.0f;RegenPerUpdate=5;CollisionRadius=20.0f;
+        SourceMissileType=4001;HomingMissileType=0;BoltDamage=1000;
+        MinBoltRange=250.0f;BoltRange=5000;
+        ResistanceMask=DamageFlag(EProjectileDamage::ManaDrain)|DamageFlag(EProjectileDamage::Poison);
+        ArmorClass=0;bCanFly=false;bDipper=false;VisionHalfAngle=135.0f;
+        ChanceAttackCreature=100;ChanceContinueAttack=0;
+    }
     if (SourceType == 1005 || SourceType == 1022)
     {
         bCanFly = false;
@@ -286,7 +322,8 @@ void ANativeWadGuardian::Configure(UStaticMesh* Plane, UMaterialInterface* Stand
     GetCharacterMovement()->MaxWalkSpeed = Profile.WalkSpeed;
     GetCharacterMovement()->MaxFlySpeed = SourceFlightSpeed(Profile);
     if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
-    else if (Profile.SourceType==33787 || Profile.SourceType==46075) { GetCharacterMovement()->SetMovementMode(MOVE_Walking); }
+    else if (Profile.SourceType==33787 || Profile.SourceType==46075 || Profile.SourceType==16368 || Profile.SourceType==24560
+        || Profile.SourceType==33803 || Profile.SourceType==37886 || Profile.SourceType==54268) { GetCharacterMovement()->SetMovementMode(MOVE_Walking); }
     if (Profile.SpriteSize.X > 0 && Profile.SpriteSize.Y > 0)
     {
         Sprite->SetRelativeScale3D(FVector(Profile.SpriteSize * 0.01, 1.0));
@@ -305,7 +342,8 @@ void ANativeWadGuardian::BeginPlay()
     GetCharacterMovement()->MaxFlySpeed = SourceFlightSpeed(Profile);
     Health = Profile.MaxHealth;
     if (Profile.bCanFly) { GetCharacterMovement()->SetMovementMode(MOVE_Flying); }
-    else if (Profile.SourceType==33787 || Profile.SourceType==46075) { GetCharacterMovement()->SetMovementMode(MOVE_Walking); }
+    else if (Profile.SourceType==33787 || Profile.SourceType==46075 || Profile.SourceType==16368 || Profile.SourceType==24560
+        || Profile.SourceType==33803 || Profile.SourceType==37886 || Profile.SourceType==54268) { GetCharacterMovement()->SetMovementMode(MOVE_Walking); }
     if (Profile.RailStart != Profile.RailEnd)
     {
         const TActorIterator<ANativeWadLevel> Level(GetWorld());
@@ -457,7 +495,7 @@ void ANativeWadGuardian::Tick(float DeltaSeconds)
     // INavDipper first sinks while scanning, then fully emerges before guard navigation.
     const bool bDipperReady = !Profile.bDipper || TickDipper(DeltaSeconds, bHasTarget);
     bool bMeleeHeight = FMath::Abs(Offset.Z) <= 26.0;
-    if (Profile.SourceType == 1005 || Profile.SourceType == 1021 || Profile.SourceType == 1022 || Profile.SourceType == 1037)
+    if (Profile.SourceType == 1005 || Profile.SourceType == 1021 || Profile.SourceType == 1022 || Profile.SourceType == 37886 || Profile.SourceType == 1037)
     {
         if (const ACharacter* Character = Cast<ACharacter>(Target))
         {
@@ -766,7 +804,7 @@ bool ANativeWadGuardian::TakeHit(int32 Damage, ANativeWadPlayer* Credit, uint8 D
     }
     if (AppliedEffects & DamageFlag(EProjectileDamage::Piercing))
     {
-        Damage += (BaseDamage * Profile.ArmorClass * 4) / 100;
+        Damage = int32(FMath::Min<int64>(MAX_int32,int64(Damage)+CreaturePiercingBonus(BaseDamage,Profile.ArmorClass,Profile.SourceType)));
     }
     const int32 Resisted = FMath::CountBits(DamageMask & Resistances);
     Damage -= int32(int64(Damage) * Resisted / FMath::CountBits(DamageMask));
